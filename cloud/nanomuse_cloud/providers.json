@@ -363,6 +363,25 @@
       }
     },
     {
+      "id": "nvidia",
+      "name": "NVIDIA NIM (build.nvidia.com)",
+      "name_zh": "NVIDIA NIM（build.nvidia.com）",
+      "protocol": "openai",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "key_url": "https://build.nvidia.com/settings/api-keys",
+      "key_hint": "nvapi-…",
+      "auth": ["key"],
+      "regions": ["global"],
+      "capabilities": ["chat", "vision"],
+      "defaults": {
+        "chat": "nvidia/llama-3.3-nemotron-super-49b-v1",
+        "hands": "meta/llama-3.2-90b-vision-instruct"
+      },
+      "note": "Hosted NIM endpoints for open-weight models, in the OpenAI shape. Model ids move and each one does a different job, so copy the exact string from build.nvidia.com and treat only a model whose own page says it reads pictures as the hands. The developer tier is rate-limited, not unlimited (TAMA: free or unlimited access is not assumed).",
+      "note_zh": "以 OpenAI 接口形式托管的开源模型 NIM 端点。模型 id 会变，而且每个模型做的事不同，请在 build.nvidia.com 上复制准确字符串；只有模型页写明能看图时才把它当作手。开发者额度是限速而非无限（TAMA：不假定免费或无限访问）。",
+      "verified": "2026-11"
+    },
+    {
       "id": "mistral",
       "name": "Mistral AI",
       "name_zh": "Mistral AI",
