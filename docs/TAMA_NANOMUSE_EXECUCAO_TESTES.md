@@ -266,7 +266,17 @@ levado ao CI do próprio repositório. Isso converteu três `NOT_RUN` em resulta
 
 Total: **17 pass, 1 fail, 1 skip** (`release`, por desenho).
 
-### P1 — pendência aberta: `testDebugUnitTest` falha e o log está inacessível daqui
+### P1 — FECHADA em `69a5213`: `testDebugUnitTest` passa, e como a falha foi lida
+
+> **Resolvido.** O texto abaixo fica como registro do diagnóstico. O log do Actions continua
+> inacessível daqui, então o workflow passou a republicar cada asserção que falha como
+> **anotação** (`::error`), que a API entrega. Na primeira execução com esse passo, quatro
+> falhas apareceram nomeadas — três do trabalho do Pet, uma da identidade — e a última rodada
+> fechou `Unit tests` **success**, `androidTest compiles` **success** e `Badging` **success**,
+> com o APK de 66.011.814 bytes publicado como artefato (run `43304440678`).
+> O que se corrigiu está no §9.
+
+### Histórico: a pendência como estava antes do diagnóstico
 
 O passo roda uma lista fechada de pacotes:
 
@@ -325,8 +335,9 @@ Todas corrigidas e cobertas pela verificação final; nenhuma ficou pendente.
 | Estrutura de código intacta (74 `.kt`) | **PASS** | comparação de esqueleto |
 | XML de recursos válido (36) | **PASS** | parse |
 | `BUILD` — compilação do derivado (`assembleDebug`) | **PASS** | CI do repo, run `42920115049`, job `130192786144` |
-| APK empacotado + `SHA-256` | **NOT_RUN** | o job para antes de `Badging`/upload por causa da falha dos unit tests |
-| `testDebugUnitTest` | **FAIL** | 1 falha não diagnosticada; log inacessível (§5A, P1) |
+| APK empacotado | **PASS** | `nanoMuse-debug-apk`, 66.011.814 bytes, run `43304440678` |
+| `SHA-256` do APK | **NOT_RUN** | é calculado sobre o artefato baixado; o sandbox não alcança o host do artefato |
+| `testDebugUnitTest` | **PASS** | 269 testes Kotlin; as 4 falhas reais lidas por anotação e corrigidas (§9) |
 | `ANDROID_DEVICE_PASS` | **NOT_RUN** | sem aparelho |
 | `PROVIDER_LIVE_PASS` | **NOT_RUN** | sem chave |
 | `SECURITY_RELEASE` | **BLOCKED** | inalterado; fork novo não aprova segurança |
@@ -336,8 +347,9 @@ Todas corrigidas e cobertas pela verificação final; nenhuma ficou pendente.
 
 ## 8. Pendências objetivas (para a próxima ordem)
 
-1. Rodar `android.yml` no CI do fork → trocar `NOT_RUN` por `BUILD` + `SHA-256` do APK.
-2. Rodar `testDebugUnitTest` (269 testes Kotlin) — os dois testes que atualizei precisam passar.
+1. ~~Rodar `android.yml` no CI do fork~~ — **feito**: `assembleDebug` alcança `Badging` e publica o
+   APK. Falta só o `SHA-256`, que exige baixar o artefato (o sandbox não alcança esse host).
+2. ~~Rodar `testDebugUnitTest`~~ — **feito em `69a5213`**: 269 testes, verdes. Ver §9.
 3. Inicializar submódulos (`proot`, `ish`) para o build nativo.
 4. Criar keystore **próprio** do derivado e assinar release.
 5. Ícone e arte TAMA (o app ainda usa os ícones do nanoMuse).
@@ -345,3 +357,32 @@ Todas corrigidas e cobertas pela verificação final; nenhuma ficou pendente.
 7. Aparelho real: instalação, permissões, serviço em segundo plano, notificação.
 8. Procedência/licença do código `f8/*` e do bloco Pet antes de qualquer cópia.
 9. Decisão do dono sobre redistribuição do derivado GPL.
+
+---
+
+## 9. O que fechou o `testDebugUnitTest`, e o que isso achou
+
+O log do Actions é servido de um host que este sandbox não alcança, e por isso a falha ficou
+**não diagnosticada** por várias sessões. A saída foi parar de tentar ler o log: o workflow agora
+relê o XML do JUnit depois de uma falha e imprime cada caso como **anotação**, e a API de
+anotações responde aqui. Testado localmente contra um XML escrito à mão antes de subir.
+
+Quatro falhas apareceram nomeadas. Três eram do trabalho do Pet, uma da identidade.
+
+| # | Teste | Causa real | Correção |
+|---|---|---|---|
+| F8 | `NudgesPolicyTest` | o commit de identidade apontou a URL de "dê uma estrela" para este repositório e o teste continuou comparando com o contrato antigo | o app está certo (o TAMA pede estrela no TAMA); o teste e o comentário mudaram |
+| F9 | `PetStreakTest` | asserção minha dizia que 1 ms antes é o dia anterior — nenhum calendário concorda | o teste passou a afirmar a borda que queria afirmar (o piso no epoch) |
+| F10 | `PetNeedsTest` | o teste exigia `bond` mais rápido que `mood`; o desenho faz `bond` o mais lento dos quatro, de propósito | a asserção seguiu o desenho |
+| F11 | `PetNeedsTest` (humor) | dois erros em `PetMood.of`: precisava de `HIGH` (80) para CONTENT enquanto "precisa de algo" começa em 60, então 60..79 lia como `NEEDY` e um corpo em 20 lia como `CALM`; e o sulco dependia de `aloneHours`, que a store **nunca passa** (manda 0) | CONTENT usa `CONTENT_THRESHOLD`; o sulco passou a ser "ausente **e** necessidades caídas", e ganhou precedência sobre `NEEDY` |
+
+**Bug encontrado no caminho, não reportado por ninguém:** `PetStore.touch()` escrevia o estado em
+memória sem `load()`. Num processo frio isso gravaria nível 1 e necessidades cheias **por cima do
+Pet da pessoa**. Era código morto — nada o chamava, e por isso nunca disparou. Agora carrega
+primeiro, e a `PetScreen` o chama no `dispose`: sair da tela é o que começa a ausência.
+
+### Uma falha de CI que não é do código
+
+`relay · windows-latest` falhou no run `43306046650` com a árvore idêntica à de `c4830e6`, que
+tinha passado; o mesmo commit `6d37d1b` também passou. Localmente o relay fecha **335 passed**.
+Tratado como instável do runner, não como defeito — registrado em vez de arredondado.
