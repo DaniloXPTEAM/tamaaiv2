@@ -142,3 +142,84 @@ jobs:
           path: android/src/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
           if-no-files-found: error
+
+  # TAMA: the APK the job above builds was never *run* - only assembled, unit-tested and dumped.
+  # assembleDebug proves it compiles; it says nothing about whether the app opens. This installs
+  # it on a real Android runtime, starts the launcher activity, and fails if the process dies.
+  # Everything it learns is published as an annotation, because the Actions log is not readable
+  # from every checkout (see the debug-apk job).
+  device-smoke:
+    name: device smoke · emulator
+    needs: debug-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/download-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nanoMuse-debug-apk
+          path: apk
+
+      - name: Install, launch, and check the process is alive
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -o pipefail
+            APK="$(ls apk/*.apk | head -1)"
+            echo "installing $APK"
+            adb install -r -t "$APK"
+            adb shell pm list packages | grep -c 'ai.tama.assistant' | sed 's/^/::notice title=installed::packages matched: /'
+            adb shell am start -W -n ai.tama.assistant/com.openminis.app.MainActivity | tee /tmp/am.log
+            sleep 20
+            PID="$(adb shell pidof ai.tama.assistant | tr -d '\r')"
+            if [ -z "$PID" ]; then
+              echo "::error title=crash::the process is not running after launch (it started and died)"
+              adb logcat -d -b crash | tail -60
+              exit 1
+            fi
+            echo "::notice title=running::pid $PID after 20s"
+            adb shell input keyevent KEYCODE_WAKEUP || true
+            adb exec-out screencap -p > /tmp/launch.png
+            ls -l /tmp/launch.png
+            adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime.*E ' | head -20 || true
+
+      - name: Publish what the device saw, as annotations
+        if: always()
+        run: |
+          report() { echo "::error title=device::$1"; }
+          [ -f /tmp/am.log ] && grep -E 'Status:|Error:|Activity:' /tmp/am.log | while IFS= read -r l; do
+            echo "::notice title=am start::${l}"
+          done
+          if [ -f /tmp/launch.png ]; then
+            echo "::notice title=screenshot::$(stat -c%s /tmp/launch.png) bytes captured"
+          fi
+          adb logcat -d -b crash 2>/dev/null | tail -40 | while IFS= read -r l; do report "$l"; done
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: tama-device-smoke
+          path: |
+            /tmp/launch.png
+            /tmp/am.log
+          retention-days: 14
+          if-no-files-found: warn
