@@ -422,10 +422,17 @@ script se recusa a gravar.
 virar o triângulo; e uma condição extra (`shell > -3.0`) apagou a costura inteira. Os três foram
 vistos na imagem antes de qualquer commit.
 
+**Uma falha de build real, e como foi lida:** o primeiro `assembleDebug` com o ícone novo falhou e
+o log continuava inalcançável. O passo de diagnóstico foi ampliado para reler a saída do Gradle, e
+o AAPT2 disse exatamente o que era: `'evenodd' is incompatible with attribute fillType (attr) enum
+[evenOdd=1, nonZero=0]`. O atributo do Android é **`evenOdd`**; o `evenodd` minúsculo é do SVG. A
+árvore já tinha a grafia certa em `ic_notification_completed.xml` e eu não olhei um vetor existente
+antes de escrever o atributo. Corrigido no gerador e no teste, regenerados os 4 vetores.
+
 **Teste:** `tests/test_tama_icon.py`, 6 casos, que falham se alguém remover o `fillType="evenodd"`
 (sem ele o ícone vira um borrão sólido), se o adaptive icon voltar a apontar para o nanoMuse, se a
 notificação passar a usar uma variante com costura, ou se o código do app voltar a pedir
-`ic_stat_nanomuse`. Suíte: **1552 passam**.
+`ic_stat_nanomuse`. Suíte: **1552 passam**. CI: **17 pass, 0 fail** (commit `47cb4ad`), APK de 66.007.740 bytes.
 
 O que **não** foi feito: os ícones do iOS (`android/src/ios/...`) e o favicon da Web continuam os
 do nanoMuse; e a arte não passou por revisão visual humana além da minha.
