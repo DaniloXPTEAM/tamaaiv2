@@ -1291,4 +1291,14 @@
     <string name="tama_pet_action_feed">Besle</string>
     <string name="tama_pet_action_rest">Dinlendir</string>
     <string name="tama_pet_action_play">Oyna</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">Kıyafet</string>
+    <string name="tama_pet_outfit_name">TAMA AI evcil</string>
+    <string name="tama_pet_outfit_locked">Sv %1$d</string>
+    <string name="tama_pet_days_known">%1$d gündür birlikte</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">1 gün üst üste</item>
+        <item quantity="other">%1$d gün üst üste</item>
+    </plurals>
 </resources>

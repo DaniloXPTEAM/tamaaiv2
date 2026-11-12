@@ -1287,4 +1287,14 @@
     <string name="tama_pet_action_feed">먹이 주기</string>
     <string name="tama_pet_action_rest">쉬게 하기</string>
     <string name="tama_pet_action_play">놀아주기</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">의상</string>
+    <string name="tama_pet_outfit_name">TAMA AI 펫</string>
+    <string name="tama_pet_outfit_locked">레벨 %1$d</string>
+    <string name="tama_pet_days_known">함께한 지 %1$d일</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">1일 연속</item>
+        <item quantity="other">%1$d일 연속</item>
+    </plurals>
 </resources>

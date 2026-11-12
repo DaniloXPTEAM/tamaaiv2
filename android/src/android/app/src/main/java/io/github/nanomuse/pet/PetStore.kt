@@ -15,9 +15,15 @@ data class PetState(
     val progress: PetProgress,
     val needs: PetNeeds,
     val aloneHours: Long,
+    val wardrobe: PetWardrobe = PetWardrobe(),
+    val streak: PetStreak = PetStreak(),
+    val memory: PetMemory = PetMemory(),
 ) {
     val mood: PetMood
         get() = PetMood.of(needs, aloneHours = aloneHours)
+
+    /** The outfit actually worn: the choice, when the level allows it. */
+    val outfit: PetOutfit get() = wardrobe.wornAt(progress.level)
 }
 
 /**
@@ -41,6 +47,13 @@ object PetStore {
     private const val KEY_ENERGY = "tama.pet.energy"
     private const val KEY_MOOD = "tama.pet.mood"
     private const val KEY_BOND = "tama.pet.bond"
+    private const val KEY_OUTFIT = "tama.pet.outfit"
+    private const val KEY_STREAK_LAST = "tama.pet.streak_last_day"
+    private const val KEY_STREAK_DAYS = "tama.pet.streak_days"
+    private const val KEY_STREAK_BEST = "tama.pet.streak_best"
+    private const val KEY_FIRST_DAY = "tama.pet.first_day"
+    private const val KEY_CARE_COUNT = "tama.pet.care_count"
+    private const val KEY_TURNS_TOGETHER = "tama.pet.turns_together"
 
     private val _state = MutableStateFlow(
         PetState(
@@ -83,8 +96,32 @@ object PetStore {
         // time: treat it as now rather than as a negative absence.
         val elapsed = if (lastSeen <= 0L || lastSeen > nowMillis) 0L else nowMillis - lastSeen
         val needs = PetDecay.after(stored, elapsed)
-        _state.value = PetState(progress, needs, aloneHours = elapsed / PetDecay.HOUR_MS)
+        val day = PetStreak.dayOf(nowMillis)
+        val streak = PetStreak.afterVisit(
+            PetStreak(
+                lastDay = p.getLong(KEY_STREAK_LAST, -1L).takeIf { it >= 0L },
+                days = p.getInt(KEY_STREAK_DAYS, 0),
+                best = p.getInt(KEY_STREAK_BEST, 0),
+            ),
+            day,
+        )
+        val memory = PetMemory(
+            careCount = p.getInt(KEY_CARE_COUNT, 0),
+            turnsTogether = p.getInt(KEY_TURNS_TOGETHER, 0),
+            firstDay = p.getLong(KEY_FIRST_DAY, -1L).takeIf { it >= 0L },
+        ).firstSeen(day)
+        val state = PetState(
+            progress = progress,
+            needs = needs,
+            aloneHours = elapsed / PetDecay.HOUR_MS,
+            wardrobe = PetWardrobe.fromStorage(p.getString(KEY_OUTFIT, null)),
+            streak = streak,
+            memory = memory,
+        )
+        _state.value = state
         _pet.value = progress
+        // The visit itself is a fact worth keeping: a streak that is not written is not a streak.
+        write(context, state, nowMillis)
         loaded = true
     }
 
@@ -103,7 +140,12 @@ object PetStore {
         val xp = PetXpRules.apply(before.progress.xp, PetXpRules.forOutcome(outcome))
         val progress = PetLadder.progressFor(xp)
         val needs = PetCare.afterTurn(before.needs, outcome, turnsToday)
-        val after = before.copy(progress = progress, needs = needs, aloneHours = 0)
+        val after = before.copy(
+            progress = progress,
+            needs = needs,
+            aloneHours = 0,
+            memory = before.memory.afterTurn(),
+        )
         if (after != before) {
             write(context, after, nowMillis)
             _state.value = after
@@ -129,7 +171,28 @@ object PetStore {
             PetCareAction.REST -> PetCare.rest(before.needs)
             PetCareAction.PLAY -> PetCare.play(before.needs)
         }
-        val after = before.copy(needs = needs, aloneHours = 0)
+        val after = before.copy(
+            needs = needs,
+            aloneHours = 0,
+            memory = before.memory.afterCare(need),
+        )
+        write(context, after, nowMillis)
+        _state.value = after
+        return after
+    }
+
+    /**
+     * Dresses the Pet.
+     *
+     * The choice is stored even when it is still locked, so a person who picks "legend" at level
+     * three finds it still chosen once they get there. Losing a choice is worse than showing one
+     * as not yet available.
+     */
+    @Synchronized
+    fun wear(context: Context, outfit: PetOutfit, nowMillis: Long = System.currentTimeMillis()): PetState {
+        load(context, nowMillis)
+        val before = _state.value
+        val after = before.copy(wardrobe = before.wardrobe.choose(outfit))
         write(context, after, nowMillis)
         _state.value = after
         return after
@@ -151,6 +214,13 @@ object PetStore {
             .putInt(KEY_MOOD, state.needs.mood)
             .putInt(KEY_BOND, state.needs.bond)
             .putLong(KEY_LAST_SEEN, nowMillis)
+            .putString(KEY_OUTFIT, state.wardrobe.chosenId)
+            .putLong(KEY_STREAK_LAST, state.streak.lastDay ?: -1L)
+            .putInt(KEY_STREAK_DAYS, state.streak.days)
+            .putInt(KEY_STREAK_BEST, state.streak.best)
+            .putLong(KEY_FIRST_DAY, state.memory.firstDay ?: -1L)
+            .putInt(KEY_CARE_COUNT, state.memory.careCount)
+            .putInt(KEY_TURNS_TOGETHER, state.memory.turnsTogether)
             .apply()
     }
 

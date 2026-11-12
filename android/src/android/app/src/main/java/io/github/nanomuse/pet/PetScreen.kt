@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,7 +33,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -57,12 +60,20 @@ const val ROUTE_PET = "tama/pet"
  * the app is closed.
  */
 @Composable
-fun PetScreen(onBack: () -> Unit) {
+fun PetScreen(
+    onBack: () -> Unit,
+    /** Whether a turn is running right now, so the Pet looks up while the work happens. */
+    streaming: Boolean = false,
+    /** The current error, when one is showing, so a failure becomes a wince. */
+    error: String? = null,
+) {
     val context = LocalContext.current
     // Idempotent and cheap: it makes the screen correct even when opened in a cold process.
     LaunchedEffect(Unit) { PetStore.load(context) }
     val state by PetStore.state.collectAsState()
-    val mood = state.mood
+    // The live seam (2.3): the face follows the action, then settles back into its needs.
+    val presence = rememberPetPresence(streaming = streaming, error = error)
+    val mood = PetLive.mood(presence = presence, needs = state.needs, aloneHours = state.aloneHours)
 
     Scaffold(containerColor = MuseTones.canvas) { padding ->
         Column(
@@ -82,7 +93,7 @@ fun PetScreen(onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(8.dp))
-            PetFace(mood = mood)
+            PetFace(mood = mood, outfit = state.outfit)
             Spacer(Modifier.height(14.dp))
 
             // What the Pet is feeling, in words, so the face is not the only carrier.
@@ -91,7 +102,29 @@ fun PetScreen(onBack: () -> Unit) {
                 fontSize = 15.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(6.dp))
+            // What it remembers: the run of days, and how long the two of them have known each
+            // other. A streak of zero is simply not shown rather than shown as a failure.
+            val today = PetStreak.dayOf(System.currentTimeMillis())
+            val streakDays = PetStreak.shownOn(state.streak, today)
+            Text(
+                text = buildString {
+                    if (streakDays > 0) {
+                        append(
+                            pluralStringResource(
+                                R.plurals.tama_pet_streak,
+                                streakDays,
+                                streakDays,
+                            ),
+                        )
+                        append("  \u00b7  ")
+                    }
+                    append(stringResource(R.string.tama_pet_days_known, state.memory.daysKnown(today)))
+                },
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(16.dp))
 
             NeedsCard(state.needs)
 
@@ -99,6 +132,12 @@ fun PetScreen(onBack: () -> Unit) {
             CareRow(onCare = { action ->
                 PetStore.care(context, action)
             })
+
+            Spacer(Modifier.height(14.dp))
+            WardrobeRow(
+                state = state,
+                onPick = { outfit -> PetStore.wear(context, outfit) },
+            )
 
             Spacer(Modifier.height(14.dp))
             LevelCard(state.progress)
@@ -135,13 +174,20 @@ private fun PetMood.agentMood(): AgentMood = when (asset) {
     PetMoodAsset.ERROR -> AgentMood.ERROR
 }
 
+/**
+ * The face in its scene (SL-001).
+ *
+ * The outfit is a backdrop behind the disc and one emoji at its corner — never a second character
+ * renderer, so whatever face the person chose for the agent (the dragon, a preset, an emoji) is
+ * still the face inside the costume.
+ */
 @Composable
-private fun PetFace(mood: PetMood) {
+private fun PetFace(mood: PetMood, outfit: PetOutfit) {
     Box(
         modifier = Modifier
             .size(132.dp)
             .clip(CircleShape)
-            .background(MuseTones.disc),
+            .background(if (outfit.backdrop.paints) outfit.backdrop.color() else MuseTones.disc),
         contentAlignment = Alignment.Center,
     ) {
         AgentAvatar(
@@ -149,7 +195,30 @@ private fun PetFace(mood: PetMood) {
             size = 104.dp,
             contentDescription = stringResource(R.string.tama_pet_face_description),
         )
+        outfit.accessory?.let { accessory ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 8.dp, bottom = 8.dp)
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(MuseTones.surface),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = accessory, fontSize = 15.sp)
+            }
+        }
     }
+}
+
+/** The scene colours, taken from the app's own tones so dark mode stays coherent. */
+@Composable
+private fun PetBackdrop.color(): Color = when (this) {
+    PetBackdrop.NONE -> MuseTones.disc
+    PetBackdrop.DAWN -> if (MuseTones.isDark) Color(0xFF2A2540) else Color(0xFFF3EFFB)
+    PetBackdrop.MOSS -> if (MuseTones.isDark) Color(0xFF1F2A21) else Color(0xFFEDF3EA)
+    PetBackdrop.DUSK -> if (MuseTones.isDark) Color(0xFF22222E) else Color(0xFFEDEEF4)
+    PetBackdrop.TIDE -> if (MuseTones.isDark) Color(0xFF1C2830) else Color(0xFFE8F1F4)
 }
 
 /** The four needs, each a labelled bar from 0 to 100. */
@@ -245,6 +314,81 @@ private fun CareButton(label: String, modifier: Modifier, onClick: () -> Unit) {
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
+        }
+    }
+}
+
+/**
+ * The outfits, in one horizontally scrolling strip (SL-001).
+ *
+ * A locked one is shown greyed with the level it needs rather than hidden: a reward the person can
+ * see is a reward. The one being worn is marked, and the one merely *chosen* while still locked is
+ * marked differently, so the choice is never silently lost.
+ */
+@Composable
+private fun WardrobeRow(state: PetState, onPick: (PetOutfit) -> Unit) {
+    val level = state.progress.level
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.tama_pet_wardrobe),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(start = 24.dp, bottom = 8.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            for (outfit in PetOutfit.ALL) {
+                val unlocked = PetOutfit.isUnlocked(outfit, level)
+                val worn = state.outfit.id == outfit.id
+                val chosen = state.wardrobe.chosenId == outfit.id
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (worn) MuseTones.action else MuseTones.surface,
+                    modifier = Modifier
+                        .size(width = 74.dp, height = 64.dp)
+                        .clickable(enabled = unlocked) { onPick(outfit) },
+                ) {
+                    Column(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            text = outfit.accessory ?: "—",
+                            fontSize = 17.sp,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = if (unlocked) {
+                                stringResource(R.string.tama_pet_outfit_name, outfit.id)
+                            } else {
+                                stringResource(R.string.tama_pet_outfit_locked, outfit.unlockLevel)
+                            },
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            color = when {
+                                worn -> Color.White
+                                unlocked -> MaterialTheme.colorScheme.onSurfaceVariant
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f)
+                            },
+                        )
+                        if (chosen && !worn) {
+                            Box(
+                                Modifier
+                                    .size(4.dp)
+                                    .clip(CircleShape)
+                                    .background(MuseTones.action),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -1291,4 +1291,14 @@
     <string name="tama_pet_action_feed">Pakainin</string>
     <string name="tama_pet_action_rest">Magpahinga</string>
     <string name="tama_pet_action_play">Maglaro</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">Kasuotan</string>
+    <string name="tama_pet_outfit_name">TAMA AI Pet</string>
+    <string name="tama_pet_outfit_locked">Level %1$d</string>
+    <string name="tama_pet_days_known">%1$d araw na magkasama</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">1 araw na sunod-sunod</item>
+        <item quantity="other">%1$d araw na sunod-sunod</item>
+    </plurals>
 </resources>

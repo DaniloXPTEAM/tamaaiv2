@@ -1271,4 +1271,14 @@
     <string name="tama_pet_action_feed">Feed</string>
     <string name="tama_pet_action_rest">Rest</string>
     <string name="tama_pet_action_play">Play</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">Outfit</string>
+    <string name="tama_pet_outfit_name">TAMA AI Pet</string>
+    <string name="tama_pet_outfit_locked">Level %1$d</string>
+    <string name="tama_pet_days_known">%1$d days together</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">1 day in a row</item>
+        <item quantity="other">%1$d days in a row</item>
+    </plurals>
 </resources>

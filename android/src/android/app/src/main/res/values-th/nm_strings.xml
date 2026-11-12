@@ -1287,4 +1287,14 @@
     <string name="tama_pet_action_feed">ให้อาหาร</string>
     <string name="tama_pet_action_rest">พักผ่อน</string>
     <string name="tama_pet_action_play">เล่นด้วย</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">ชุด</string>
+    <string name="tama_pet_outfit_name">สัตว์เลี้ยง TAMA AI</string>
+    <string name="tama_pet_outfit_locked">Lv %1$d</string>
+    <string name="tama_pet_days_known">อยู่ด้วยกัน %1$d วัน</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">ต่อเนื่อง 1 วัน</item>
+        <item quantity="other">ต่อเนื่อง %1$d วัน</item>
+    </plurals>
 </resources>

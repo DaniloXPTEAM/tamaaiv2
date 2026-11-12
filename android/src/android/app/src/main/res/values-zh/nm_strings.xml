@@ -1264,4 +1264,14 @@
     <string name="tama_pet_action_feed">喂食</string>
     <string name="tama_pet_action_rest">休息</string>
     <string name="tama_pet_action_play">玩耍</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">装扮</string>
+    <string name="tama_pet_outfit_name">TAMA AI 宠物</string>
+    <string name="tama_pet_outfit_locked">等级 %1$d</string>
+    <string name="tama_pet_days_known">相伴 %1$d 天</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">连续 1 天</item>
+        <item quantity="other">连续 %1$d 天</item>
+    </plurals>
 </resources>

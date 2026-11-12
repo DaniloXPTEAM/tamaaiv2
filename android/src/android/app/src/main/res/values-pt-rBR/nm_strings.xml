@@ -1292,4 +1292,14 @@
     <string name="tama_pet_action_feed">Alimentar</string>
     <string name="tama_pet_action_rest">Descansar</string>
     <string name="tama_pet_action_play">Brincar</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">Roupa</string>
+    <string name="tama_pet_outfit_name">Pet TAMA AI</string>
+    <string name="tama_pet_outfit_locked">Nível %1$d</string>
+    <string name="tama_pet_days_known">%1$d dias juntos</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">1 dia seguido</item>
+        <item quantity="other">%1$d dias seguidos</item>
+    </plurals>
 </resources>

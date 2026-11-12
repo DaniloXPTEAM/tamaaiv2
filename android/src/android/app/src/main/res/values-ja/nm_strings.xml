@@ -1287,4 +1287,14 @@
     <string name="tama_pet_action_feed">ごはんをあげる</string>
     <string name="tama_pet_action_rest">やすませる</string>
     <string name="tama_pet_action_play">あそぶ</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">きせかえ</string>
+    <string name="tama_pet_outfit_name">TAMA AI ペット</string>
+    <string name="tama_pet_outfit_locked">Lv %1$d</string>
+    <string name="tama_pet_days_known">一緒に %1$d 日</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">1日連続</item>
+        <item quantity="other">%1$d日連続</item>
+    </plurals>
 </resources>
