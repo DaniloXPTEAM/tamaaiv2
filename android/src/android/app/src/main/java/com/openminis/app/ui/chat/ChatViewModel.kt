@@ -3675,7 +3675,7 @@ class ChatViewModel(
                 if (pinned != null && io.github.nanomuse.cloud.NanoMuseCloud.owns(context, pinned)) {
                     val cloudGroup = providerRepository.defaultPrimaryGroupId
                         ?.let { id -> config.modelGroups.firstOrNull { it.id == id } }
-                        ?.takeIf { it.name == io.github.nanomuse.cloud.NanoMuseCloud.LABEL && pinned.id !in it.memberEntryIds }
+                        ?.takeIf { io.github.nanomuse.cloud.NanoMuseCloud.ownsGroup(it.name) && pinned.id !in it.memberEntryIds }
                     if (cloudGroup != null && resolveProviderFromGroup(cloudGroup.id)) {
                         _selectedGroupId.value = cloudGroup.id
                         AppLogger.info(

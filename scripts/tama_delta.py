@@ -112,6 +112,12 @@ def package_ids() -> None:
 #: clients, so the brand must not move them.
 WIRE_TAG = re.compile(r"nanomuse-(?=[a-z])")
 
+# A stored value this app must keep reading after the rebrand: a group, folder or key written by
+# an older build is still the same thing, and rewriting it would orphan the person's data. These
+# are the only literals allowed to keep the old brand, and each is listed by exact contents rather
+# than by a pattern, so the check below still fails on a new, accidental `nanoMuse`.
+LEGACY_LITERALS = ('"nanoMuse Cloud"',)
+
 
 def brand_in_kotlin(text: str) -> str:
     """Replace the brand inside Kotlin **string literals only**, walking the file once.
@@ -184,6 +190,26 @@ def _brand_in_literal(body: str) -> str:
     body = WIRE_TAG.sub(lambda m: "\x00wire\x00", body)
     body = re.sub(r"nanoMuse(?=[-/])", TOKEN, body)  # a token: TAMA-AI-Android/1.0.9
     return re.sub(r"nanoMuse", NAME, body).replace("\x00wire\x00", "nanomuse-")
+
+
+def _brand_diff(text: str) -> bool:
+    """Does [text] still carry the brand outside the literals that must keep it?
+
+    The allowed legacy literals are the only exception, and they are recognised by their own
+    *original* text: a line that already reads `"nanoMuse Cloud"` is left as it is, while the
+    rebranded `LABEL` next to it still has to change. Comparing line by line keeps the exception
+    from swallowing a genuine miss elsewhere in the same file.
+    """
+    branded_lines = brand_in_kotlin(text).splitlines()
+    for original, branded in zip(text.splitlines(), branded_lines, strict=False):
+        if branded == original:
+            continue
+        if original.strip() in LEGACY_LITERALS or any(
+            literal in original for literal in LEGACY_LITERALS
+        ):
+            continue
+        return True
+    return len(text.splitlines()) != len(branded_lines)
 
 
 def product_name() -> None:
@@ -376,7 +402,7 @@ def check() -> int:
     in_kotlin = [
         str(p.relative_to(ROOT))
         for p in kotlin_files()
-        if brand_in_kotlin(p.read_text(encoding="utf-8")) != p.read_text(encoding="utf-8")
+        if _brand_diff(p.read_text(encoding="utf-8"))
     ]
     if in_kotlin:
         problems.append(

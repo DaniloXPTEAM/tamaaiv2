@@ -49,6 +49,17 @@ object NanoMuseCloud {
     const val DEFAULT_BASE = "https://cloud.nanomuse.cn"
     const val LABEL = "TAMA AI Cloud"
 
+    /**
+     * The group name this app used before the rebrand. A group the person already has under it is
+     * still *ours*: [LABEL] renamed the name, not the group, and matching only the new string
+     * would hand a signed-in account a second, duplicate group. Kept as a list so a further
+     * rename stays one edit.
+     */
+    val LEGACY_LABELS = listOf("nanoMuse Cloud")
+
+    /** Whether [name] is ours under any of the names this app has given the group. */
+    fun ownsGroup(name: String): Boolean = name == LABEL || name in LEGACY_LABELS
+
     private const val PREFS = "nanomuse"
     private const val KEY_BASE = "cloud.base"
     private const val KEY_INSTANCE = "cloud.instance_id"
@@ -916,11 +927,11 @@ object NanoMuseCloud {
             // Ours already, with the recommended model or with the person's own choice
             // (a member who swapped the recommended model for another must not get a
             // second "nanoMuse Cloud" group with the old one back on signing in again).
-            val already = config.modelGroups.any { chatEntry.id in it.memberEntryIds || (it.name == LABEL && it.memberEntryIds.isNotEmpty()) }
+            val already = config.modelGroups.any { chatEntry.id in it.memberEntryIds || (ownsGroup(it.name) && it.memberEntryIds.isNotEmpty()) }
             if (!already) {
                 // A group of ours left empty by an earlier sign-out is reused rather
                 // than doubled; otherwise a new one.
-                val empty = config.modelGroups.firstOrNull { it.name == LABEL && it.memberEntryIds.isEmpty() }
+                val empty = config.modelGroups.firstOrNull { ownsGroup(it.name) && it.memberEntryIds.isEmpty() }
                 if (empty != null) {
                     repo.updateGroup(empty.copy(memberEntryIds = (empty.memberEntryIds + chatEntry.id).toMutableList()))
                     if (repo.defaultPrimaryGroupId == null) repo.defaultPrimaryGroupId = empty.id
