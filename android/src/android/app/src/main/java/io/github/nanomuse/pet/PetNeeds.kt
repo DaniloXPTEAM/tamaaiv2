@@ -160,13 +160,21 @@ enum class PetMood(val asset: PetMoodAsset) {
             working -> FOCUSED
             recentFailure -> GRUMPY
             recentSuccess -> CONTENT
+            // Away *and* worn is the sulk, and it outranks the plain "I need something": a Pet
+            // whose needs have collapsed while nobody was there is not asking, it is unhappy.
+            aloneHours > 0L && needs.overall <= PetNeeds.NEEDY_THRESHOLD -> GRUMPY
             needs.weakest != null -> NEEDY
-            aloneHours >= ALONE_SULK_HOURS -> GRUMPY
-            needs.overall >= PetNeeds.HIGH -> CONTENT
+            needs.overall >= PetNeeds.CONTENT_THRESHOLD -> CONTENT
             else -> CALM
         }
 
-        /** Away for this long, with the needs already low, and the Pet sulks. */
+        /**
+         * Kept for callers that want to name the span, not as the sulk's trigger.
+         *
+         * The store does not hand [of] a live absence (it passes `aloneHours = 0`, because the
+         * decayed needs already say how long it was), so gating the sulk on this constant meant a
+         * sulk that never happened. "Away, and the needs have fallen" is the condition now.
+         */
         const val ALONE_SULK_HOURS = 72L
     }
 }

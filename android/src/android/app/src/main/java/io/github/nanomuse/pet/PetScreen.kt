@@ -27,6 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -70,6 +71,11 @@ fun PetScreen(
     val context = LocalContext.current
     // Idempotent and cheap: it makes the screen correct even when opened in a cold process.
     LaunchedEffect(Unit) { PetStore.load(context) }
+    // Leaving the screen is what starts the absence, so stamp the visit on dispose rather than on
+    // every recomposition: the person looked at the Pet, and the next load decays from here.
+    DisposableEffect(Unit) {
+        onDispose { PetStore.touch(context) }
+    }
     val state by PetStore.state.collectAsState()
     // The live seam (2.3): the face follows the action, then settles back into its needs.
     val presence = rememberPetPresence(streaming = streaming, error = error)

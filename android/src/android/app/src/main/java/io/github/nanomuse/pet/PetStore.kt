@@ -198,11 +198,19 @@ object PetStore {
         return after
     }
 
-    /** Records that the person was looking at the Pet, so the next load decays from now. */
+    /**
+     * Records that the person is looking at the Pet, so the next load decays from now.
+     *
+     * It loads first, and that guard is the whole point: without it this wrote the in-memory
+     * default (level 1, full needs, no streak) over whatever was on disk whenever the process had
+     * not loaded yet, which is every time this is called from a place other than the Pet screen.
+     * Decay is derived from the stored stamp, so refreshing the stamp costs nothing and must never
+     * cost the person their Pet.
+     */
     @Synchronized
     fun touch(context: Context, nowMillis: Long = System.currentTimeMillis()) {
-        val current = _state.value
-        write(context, current, nowMillis)
+        load(context, nowMillis)
+        write(context, _state.value, nowMillis)
     }
 
     private fun write(context: Context, state: PetState, nowMillis: Long) {

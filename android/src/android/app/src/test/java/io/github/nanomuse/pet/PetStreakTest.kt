@@ -95,11 +95,13 @@ class PetStreakTest {
     }
 
     @Test
-    fun `day numbers do not jump because of a half-day`() {
-        val noon = PetStreak.dayOf(1_700_000_000_000L)
-        val nextMorning = PetStreak.dayOf(1_700_000_000_000L - 1)
+    fun `a millisecond earlier is the same day, and the epoch floors instead of truncating`() {
+        val atNoon = PetStreak.dayOf(1_700_000_000_000L)
+        // One millisecond before an instant is still that instant's day; a boundary is where the
+        // day changes, not where a rounding error lands.
+        assertEquals(atNoon, PetStreak.dayOf(1_700_000_000_000L - 1))
         // The sign of the division must be consistent on both sides of the epoch.
-        assertEquals(noon - 1, nextMorning)
+        assertEquals(atNoon - 1, PetStreak.dayOf(atNoon * PetStreak.DAY_MS - 1))
         val before = PetStreak.dayOf(-1L)
         assertEquals("floor division, not truncation", -1L, before)
     }
