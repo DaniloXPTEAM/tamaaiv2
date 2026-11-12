@@ -392,6 +392,20 @@ object SessionActivityTracker {
         // the "completed" semantic honest).
         if (wasActive) {
             completionListener?.invoke(sessionId, wasError)
+            // TAMA AI: the Pet is paid here, at the one point a turn is known to have
+            // finished with a known outcome. The ledger makes a repeated report of the
+            // same turn a no-op, because this can be reached more than once for one turn.
+            appContext?.let { ctx ->
+                io.github.nanomuse.pet.PetTurnRecorder.onTurnFinished(
+                    context = ctx,
+                    sessionId = sessionId,
+                    outcome = when {
+                        cancelled -> io.github.nanomuse.pet.PetTurnOutcome.CANCELLED
+                        wasError -> io.github.nanomuse.pet.PetTurnOutcome.FAILURE
+                        else -> io.github.nanomuse.pet.PetTurnOutcome.SUCCESS
+                    },
+                )
+            }
         }
     }
 

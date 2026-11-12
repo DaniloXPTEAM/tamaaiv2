@@ -97,6 +97,7 @@ fun AgentProfileScreen(
     onEditName: () -> Unit,
     onChangeAvatar: () -> Unit,
     onOpenAvatarStudio: () -> Unit,
+    onOpenPet: () -> Unit,
     onOpenSession: (String) -> Unit,
     onOpenPermissions: () -> Unit,
     onOpenRoutines: () -> Unit,
@@ -176,6 +177,10 @@ fun AgentProfileScreen(
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.nm_profile_avatar_studio), color = MaterialTheme.colorScheme.onSurfaceVariant) },
                                 onClick = { penMenu = false; onOpenAvatarStudio() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.tama_pet_title)) },
+                                onClick = { penMenu = false; onOpenPet() },
                             )
                         }
                     }

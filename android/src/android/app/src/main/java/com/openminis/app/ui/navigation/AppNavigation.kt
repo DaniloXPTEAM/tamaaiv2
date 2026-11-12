@@ -750,6 +750,13 @@ fun AppNavigation(
         // nanoMuse: the agent's page behind the face — today's activity, approvals, daily,
         // soul & memory; the pen offers "Change avatar" (back to the chat, pre-typed) and
         // "Edit name".
+        // TAMA AI: the Pet's progress page — the face at its stage, the level and the ring.
+        composable(io.github.nanomuse.pet.ROUTE_PET) {
+            io.github.nanomuse.pet.PetScreen(
+                onBack = { navController.safePopBackStack() },
+            )
+        }
+
         composable(io.github.nanomuse.ui.profile.ROUTE_AGENT_PROFILE) {
             val ctx = LocalContext.current
             io.github.nanomuse.ui.profile.AgentProfileScreen(
@@ -761,6 +768,7 @@ fun AppNavigation(
                     navController.safePopBackStack()
                 },
                 onOpenAvatarStudio = { navController.safeNavigate(io.github.nanomuse.ui.avatar.ROUTE_AVATAR_STUDIO) },
+                onOpenPet = { navController.safeNavigate(io.github.nanomuse.pet.ROUTE_PET) },
                 onOpenSession = { id ->
                     io.github.nanomuse.ui.home.HomeBus.showSession(id)
                     navController.safePopBackStack()
