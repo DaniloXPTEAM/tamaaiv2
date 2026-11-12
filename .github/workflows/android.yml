@@ -84,6 +84,11 @@ jobs:
 
       - name: assembleDebug
         working-directory: android/src/android
+        env:
+          # TAMA: the emulator job below is x86_64 and this filter otherwise ships arm64-v8a only.
+          # The build already supports both (`-Pnm.abi`), and this switches the artifact for every
+          # job that depends on it, so the phone APK and the emulator APK can never disagree.
+          ORG_GRADLE_PROJECT_nm_abi: x86_64
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
           ./gradlew :app:assembleDebug --console=plain --no-daemon 2>&1 | tee /tmp/gradle.log
@@ -184,7 +189,10 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -o pipefail
-            APK="$(ls apk/*.apk | head -1)"
+            # download-artifact extracts into a subdirectory named after the artifact, and where
+            # it lands has moved between major versions: find it instead of assuming a level.
+            APK="$(find apk -name '*.apk' | head -1)"
+            echo "::notice title=apk::${APK:-none found}"
             echo "installing $APK"
             adb install -r -t "$APK"
             adb shell pm list packages | grep -c 'ai.tama.assistant' | sed 's/^/::notice title=installed::packages matched: /'
@@ -201,18 +209,14 @@ jobs:
             adb exec-out screencap -p > /tmp/launch.png
             ls -l /tmp/launch.png
             adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime.*E ' | head -20 || true
-
-      - name: Publish what the device saw, as annotations
-        if: always()
-        run: |
-          report() { echo "::error title=device::$1"; }
-          [ -f /tmp/am.log ] && grep -E 'Status:|Error:|Activity:' /tmp/am.log | while IFS= read -r l; do
-            echo "::notice title=am start::${l}"
-          done
-          if [ -f /tmp/launch.png ]; then
-            echo "::notice title=screenshot::$(stat -c%s /tmp/launch.png) bytes captured"
-          fi
-          adb logcat -d -b crash 2>/dev/null | tail -40 | while IFS= read -r l; do report "$l"; done
+            # Published here, not in a later step: once this step ends the emulator is gone, and
+            # an adb call after it hangs rather than failing.
+            [ -f /tmp/am.log ] && grep -E 'Status:|Error:|Activity:' /tmp/am.log | while IFS= read -r l; do
+              echo "::notice title=am start::${l}"
+            done
+            adb logcat -d -b crash 2>/dev/null | tail -40 | while IFS= read -r l; do
+              echo "::error title=crash buffer::${l}"
+            done
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
