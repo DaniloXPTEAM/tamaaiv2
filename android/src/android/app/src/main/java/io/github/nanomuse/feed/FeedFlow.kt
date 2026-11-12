@@ -269,7 +269,7 @@ object FeedFlow {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, ScheduledTaskManager.CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_nanomuse)
+            .setSmallIcon(R.drawable.ic_stat_tama)
             .setLargeIcon(NanoMuseIdentity.face(context))
             .setContentTitle("${NanoMuseIdentity.name(context)}: ${context.getString(R.string.nm_feed_session_title)}")
             .setContentText(body)

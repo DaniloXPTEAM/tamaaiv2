@@ -386,3 +386,46 @@ primeiro, e a `PetScreen` o chama no `dispose`: sair da tela é o que começa a 
 `relay · windows-latest` falhou no run `43306046650` com a árvore idêntica à de `c4830e6`, que
 tinha passado; o mesmo commit `6d37d1b` também passou. Localmente o relay fecha **335 passed**.
 Tratado como instável do runner, não como defeito — registrado em vez de arredondado.
+
+---
+
+## 10. O ícone: a tartaruga (SL-002)
+
+O app ainda usava os ícones do nanoMuse (o "N" de um traço). O ícone do derivado passa a ser um
+símbolo próprio: **um casco de tartaruga com o A do TAMA recortado dentro**, cabeça à direita e
+um olho. A ideia é a mesma do Pet - é o bicho que acompanha o trabalho, e o app se chama AI.
+
+**Por que não foi à mão livre:** não há renderizador de SVG neste sandbox (Playwright ausente,
+`rsvg` ausente, `cairo` não carrega, skia exige libEGL). Então a geometria é **distância
+assinada** em `tools/icon/design.py`, rasterizada por supersampling em numpy puro
+(`tools/icon/render.py`, `tools/icon/png.py`). Sem dependência de renderizador em lugar nenhum.
+
+**Um único caminho, com buracos.** O A, o olho e a costura do casco são recortes, não uma segunda
+cor. Por isso o mesmo arquivo serve para o degradê, para a pele branca do tema escuro e para a
+máscara de ícone temático do Android 13.
+
+| Peça | Onde | O que é |
+|---|---|---|
+| geometria | `tools/icon/design.py` | casca, cabeça, quatro patas, costura, A, olho |
+| raster | `tools/icon/render.py`, `png.py` | prévia e os PNGs legados (mdpi..xxxhdpi, dia e noite) |
+| vetor | `tools/icon/emit.py` | traça o contorno e emite `assets/brand/tama-mark.svg` |
+| variante 24dp | `assets/brand/tama-mark-small.svg` | sem a costura: a 24dp ela vira halo cinza |
+| gerador | `scripts/gen-android-icons.py`, `MARK = "tama"` | escreve vetores e adaptive icons |
+
+**Como a forma foi provada, e não afirmada:** `emit.py` rasteriza o próprio caminho que acabou de
+escrever e compara com a geometria de origem. IoU **0,9951** a 256 px e **0,9985** a 48 px para o
+ícone grande; **1,0000** a 24 px para a variante pequena. Se o caminho divergir da geometria, o
+script se recusa a gravar.
+
+**Erros meus durante o trabalho, registrados:** a primeira prévia saiu ciano porque eu dividia uma
+*suma* de 16 amostras pela *média* delas (cor 16x saturada); o "A" saiu um "V" invertido até eu
+virar o triângulo; e uma condição extra (`shell > -3.0`) apagou a costura inteira. Os três foram
+vistos na imagem antes de qualquer commit.
+
+**Teste:** `tests/test_tama_icon.py`, 6 casos, que falham se alguém remover o `fillType="evenodd"`
+(sem ele o ícone vira um borrão sólido), se o adaptive icon voltar a apontar para o nanoMuse, se a
+notificação passar a usar uma variante com costura, ou se o código do app voltar a pedir
+`ic_stat_nanomuse`. Suíte: **1552 passam**.
+
+O que **não** foi feito: os ícones do iOS (`android/src/ios/...`) e o favicon da Web continuam os
+do nanoMuse; e a arte não passou por revisão visual humana além da minha.

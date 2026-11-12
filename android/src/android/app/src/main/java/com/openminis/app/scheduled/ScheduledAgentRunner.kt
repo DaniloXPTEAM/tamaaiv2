@@ -327,7 +327,7 @@ object ScheduledAgentRunner {
         // nanoMuse: the agent's own name, as on every other notification it sends.
         val title = "${io.github.nanomuse.identity.NanoMuseIdentity.name(context)}: ${task.label.ifBlank { "Scheduled task" }}"
         val notification = NotificationCompat.Builder(context, ScheduledTaskManager.CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_nanomuse) // nanoMuse: flat status-bar mark
+            .setSmallIcon(R.drawable.ic_stat_tama) // nanoMuse: flat status-bar mark
             .setLargeIcon(io.github.nanomuse.identity.NanoMuseIdentity.face(context)) // nanoMuse: the agent is the sender
             .setContentTitle(title)
             .setContentText(preview)

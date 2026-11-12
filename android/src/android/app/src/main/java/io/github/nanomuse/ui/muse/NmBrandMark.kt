@@ -28,7 +28,7 @@ fun NmBrandMark(size: Dp = 104.dp, modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            painter = painterResource(R.drawable.ic_stat_nanomuse),
+            painter = painterResource(R.drawable.ic_stat_tama),
             contentDescription = null,
             tint = Color.White,
             modifier = Modifier.size(size * 0.58f),
