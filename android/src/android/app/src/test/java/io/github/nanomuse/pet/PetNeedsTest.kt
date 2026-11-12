@@ -155,11 +155,18 @@ class PetNeedsTest {
     }
 
     @Test
-    fun `a short absence is not a sulk, a long one is`() {
+    fun `the sulk needs an absence and needs that actually fell`() {
         val ok = PetNeeds(satiety = 70, energy = 70, mood = 70, bond = 70)
         assertEquals(PetMood.CONTENT, PetMood.of(ok, aloneHours = 0))
-        assertEquals(PetMood.CONTENT, PetMood.of(ok, aloneHours = PetMood.ALONE_SULK_HOURS - 1))
-        assertEquals(PetMood.GRUMPY, PetMood.of(ok, aloneHours = PetMood.ALONE_SULK_HOURS))
+        // Time alone, with the needs still fine, is not a grievance: the Pet's whole premise is
+        // that this app works for people who are away, so absence on its own must not punish.
+        assertEquals(PetMood.CONTENT, PetMood.of(ok, aloneHours = PetMood.ALONE_SULK_HOURS))
+        assertEquals(PetMood.CONTENT, PetMood.of(ok, aloneHours = PetMood.ALONE_SULK_HOURS * 4))
+        // Away long enough for the needs to have collapsed: that is the sulk, and it outranks
+        // the plain "I need something" because it is unhappiness, not a request.
+        val worn = PetNeeds(satiety = 20, energy = 20, mood = 20, bond = 20)
+        assertEquals(PetMood.NEEDY, PetMood.of(worn))
+        assertEquals(PetMood.GRUMPY, PetMood.of(worn, aloneHours = PetMood.ALONE_SULK_HOURS))
     }
 
     @Test
