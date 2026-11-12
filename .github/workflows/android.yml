@@ -86,7 +86,8 @@ jobs:
         working-directory: android/src/android
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          ./gradlew :app:assembleDebug --console=plain --no-daemon
+          ./gradlew :app:assembleDebug --console=plain --no-daemon 2>&1 | tee /tmp/gradle.log
+          exit "${PIPESTATUS[0]}"
 
       # Our unit tests (io.github.nanomuse.*: the guards, the hub client, the sandbox paths, the
       # strings' parity), plus the upstream provider and sandbox tests, the two OpenMinis packages
@@ -105,6 +106,14 @@ jobs:
       - name: Publish failing assertions as annotations
         if: failure()
         run: |
+          # A compile failure leaves no JUnit XML, so the Gradle "e: ..." lines are published too.
+          # Without this the only thing readable from a restricted checkout is the exit code.
+          if [ -f /tmp/gradle.log ]; then
+            grep -E '^e: |^> Task .*FAILED|error: |AAPT2|Execution failed for task' /tmp/gradle.log \
+              | head -40 | while IFS= read -r line; do
+                echo "::error title=gradle::${line//$'\n'/ }"
+              done || true
+          fi
           python3 - <<'PY' || true
           import glob, xml.etree.ElementTree as ET
           for f in glob.glob('android/src/android/app/build/test-results/testDebugUnitTest/*.xml'):
