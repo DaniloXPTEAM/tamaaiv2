@@ -51,9 +51,10 @@ object PetStore {
     )
     val state: StateFlow<PetState> = _state
 
+    private val _pet = MutableStateFlow(PetLadder.progressFor(0))
+
     /** Just the progress, for callers that only want the level. */
     val pet: StateFlow<PetProgress> = _pet
-    private val _pet = MutableStateFlow(PetLadder.progressFor(0))
 
     @Volatile private var loaded = false
 

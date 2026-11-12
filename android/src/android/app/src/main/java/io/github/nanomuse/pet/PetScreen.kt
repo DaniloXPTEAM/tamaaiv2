@@ -29,7 +29,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,7 +62,7 @@ fun PetScreen(onBack: () -> Unit) {
     // Idempotent and cheap: it makes the screen correct even when opened in a cold process.
     LaunchedEffect(Unit) { PetStore.load(context) }
     val state by PetStore.state.collectAsState()
-    val mood = remember(state.mood) { state.mood }
+    val mood = state.mood
 
     Scaffold(containerColor = MuseTones.canvas) { padding ->
         Column(
@@ -94,10 +93,12 @@ fun PetScreen(onBack: () -> Unit) {
             )
             Spacer(Modifier.height(18.dp))
 
-            NeedsCard(state.needs, mood)
+            NeedsCard(state.needs)
 
             Spacer(Modifier.height(14.dp))
-            CareRow(onCare = { action -> PetStore.care(context, action) })
+            CareRow(onCare = { action ->
+                PetStore.care(context, action)
+            })
 
             Spacer(Modifier.height(14.dp))
             LevelCard(state.progress)
@@ -153,7 +154,7 @@ private fun PetFace(mood: PetMood) {
 
 /** The four needs, each a labelled bar from 0 to 100. */
 @Composable
-private fun NeedsCard(needs: PetNeeds, mood: PetMood) {
+private fun NeedsCard(needs: PetNeeds) {
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = MuseTones.surface,

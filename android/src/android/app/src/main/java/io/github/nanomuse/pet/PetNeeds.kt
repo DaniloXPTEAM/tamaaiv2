@@ -82,7 +82,7 @@ object PetDecay {
     const val BOND_PER_HOUR = 2
 
     /** A single absence cannot burn more than this, so a month away is not a wiped Pet. */
-    const val MAX_DECAY_HOURS = 24 * 7
+    const val MAX_DECAY_HOURS = 24L * 7
 
     fun rate(need: PetNeed): Int = when (need) {
         PetNeed.SATIETY -> SATIETY_PER_HOUR
@@ -99,7 +99,7 @@ object PetDecay {
      */
     fun after(needs: PetNeeds, elapsedMs: Long): PetNeeds {
         if (elapsedMs <= 0L) return needs
-        val hours = (elapsedMs / HOUR_MS).coerceAtMost(MAX_DECAY_HOURS.toLong())
+        val hours = (elapsedMs / HOUR_MS).coerceAtMost(MAX_DECAY_HOURS)
         if (hours <= 0L) return needs
         return PetNeeds(
             satiety = drop(needs.satiety, SATIETY_PER_HOUR, hours),
@@ -110,7 +110,9 @@ object PetDecay {
     }
 
     private fun drop(value: Int, perHour: Int, hours: Long): Int =
-        (value - perHour * hours).coerceAtLeast(PetNeeds.EMPTY)
+        // Long arithmetic on purpose (hours can be large), narrowed once at the end after the
+        // floor, so the Int conversion can never overflow into a negative need.
+        (value - perHour * hours).coerceAtLeast(PetNeeds.EMPTY.toLong()).toInt()
 
     const val HOUR_MS = 60L * 60L * 1000L
 }
