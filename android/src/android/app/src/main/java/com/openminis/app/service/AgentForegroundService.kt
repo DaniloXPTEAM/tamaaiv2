@@ -189,7 +189,7 @@ class AgentForegroundService : Service() {
         if (com.openminis.app.crash.CrashFrequencyDetector.isSafeMode()) {
             try {
                 val stub = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
-                    .setContentTitle("nanoMuse")
+                    .setContentTitle("TAMA AI")
                     .setSmallIcon(android.R.drawable.stat_sys_warning)
                     .setOngoing(false)
                     .build()
@@ -983,15 +983,15 @@ class AgentForegroundService : Service() {
      * so the user still gets a hint about what's running.
      */
     private fun toolDisplayLabel(toolName: String): String = when (toolName) {
-        "shell_execute" -> "nanoMuse is using Shell"
-        "file_read" -> "nanoMuse is reading File"
-        "file_write" -> "nanoMuse is using Editor"
-        "file_edit" -> "nanoMuse is editing File"
-        "browser_use" -> "nanoMuse is using Browser"
-        "read_image" -> "nanoMuse is reading Image"
-        "memory_write", "memory_get" -> "nanoMuse is using Memory"
-        "web_search" -> "nanoMuse is using Search"
-        else -> "nanoMuse is using $toolName"
+        "shell_execute" -> "TAMA AI is using Shell"
+        "file_read" -> "TAMA AI is reading File"
+        "file_write" -> "TAMA AI is using Editor"
+        "file_edit" -> "TAMA AI is editing File"
+        "browser_use" -> "TAMA AI is using Browser"
+        "read_image" -> "TAMA AI is reading Image"
+        "memory_write", "memory_get" -> "TAMA AI is using Memory"
+        "web_search" -> "TAMA AI is using Search"
+        else -> "TAMA AI is using $toolName"
     }
 
     /**

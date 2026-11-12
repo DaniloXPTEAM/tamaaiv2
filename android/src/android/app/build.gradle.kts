@@ -54,11 +54,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.nanomuse.app"
+        applicationId = "ai.tama.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 52
-        versionName = "1.0.9"
+        versionCode = 530
+        versionName = "1.0.9-tama.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
