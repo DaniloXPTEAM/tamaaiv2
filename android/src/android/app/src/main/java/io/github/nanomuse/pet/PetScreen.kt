@@ -1,6 +1,7 @@
 package io.github.nanomuse.pet
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,8 +26,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,26 +45,25 @@ import io.github.nanomuse.ui.avatar.AgentMood
 import io.github.nanomuse.ui.home.MuseRoundButton
 import io.github.nanomuse.ui.home.MuseTones
 
-/** The Pet's own page: the face at its current stage, the level, and what is left to the next one. */
+/** The Pet's own page: the face, its mood, its needs and its level. */
 const val ROUTE_PET = "tama/pet"
 
 /**
  * The Pet screen.
  *
- * Deliberately thin: every number shown here comes from [PetProgress], which is pure and pinned by
- * tests; the face is the app's existing [AgentAvatar] rather than a second character renderer, so
- * the Pet and the chat header can never disagree about what the agent looks like. There is no
- * second scheduler here either — XP arrives from finished turns, and this screen only reads it.
+ * Every number shown here comes from [PetState], which is pure and pinned by tests; the face is
+ * the app's existing [AgentAvatar] rather than a second character renderer, so the Pet and the
+ * chat header can never disagree about what the agent looks like. There is no second scheduler
+ * here either — the needs decay is recovered from two timestamps on read, so nothing runs while
+ * the app is closed.
  */
 @Composable
-fun PetScreen(
-    onBack: () -> Unit,
-) {
+fun PetScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    // load() is idempotent and cheap; it makes the screen correct even when opened before any
-    // turn has finished in this process.
-    androidx.compose.runtime.LaunchedEffect(Unit) { PetStore.load(context) }
-    val pet by PetStore.pet.collectAsState()
+    // Idempotent and cheap: it makes the screen correct even when opened in a cold process.
+    LaunchedEffect(Unit) { PetStore.load(context) }
+    val state by PetStore.state.collectAsState()
+    val mood = remember(state.mood) { state.mood }
 
     Scaffold(containerColor = MuseTones.canvas) { padding ->
         Column(
@@ -81,42 +83,59 @@ fun PetScreen(
             }
 
             Spacer(Modifier.height(8.dp))
-            PetFace(mood = AgentMood.IDLE)
-            Spacer(Modifier.height(18.dp))
+            PetFace(mood = mood)
+            Spacer(Modifier.height(14.dp))
 
+            // What the Pet is feeling, in words, so the face is not the only carrier.
             Text(
-                text = stringResource(R.string.tama_pet_level, pet.level),
-                fontSize = 26.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = pet.stage.label,
+                text = stringResource(state.mood.labelRes()),
                 fontSize = 15.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(18.dp))
 
-            Spacer(Modifier.height(20.dp))
-            LevelCard(pet)
+            NeedsCard(state.needs, mood)
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(14.dp))
+            CareRow(onCare = { action -> PetStore.care(context, action) })
+
+            Spacer(Modifier.height(14.dp))
+            LevelCard(state.progress)
+
+            Spacer(Modifier.height(26.dp))
             Text(
                 text = stringResource(R.string.tama_pet_how_xp),
                 fontSize = 13.sp,
                 lineHeight = 19.sp,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 44.dp),
+                modifier = Modifier.padding(horizontal = 40.dp),
             )
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(30.dp))
         }
     }
 }
 
-/** The face on its warm disc, reusing the chat header's avatar so there is one character only. */
+/** The text the Pet's mood shows. Kept out of the enum so the pure core has no resources. */
+private fun PetMood.labelRes(): Int = when (this) {
+    PetMood.CONTENT -> R.string.tama_pet_mood_content
+    PetMood.CALM -> R.string.tama_pet_mood_calm
+    PetMood.NEEDY -> R.string.tama_pet_mood_needy
+    PetMood.FOCUSED -> R.string.tama_pet_mood_focused
+    PetMood.GRUMPY -> R.string.tama_pet_mood_grumpy
+}
+
+/** The five expressions the app already draws, chosen by the mood. */
+private fun PetMood.agentMood(): AgentMood = when (asset) {
+    PetMoodAsset.IDLE -> AgentMood.IDLE
+    PetMoodAsset.WORKING -> AgentMood.WORKING
+    PetMoodAsset.WAITING -> AgentMood.WAITING
+    PetMoodAsset.HAPPY -> AgentMood.HAPPY
+    PetMoodAsset.ERROR -> AgentMood.ERROR
+}
+
 @Composable
-private fun PetFace(mood: AgentMood) {
+private fun PetFace(mood: PetMood) {
     Box(
         modifier = Modifier
             .size(132.dp)
@@ -125,10 +144,107 @@ private fun PetFace(mood: AgentMood) {
         contentAlignment = Alignment.Center,
     ) {
         AgentAvatar(
-            mood = mood,
+            mood = mood.agentMood(),
             size = 104.dp,
-            contentDescription = stringResource(R.string.nm_avatar_content_description),
+            contentDescription = stringResource(R.string.tama_pet_face_description),
         )
+    }
+}
+
+/** The four needs, each a labelled bar from 0 to 100. */
+@Composable
+private fun NeedsCard(needs: PetNeeds, mood: PetMood) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MuseTones.surface,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
+            for (need in PetNeed.entries) {
+                NeedRow(need, needs[need])
+                if (need != PetNeed.entries.last()) Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun NeedRow(need: PetNeed, value: Int) {
+    val low = value < PetNeeds.NEEDY_THRESHOLD
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = stringResource(need.labelRes()),
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.width(92.dp),
+        )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(8.dp)
+                .clip(CircleShape)
+                .background(MuseTones.fill),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(value.coerceIn(0, 100) / 100f)
+                    .fillMaxHeight()
+                    .clip(CircleShape)
+                    .background(if (low) MaterialTheme.colorScheme.error else MuseTones.action),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = "$value",
+            fontSize = 12.sp,
+            fontWeight = if (low) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (low) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(26.dp),
+        )
+    }
+}
+
+private fun PetNeed.labelRes(): Int = when (this) {
+    PetNeed.SATIETY -> R.string.tama_pet_need_satiety
+    PetNeed.ENERGY -> R.string.tama_pet_need_energy
+    PetNeed.MOOD -> R.string.tama_pet_need_mood
+    PetNeed.BOND -> R.string.tama_pet_need_bond
+}
+
+/** Feed, rest, play — the three things the person can do for the Pet. */
+@Composable
+private fun CareRow(onCare: (PetCareAction) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        CareButton(stringResource(R.string.tama_pet_action_feed), Modifier.weight(1f)) {
+            onCare(PetCareAction.FEED)
+        }
+        CareButton(stringResource(R.string.tama_pet_action_rest), Modifier.weight(1f)) {
+            onCare(PetCareAction.REST)
+        }
+        CareButton(stringResource(R.string.tama_pet_action_play), Modifier.weight(1f)) {
+            onCare(PetCareAction.PLAY)
+        }
+    }
+}
+
+@Composable
+private fun CareButton(label: String, modifier: Modifier, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MuseTones.surface,
+        modifier = modifier.clickable(onClick = onClick),
+    ) {
+        Box(Modifier.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
     }
 }
 
@@ -147,7 +263,7 @@ private fun LevelCard(pet: PetProgress) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = stringResource(R.string.tama_pet_xp, pet.xp),
+                    text = stringResource(R.string.tama_pet_level, pet.level),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -180,7 +296,6 @@ private fun LevelCard(pet: PetProgress) {
             }
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // The four stages, the reached ones in the action colour.
                 for (stage in PetStage.entries) {
                     val reached = pet.stage.ordinal >= stage.ordinal
                     Box(
@@ -203,6 +318,12 @@ private fun LevelCard(pet: PetProgress) {
                     if (stage != PetStage.entries.last()) Spacer(Modifier.width(12.dp))
                 }
             }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = stringResource(R.string.tama_pet_xp, pet.xp),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

@@ -45,19 +45,19 @@ object PetTurnRecorder {
         sessionId: String,
         outcome: PetTurnOutcome,
         nowMillis: Long = System.currentTimeMillis(),
-    ): PetProgress {
-        if (sessionId.isBlank()) return PetStore.pet.value
+    ): PetState {
+        if (sessionId.isBlank()) return PetStore.state.value
         loadLastTurn(context)
         PetStore.load(context)
 
         val turn = PetTurnLedger.TurnKey(sessionId, nowMillis.toString())
         if (!PetTurnLedger.shouldPay(turn, lastKey)) {
             AppLogger.debug(TAG, "turn already paid, skipping: $sessionId")
-            return PetStore.pet.value
+            return PetStore.state.value
         }
 
-        val before = PetStore.pet.value
-        val after = PetStore.award(context, outcome)
+        val before = PetStore.state.value
+        val after = PetStore.award(context, outcome, turnsToday = turnIndexToday(context, nowMillis))
         PetTurnLedger.nextStored(turn)?.let { stored ->
             context.applicationContext
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -66,11 +66,33 @@ object PetTurnRecorder {
                 .apply()
             lastKey = turn
         }
-        if (after.xp != before.xp) {
-            AppLogger.debug(TAG, "turn paid: $sessionId $outcome +${after.xp - before.xp} xp")
+        if (after.progress.xp != before.progress.xp) {
+            AppLogger.debug(TAG, "turn paid: $sessionId $outcome +${after.progress.xp - before.progress.xp} xp")
         }
         return after
     }
+
+
+    /**
+     * How many turns this calendar day has already paid.
+     *
+     * A day is a local calendar day, not a rolling 24 hours: the Pet should be tired after a long
+     * evening, and rested again in the morning, which is what a person expects. The count is
+     * stored rather than derived because the turns themselves are not kept per-day in a way this
+     * seam can reach cheaply.
+     */
+    private fun turnIndexToday(context: Context, nowMillis: Long): Int {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val day = nowMillis / DAY_MS
+        val storedDay = prefs.getLong(KEY_DAY, -1L)
+        val stored = if (storedDay == day) prefs.getInt(KEY_TURNS_TODAY, 0) else 0
+        prefs.edit().putLong(KEY_DAY, day).putInt(KEY_TURNS_TODAY, stored + 1).apply()
+        return stored
+    }
+
+    private const val KEY_DAY = "tama.pet.day"
+    private const val KEY_TURNS_TODAY = "tama.pet.turns_today"
+    private const val DAY_MS = 24L * 60L * 60L * 1000L
 
     /** Test seam: forget both the in-memory and the stored last turn. */
     @Synchronized

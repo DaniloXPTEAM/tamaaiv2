@@ -1276,4 +1276,19 @@
     <string name="tama_pet_to_next">Sonraki seviyeye %1$d</string>
     <string name="tama_pet_max_level">En yüksek seviye</string>
     <string name="tama_pet_how_xp">Evcilin, ajanla bir konuşmayı bitirdiğinde XP kazanır. Hatalar da biraz sayılır; iptal edilen tur hiç sayılmaz.</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">TAMA AI evcilin</string>
+    <string name="tama_pet_mood_content">Keyifli</string>
+    <string name="tama_pet_mood_calm">Sakin</string>
+    <string name="tama_pet_mood_needy">Seni özlüyor</string>
+    <string name="tama_pet_mood_focused">Seninle çalışıyor</string>
+    <string name="tama_pet_mood_grumpy">Küskün</string>
+    <string name="tama_pet_need_satiety">Yemek</string>
+    <string name="tama_pet_need_energy">Enerji</string>
+    <string name="tama_pet_need_mood">Keyif</string>
+    <string name="tama_pet_need_bond">Bağ</string>
+    <string name="tama_pet_action_feed">Besle</string>
+    <string name="tama_pet_action_rest">Dinlendir</string>
+    <string name="tama_pet_action_play">Oyna</string>
 </resources>

@@ -1272,4 +1272,19 @@
     <string name="tama_pet_to_next">อีก %1$d ถึงเลเวลถัดไป</string>
     <string name="tama_pet_max_level">เลเวลสูงสุด</string>
     <string name="tama_pet_how_xp">สัตว์เลี้ยงของคุณจะได้ XP เมื่อคุณคุยกับเอเจนต์จบ ความล้มเหลวก็ได้เล็กน้อย ส่วนเทิร์นที่ถูกยกเลิกไม่ได้อะไรเลย</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">สัตว์เลี้ยง TAMA AI ของคุณ</string>
+    <string name="tama_pet_mood_content">พอใจ</string>
+    <string name="tama_pet_mood_calm">สงบ</string>
+    <string name="tama_pet_mood_needy">อยากเจอคุณ</string>
+    <string name="tama_pet_mood_focused">กำลังทำงานกับคุณ</string>
+    <string name="tama_pet_mood_grumpy">งอน</string>
+    <string name="tama_pet_need_satiety">อาหาร</string>
+    <string name="tama_pet_need_energy">พลังงาน</string>
+    <string name="tama_pet_need_mood">อารมณ์</string>
+    <string name="tama_pet_need_bond">ความผูกพัน</string>
+    <string name="tama_pet_action_feed">ให้อาหาร</string>
+    <string name="tama_pet_action_rest">พักผ่อน</string>
+    <string name="tama_pet_action_play">เล่นด้วย</string>
 </resources>

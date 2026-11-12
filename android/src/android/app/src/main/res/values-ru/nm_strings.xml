@@ -1284,4 +1284,19 @@
     <string name="tama_pet_to_next">До следующего уровня: %1$d</string>
     <string name="tama_pet_max_level">Максимальный уровень</string>
     <string name="tama_pet_how_xp">Питомец получает XP, когда вы завершаете разговор с агентом. Неудачи тоже немного считаются; отменённый ход не считается.</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">Ваш питомец TAMA AI</string>
+    <string name="tama_pet_mood_content">Доволен</string>
+    <string name="tama_pet_mood_calm">Спокоен</string>
+    <string name="tama_pet_mood_needy">Скучает по вам</string>
+    <string name="tama_pet_mood_focused">Работает с вами</string>
+    <string name="tama_pet_mood_grumpy">Ворчит</string>
+    <string name="tama_pet_need_satiety">Еда</string>
+    <string name="tama_pet_need_energy">Энергия</string>
+    <string name="tama_pet_need_mood">Настроение</string>
+    <string name="tama_pet_need_bond">Связь</string>
+    <string name="tama_pet_action_feed">Покормить</string>
+    <string name="tama_pet_action_rest">Отдохнуть</string>
+    <string name="tama_pet_action_play">Поиграть</string>
 </resources>

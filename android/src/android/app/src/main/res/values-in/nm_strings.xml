@@ -1272,4 +1272,19 @@
     <string name="tama_pet_to_next">%1$d lagi ke level berikutnya</string>
     <string name="tama_pet_max_level">Level tertinggi</string>
     <string name="tama_pet_how_xp">Pet Anda mendapat XP saat Anda menyelesaikan percakapan dengan agen. Kegagalan juga sedikit dihitung; giliran yang dibatalkan tidak dihitung.</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">Pet TAMA AI Anda</string>
+    <string name="tama_pet_mood_content">Puas</string>
+    <string name="tama_pet_mood_calm">Tenang</string>
+    <string name="tama_pet_mood_needy">Butuh kamu</string>
+    <string name="tama_pet_mood_focused">Bekerja bersamamu</string>
+    <string name="tama_pet_mood_grumpy">Cemberut</string>
+    <string name="tama_pet_need_satiety">Makanan</string>
+    <string name="tama_pet_need_energy">Energi</string>
+    <string name="tama_pet_need_mood">Suasana</string>
+    <string name="tama_pet_need_bond">Ikatan</string>
+    <string name="tama_pet_action_feed">Beri makan</string>
+    <string name="tama_pet_action_rest">Istirahat</string>
+    <string name="tama_pet_action_play">Main</string>
 </resources>

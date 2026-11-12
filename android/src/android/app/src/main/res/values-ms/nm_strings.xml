@@ -1272,4 +1272,19 @@
     <string name="tama_pet_to_next">%1$d lagi ke tahap seterusnya</string>
     <string name="tama_pet_max_level">Tahap tertinggi</string>
     <string name="tama_pet_how_xp">Haiwan anda memperoleh XP apabila anda menamatkan perbualan dengan ejen. Kegagalan juga dikira sedikit; giliran yang dibatalkan tidak dikira.</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">Haiwan TAMA AI anda</string>
+    <string name="tama_pet_mood_content">Puas</string>
+    <string name="tama_pet_mood_calm">Tenang</string>
+    <string name="tama_pet_mood_needy">Perlukan anda</string>
+    <string name="tama_pet_mood_focused">Bekerja dengan anda</string>
+    <string name="tama_pet_mood_grumpy">Merajuk</string>
+    <string name="tama_pet_need_satiety">Makanan</string>
+    <string name="tama_pet_need_energy">Tenaga</string>
+    <string name="tama_pet_need_mood">Suasana</string>
+    <string name="tama_pet_need_bond">Ikatan</string>
+    <string name="tama_pet_action_feed">Beri makan</string>
+    <string name="tama_pet_action_rest">Rehat</string>
+    <string name="tama_pet_action_play">Main</string>
 </resources>

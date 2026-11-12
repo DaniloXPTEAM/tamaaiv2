@@ -1242,4 +1242,19 @@
     <string name="tama_pet_to_next">距離下一級還需 %1$d</string>
     <string name="tama_pet_max_level">最高等級</string>
     <string name="tama_pet_how_xp">當你與代理完成一次對話時，寵物會獲得 XP。失敗也會少量計入；被取消的一輪不計入。</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">你的 TAMA AI 寵物</string>
+    <string name="tama_pet_mood_content">滿足</string>
+    <string name="tama_pet_mood_calm">平靜</string>
+    <string name="tama_pet_mood_needy">想你了</string>
+    <string name="tama_pet_mood_focused">與你一起工作</string>
+    <string name="tama_pet_mood_grumpy">鬧彆扭</string>
+    <string name="tama_pet_need_satiety">食物</string>
+    <string name="tama_pet_need_energy">精力</string>
+    <string name="tama_pet_need_mood">心情</string>
+    <string name="tama_pet_need_bond">羈絆</string>
+    <string name="tama_pet_action_feed">餵食</string>
+    <string name="tama_pet_action_rest">休息</string>
+    <string name="tama_pet_action_play">玩耍</string>
 </resources>

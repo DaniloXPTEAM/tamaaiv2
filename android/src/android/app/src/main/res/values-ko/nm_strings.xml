@@ -1272,4 +1272,19 @@
     <string name="tama_pet_to_next">다음 레벨까지 %1$d</string>
     <string name="tama_pet_max_level">최고 레벨</string>
     <string name="tama_pet_how_xp">에이전트와의 대화를 마치면 펫이 XP를 얻습니다. 실패도 조금 쌓이지만, 취소된 턴은 쌓이지 않습니다.</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">당신의 TAMA AI 펫</string>
+    <string name="tama_pet_mood_content">만족</string>
+    <string name="tama_pet_mood_calm">평온</string>
+    <string name="tama_pet_mood_needy">당신이 필요해요</string>
+    <string name="tama_pet_mood_focused">함께 작업 중</string>
+    <string name="tama_pet_mood_grumpy">시무룩</string>
+    <string name="tama_pet_need_satiety">먹이</string>
+    <string name="tama_pet_need_energy">에너지</string>
+    <string name="tama_pet_need_mood">기분</string>
+    <string name="tama_pet_need_bond">유대</string>
+    <string name="tama_pet_action_feed">먹이 주기</string>
+    <string name="tama_pet_action_rest">쉬게 하기</string>
+    <string name="tama_pet_action_play">놀아주기</string>
 </resources>

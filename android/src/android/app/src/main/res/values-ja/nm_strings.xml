@@ -1272,4 +1272,19 @@
     <string name="tama_pet_to_next">次のレベルまで %1$d</string>
     <string name="tama_pet_max_level">最高レベル</string>
     <string name="tama_pet_how_xp">エージェントとの会話を終えると、ペットは XP を獲得します。失敗も少し加算されますが、キャンセルされたターンは加算されません。</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">あなたの TAMA AI ペット</string>
+    <string name="tama_pet_mood_content">ごきげん</string>
+    <string name="tama_pet_mood_calm">おだやか</string>
+    <string name="tama_pet_mood_needy">あなたを待ってる</string>
+    <string name="tama_pet_mood_focused">一緒に作業中</string>
+    <string name="tama_pet_mood_grumpy">ごきげんナナメ</string>
+    <string name="tama_pet_need_satiety">ごはん</string>
+    <string name="tama_pet_need_energy">元気</string>
+    <string name="tama_pet_need_mood">きもち</string>
+    <string name="tama_pet_need_bond">きずな</string>
+    <string name="tama_pet_action_feed">ごはんをあげる</string>
+    <string name="tama_pet_action_rest">やすませる</string>
+    <string name="tama_pet_action_play">あそぶ</string>
 </resources>

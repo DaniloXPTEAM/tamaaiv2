@@ -1276,4 +1276,19 @@
     <string name="tama_pet_to_next">%1$d para sa susunod na antas</string>
     <string name="tama_pet_max_level">Pinakamataas na antas</string>
     <string name="tama_pet_how_xp">Kumikita ng XP ang iyong pet kapag natapos mo ang usapan sa agent. May konti ring kita sa mga pagkakamali; wala sa kanseladong turn.</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">Ang TAMA AI pet mo</string>
+    <string name="tama_pet_mood_content">Kontento</string>
+    <string name="tama_pet_mood_calm">Kalmado</string>
+    <string name="tama_pet_mood_needy">Kailangan ka</string>
+    <string name="tama_pet_mood_focused">Nagtatrabaho kasama mo</string>
+    <string name="tama_pet_mood_grumpy">Sungit</string>
+    <string name="tama_pet_need_satiety">Pagkain</string>
+    <string name="tama_pet_need_energy">Enerhiya</string>
+    <string name="tama_pet_need_mood">Kalagayan</string>
+    <string name="tama_pet_need_bond">Ugnayan</string>
+    <string name="tama_pet_action_feed">Pakainin</string>
+    <string name="tama_pet_action_rest">Magpahinga</string>
+    <string name="tama_pet_action_play">Maglaro</string>
 </resources>

@@ -1277,4 +1277,19 @@
     <string name="tama_pet_to_next">Encore %1$d avant le niveau suivant</string>
     <string name="tama_pet_max_level">Niveau maximal</string>
     <string name="tama_pet_how_xp">Votre compagnon gagne de l\'XP quand vous terminez une conversation avec l\'agent. Les échecs comptent un peu ; un tour annulé ne compte pas.</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">Votre compagnon TAMA AI</string>
+    <string name="tama_pet_mood_content">Satisfait</string>
+    <string name="tama_pet_mood_calm">Calme</string>
+    <string name="tama_pet_mood_needy">A besoin de vous</string>
+    <string name="tama_pet_mood_focused">Travaille avec vous</string>
+    <string name="tama_pet_mood_grumpy">Boudeur</string>
+    <string name="tama_pet_need_satiety">Nourriture</string>
+    <string name="tama_pet_need_energy">Énergie</string>
+    <string name="tama_pet_need_mood">Humeur</string>
+    <string name="tama_pet_need_bond">Lien</string>
+    <string name="tama_pet_action_feed">Nourrir</string>
+    <string name="tama_pet_action_rest">Reposer</string>
+    <string name="tama_pet_action_play">Jouer</string>
 </resources>
