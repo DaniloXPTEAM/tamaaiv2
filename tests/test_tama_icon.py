@@ -26,7 +26,7 @@ def test_the_launcher_foreground_is_the_turtle_and_keeps_its_holes():
     path = paths[0]
     # The A, the eye and the carapace seam are holes. Without evenodd they fill in and the icon
     # becomes a solid blob, which is exactly what a fill-type regression looks like.
-    assert path.get(f"{{{ANDROID}}}fillType") == "evenodd"
+    assert path.get(f"{{{ANDROID}}}fillType") == "evenOdd"
     d = path.get(f"{{{ANDROID}}}pathData")
     assert d.count("M") >= 4, "shell, head, legs and stubs are separate contours"
     assert d.count("L") > 200, "the traced geometry, not a placeholder"
@@ -55,7 +55,7 @@ def test_the_notification_icon_is_24dp_and_drops_the_seam():
     root = ET.parse(stat).getroot()
     assert root.get(f"{{{ANDROID}}}viewportWidth") == "24"
     path = root.find("path")
-    assert path.get(f"{{{ANDROID}}}fillType") == "evenodd"
+    assert path.get(f"{{{ANDROID}}}fillType") == "evenOdd"
     # Four contours: shell, head and the two A strokes. The seam would be a fifth and is under
     # half a pixel here, so it must be absent rather than a grey halo.
     assert path.get(f"{{{ANDROID}}}pathData").count("M") == 4

@@ -86,7 +86,7 @@ def vector(path: str, fill: str, size: int, viewport: int, comment: str) -> str:
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="{size}dp" android:height="{size}dp"
     android:viewportWidth="{viewport}" android:viewportHeight="{viewport}">
-    <path android:pathData="{path}" android:fillType="evenodd"{fill}
+    <path android:pathData="{path}" android:fillType="evenOdd"{fill}
 </vector>
 """
 
