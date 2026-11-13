@@ -263,72 +263,8 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: |
-            set -o pipefail
-            # The APK this job built itself, x86_64, so nothing has to travel between jobs.
-            APK="$(ls "$GITHUB_WORKSPACE"/android/src/android/app/build/outputs/apk/debug/*.apk | head -1)"
-            echo "::notice title=apk::${APK}"
-            if [ -z "$APK" ]; then
-              echo "::error title=build::no APK under the debug output path"
-              exit 1
-            fi
-            echo "installing $APK"
-            # Capture adb's own words: a failed install prints one line and exits non-zero, and
-            # under `set -e` that line is all anyone would ever see.
-            if ! adb install -r -t "$APK" > install.log 2>&1; then
-              tr '\n' ' ' < install.log | cut -c1-900 | sed 's/^/::error title=install::/'
-              exit 1
-            fi
-            cat install.log
-            adb shell pm list packages | grep -c 'ai.tama.assistant' | sed 's/^/::notice title=installed::packages matched: /'
-            if ! adb shell am start -W -n ai.tama.assistant/com.openminis.app.MainActivity 2>&1 | tee am.log; then
-              tr '\n' ' ' < am.log | cut -c1-900 | sed 's/^/::error title=am start::/'
-              exit 1
-            fi
-            sleep 20
-            PID="$(adb shell pidof ai.tama.assistant | tr -d '\r')"
-            if [ -z "$PID" ]; then
-              echo "::error title=crash::the process is not running after launch (it started and died)"
-              adb logcat -d -b crash | tail -40 | while IFS= read -r l; do
-                echo "::error title=crash buffer::${l}"
-              done
-              exit 1
-            fi
-            echo "::notice title=running::pid $PID after 20s"
-            adb shell input keyevent KEYCODE_WAKEUP || true
-            adb exec-out screencap -p > launch.png
-            echo "::notice title=screenshot::$(stat -c%s launch.png) bytes"
-            adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime.*E ' | head -20 || true
-
-            TEST_APK="$(find "$GITHUB_WORKSPACE/android/src/android/app/build/outputs/apk/androidTest/debug" -name '*.apk' -print -quit)"
-            if [ -z "$TEST_APK" ] || ! adb install -r -t "$TEST_APK" > pet-install.log 2>&1; then
-              echo "::error title=pet instrumentation::test APK missing or could not be installed"
-              [ ! -f pet-install.log ] || cat pet-install.log
-              exit 1
-            fi
-            if ! adb shell am instrument -w -r \
-              -e class io.github.nanomuse.pet.PetPersistenceInstrumentedTest \
-              ai.tama.assistant.test/androidx.test.runner.AndroidJUnitRunner > pet-instrumentation.log 2>&1; then
-              echo "::error title=pet instrumentation::instrumentation command failed"
-              tail -40 pet-instrumentation.log
-              exit 1
-            fi
-            cat pet-instrumentation.log
-            if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' pet-instrumentation.log; then
-              tail -30 pet-instrumentation.log | while IFS= read -r l; do
-                echo "::error title=pet instrumentation::${l//$'\r'/}"
-              done
-              exit 1
-            fi
-            echo "::notice title=pet instrumentation::Android SharedPreferences and tracker tests passed on the emulator"
-            # Published here, not in a later step: once this step ends the emulator is gone, and
-            # an adb call after it hangs rather than failing.
-            [ -f am.log ] && grep -E 'Status:|Error:|Activity:' am.log | while IFS= read -r l; do
-              echo "::notice title=am start::${l}"
-            done
-            adb logcat -d -b crash 2>/dev/null | tail -40 | while IFS= read -r l; do
-              echo "::error title=crash buffer::${l}"
-            done
+          # The action splits multi-line inputs and runs each line under sh.
+          script: bash scripts/android/device-smoke.sh
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

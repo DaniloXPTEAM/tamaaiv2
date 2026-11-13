@@ -68,19 +68,24 @@ de `Long.MAX_VALUE` zerava o total por overflow.
   com dependências simuladas; isso não compila o ViewModel inteiro. Sete testes da ponte remota da
   árvore passaram com stubs e `kotlinx-coroutines-test` 1.6.4 compilado para o harness, com um
   shim de operações atômicas; o projeto usa a versão 1.9.0 no Gradle.
-- **Android:** foi acrescentada uma suíte instrumentada para emulador limpo, usando um arquivo de
-  preferências exclusivo por teste. Ela verifica `SharedPreferences`, XP, recarga da store e a
-  integração do tracker; a recarga é no mesmo processo e não simula morte real do processo.
-  Compilação e execução dependem do CI, não do harness JVM. O workflow passou pelo `actionlint`.
-- **UI/telefone:** as alterações de Compose e `ChatViewModel` ainda não passaram por compilação
-  Android nesta rodada. Nenhuma navegação, aparência, chat com provedor real, morte real de
-  processo ou atualização sobre o aplicativo instalado foi testada fisicamente.
-- O run anterior `43457569011` passou build/testes unitários arm64 e compilou `androidTest`, mas
-  falhou **ao compilar o APK x86 do emulador**, antes de instalá-lo. A causa específica do erro de
-  compilação não foi obtida. O job x86 não recebia o `rclone.aar` gerado pelo job arm64, e a
-  variável `nm_abi` não correspondia à propriedade `nm.abi` lida pelo Gradle. O workflow agora
-  transfere o AAR, passa `-Pnm.abi=x86_64`, confere o ABI e publica erros como anotações; isso só
-  será comprovado após um novo run.
+- **Android:** o run `43468577523`, commit `b657255`, compilou o aplicativo arm64, incluindo
+  Compose e `ChatViewModel`, passou os testes unitários do Gradle e compilou o APK de testes.
+  Também compilou o APK x86 e confirmou seu ABI. A suíte instrumentada usa um arquivo de
+  preferências exclusivo por teste e verifica `SharedPreferences`, XP, recarga da store e a
+  integração do tracker. A recarga é no mesmo processo e não simula morte real do processo.
+- **Emulador:** esse run não publicou evidência de instalação nem de início do app; a anotação
+  registra apenas `/usr/bin/sh` com código 2, e os logs completos não estavam acessíveis. Uma falha
+  independente foi confirmada no script: a action executa cada linha com `sh -c`, e a primeira,
+  `set -o pipefail`, não é aceita pelo `sh` do runner. Não se comprovou se o run chegou a essa
+  linha ou também falhou antes dela. O script foi extraído para um arquivo Bash e sua chamada
+  passou por 13 testes com `adb` simulado; o workflow passou pelo `actionlint`. A correção ainda
+  depende de novo run.
+- **UI/telefone:** nenhuma navegação, aparência, chat com provedor real, morte real de processo ou
+  atualização sobre o aplicativo instalado foi testada fisicamente.
+- O run anterior `43457569011` falhou **ao compilar o APK x86 do emulador**, antes de instalá-lo;
+  a causa específica do erro não foi obtida. O job x86 não recebia o `rclone.aar` gerado pelo job
+  arm64, e a variável `nm_abi` não correspondia à propriedade `nm.abi` lida pelo Gradle. No run
+  `43468577523`, a transferência do AAR, `-Pnm.abi=x86_64` e a verificação do ABI passaram.
 
 ## Proteção de dados e assinatura
 
