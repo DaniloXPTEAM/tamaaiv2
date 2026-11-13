@@ -87,11 +87,9 @@ jobs:
 
       - name: assembleDebug
         working-directory: android/src/android
-        env:
-          # TAMA: the emulator job below is x86_64 and this filter otherwise ships arm64-v8a only.
-          # The build already supports both (`-Pnm.abi`), and this switches the artifact for every
-          # job that depends on it, so the phone APK and the emulator APK can never disagree.
-          ORG_GRADLE_PROJECT_nm_abi: x86_64
+        # No ABI override here, on purpose. This artifact is the one a person downloads and
+        # installs, and a phone is arm64-v8a: pointing this at x86_64 for the emulator's sake made
+        # the published APK uninstallable ("app not installed") on a real device.
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
           ./gradlew :app:assembleDebug --console=plain --no-daemon 2>&1 | tee /tmp/gradle.log
@@ -169,20 +167,27 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: platforms;android-36 build-tools;35.0.0 cmake;3.22.1 ndk;${{ env.NDK_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Build the emulator's own APK (x86_64)
+        working-directory: android/src/android
+        env:
+          ORG_GRADLE_PROJECT_nm_abi: x86_64
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          ./gradlew :app:assembleDebug --console=plain --no-daemon 2>&1 | tail -20
+          exit "${PIPESTATUS[0]}"
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-
-      # Downloading one artifact by name produced an empty directory twice, with no error to read,
-      # so this uses the first-party action with no filters: every artifact of this run, one
-      # directory each. If that lands nothing, the listing below says so instead of the APK
-      # silently not being there.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          path: apk
 
       - name: Install, launch, and check the process is alive
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
@@ -195,17 +200,13 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -o pipefail
-            # One annotation, written by python, on one line: the runner scroll-folds plain
-            # command output and pipes, so `ls` and `find` never reached the annotation stream and
-            # "none found" was the only thing that survived. No artefact here means the check
-            # says why at the top instead of dying three lines later.
-            python3 -c "import os,glob;r=sorted(glob.glob('apk/**/*',recursive=True));print('::warning title=download::'+repr(r[:12])+' cwd='+os.getcwd())"
-            APK="$(find apk -name '*.apk' -type f 2>/dev/null | head -1)"
+            # The APK this job built itself, x86_64, so nothing has to travel between jobs.
+            APK="$(ls "$GITHUB_WORKSPACE"/android/src/android/app/build/outputs/apk/debug/*.apk | head -1)"
+            echo "::notice title=apk::${APK}"
             if [ -z "$APK" ]; then
-              echo "::error title=download::no APK under apk/; the artifact step produced nothing"
+              echo "::error title=build::no APK under the debug output path"
               exit 1
             fi
-            echo "::notice title=apk::${APK}"
             echo "installing $APK"
             # Capture adb's own words: a failed install prints one line and exits non-zero, and
             # under `set -e` that line is all anyone would ever see.
