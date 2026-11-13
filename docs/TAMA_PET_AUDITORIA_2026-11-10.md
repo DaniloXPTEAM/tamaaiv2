@@ -52,7 +52,7 @@ de `Long.MAX_VALUE` zerava o total por overflow.
   ignorada, não há garantia de pagamento para os dois. Reproduziu-se também uma fuga de vaga de
   chat ao cancelar uma espera logo após ela receber a vaga, e a liberação incorreta de vaga ao
   sobrepor trabalhos na mesma sessão. O gerenciador agora usa permissões canceláveis e uma posse
-  própria por trabalho. As mudanças no ViewModel ainda precisam do novo build e smoke do CI; a
+  própria por trabalho. O build Android e os testes unitários dessa correção passaram no CI; a
   atomicidade de todos os efeitos globais e a promoção de draft não foram comprovadas.
 - A tela observa sessões ativas e reações reais de sucesso/falha/cancelamento. Texto e face usam
   o mesmo humor ao vivo. A escolha de roupa bloqueada pode ser tocada e fica guardada para quando
@@ -71,22 +71,21 @@ de `Long.MAX_VALUE` zerava o total por overflow.
   com dependências simuladas; isso não compila o ViewModel inteiro. Sete testes da ponte remota da
   árvore passaram com stubs e `kotlinx-coroutines-test` 1.6.4 compilado para o harness, com um
   shim de operações atômicas; o projeto usa a versão 1.9.0 no Gradle.
-- **Android:** o run `43489566497`, commit `7456eee`, compilou o aplicativo arm64, incluindo
-  Compose e `ChatViewModel`, passou os testes unitários do Gradle e compilou o APK de testes.
-  Também compilou o APK x86 e confirmou seu ABI. As alterações posteriores no gerenciador de vagas
-  e no ViewModel não estão nesse run. A suíte instrumentada usa um arquivo de preferências exclusivo
-  por teste e verifica `SharedPreferences`, XP, recarga da store e a integração do tracker. A
-  recarga é no mesmo processo e não simula morte real do processo.
-- **Emulador:** no run `43489566497` o aplicativo x86 foi instalado e a activity iniciou com
-  `Status: ok`; o processo continuava ativo após 20 segundos e a instrumentação do Pet passou.
-  O APK x86 é uma variante de teste, sem os binários arm64 de sandbox, rclone e VAD; não testa
-  esses recursos nem substitui o APK do telefone. O screenshot e os logs de teste são o artefato
-  `tama-device-smoke` desse run. O script foi testado também em 13 cenários com `adb` simulado,
-  e o workflow passou pelo `actionlint`.
-- **Vagas de chat:** seis testes JVM do gerenciador e do pool passaram com stubs Android e a
-  versão de corrotinas do harness; três testes adicionais exercitaram os métodos de vínculo
-  extraídos do ViewModel com o gerenciador real e serviços simulados. Eles não substituem
-  testes de concorrência no ViewModel completo ou em aparelho Android.
+- **Android:** o run `43492356964`, commit `cc34b44`, compilou o aplicativo arm64, incluindo
+  Compose, `ChatViewModel` e a correção de vagas, passou os testes unitários do Gradle e compilou
+  o APK de testes. Também compilou o APK x86 e confirmou seu ABI. A suíte instrumentada usa um
+  arquivo de preferências exclusivo por teste e verifica `SharedPreferences`, XP, recarga da store
+  e a integração do tracker. A recarga é no mesmo processo e não simula morte real do processo.
+- **Emulador:** nesse run o aplicativo x86 foi instalado e a activity iniciou com `Status: ok`;
+  o processo continuava ativo após 20 segundos e os **quatro testes** instrumentados do Pet
+  passaram. O APK x86 é uma variante de teste, sem os binários arm64 de sandbox, rclone e VAD;
+  não testa esses recursos nem substitui o APK do telefone. O screenshot e os logs de teste são o
+  artefato `tama-device-smoke` desse run. O script foi testado também em 13 cenários com `adb`
+  simulado, e o workflow passou pelo `actionlint`.
+- **Vagas de chat:** seis testes JVM do gerenciador e do pool passaram no Gradle e também no
+  harness local; três testes adicionais exercitaram os métodos de vínculo extraídos do ViewModel
+  com o gerenciador real e serviços simulados. Eles não substituem testes de concorrência no
+  ViewModel completo ou em aparelho Android.
 - **UI/telefone:** nenhuma navegação, aparência, chat com provedor real, morte real de processo ou
   atualização sobre o aplicativo instalado foi testada fisicamente.
 - O run anterior `43457569011` falhou **ao compilar o APK x86 do emulador**, antes de instalá-lo;
@@ -101,7 +100,9 @@ de `Long.MAX_VALUE` zerava o total por overflow.
 
 `android:allowBackup="false"` continua em vigor e a função `PetStore.restore` **não** está ligada
 à restauração de backup do aplicativo. As alterações não habilitam backup nem transferem o Pet
-entre instalações. A comparação do certificado do APK anterior indicou **diferente ou ilegível**;
-isso não identifica o certificado instalado e não prova uma atualização segura. Não desinstalar,
-limpar dados nem instalar por cima como procedimento presumido: antes é necessário confirmar a
+entre instalações. No run `43492356964`, a comparação não conseguiu ler pelo menos um dos
+certificados; isso não identifica o certificado instalado e não prova uma atualização segura.
+O APK arm64 desse run é o artefato `nanoMuse-debug-apk` (`14070767307`), SHA-256
+`7b47f4a513015ee2a02788498eb4a272d67f41cab5fb208a3f46d2358bce4166`. Não desinstalar, limpar
+os dados nem instalar por cima como procedimento presumido: antes é necessário confirmar a
 identidade e a assinatura do APK instalado e dispor de uma forma validada de preservar os dados.

@@ -110,18 +110,33 @@ jobs:
       - name: Compare debug APK signatures
         shell: bash
         run: |
-          bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          # Use the explicitly installed version, not an arbitrary preinstalled SDK directory.
+          signer="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           new=android/src/android/app/build/outputs/apk/debug/app-debug.apk
           old=/tmp/tama-baseline-apk/app-debug.apk
           echo "::notice title=apk-sha256::$(sha256sum "$new" | cut -d' ' -f1)"
+          if [ ! -x "$signer" ]; then
+            echo "::warning title=apk-signature::apksigner 35.0.0 is unavailable; update compatibility is unverified. Do not uninstall the existing app."
+            exit 0
+          fi
+          new_cert=""
+          if "$signer" verify --print-certs "$new" > /tmp/tama-new-cert.log 2>&1; then
+            new_cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/tama-new-cert.log)"
+          else
+            echo "::warning title=new-apk-signature::$(tail -1 /tmp/tama-new-cert.log | cut -c1-700)"
+          fi
+          [ -z "$new_cert" ] || echo "::notice title=new-apk-cert-sha256::$new_cert"
           if [ ! -f "$old" ]; then
             echo "::warning title=apk-signature::Earlier artifact unavailable; update compatibility is unverified. Do not uninstall the existing app."
             exit 0
           fi
-          old_cert="$("$bt/apksigner" verify --print-certs "$old" 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' || true)"
-          new_cert="$("$bt/apksigner" verify --print-certs "$new" 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' || true)"
+          old_cert=""
+          if "$signer" verify --print-certs "$old" > /tmp/tama-old-cert.log 2>&1; then
+            old_cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/tama-old-cert.log)"
+          else
+            echo "::warning title=old-apk-signature::$(tail -1 /tmp/tama-old-cert.log | cut -c1-700)"
+          fi
           [ -z "$old_cert" ] || echo "::notice title=old-apk-cert-sha256::$old_cert"
-          [ -z "$new_cert" ] || echo "::notice title=new-apk-cert-sha256::$new_cert"
           if [ -z "$old_cert" ] || [ -z "$new_cert" ]; then
             echo "::warning title=apk-signature::A signing certificate could not be read. Update compatibility is unverified; do not uninstall the existing app."
           elif [ "$old_cert" = "$new_cert" ]; then
