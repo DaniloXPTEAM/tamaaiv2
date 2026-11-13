@@ -62,23 +62,44 @@ if [ -z "$TEST_APK" ] || ! adb install -r -t "$TEST_APK" > pet-install.log 2>&1;
   [ ! -f pet-install.log ] || cat pet-install.log
   exit 1
 fi
-if ! adb shell am instrument -w -r \
-  -e class io.github.nanomuse.pet.PetPersistenceInstrumentedTest \
-  ai.tama.assistant.test/androidx.test.runner.AndroidJUnitRunner > pet-instrumentation.log 2>&1; then
-  echo '::error title=pet instrumentation::instrumentation command failed'
-  tail -40 pet-instrumentation.log
-  exit 1
-fi
-cat pet-instrumentation.log
-if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' pet-instrumentation.log || \
-  grep -Eq '^FAILURES!!!|^INSTRUMENTATION_FAILED:|^INSTRUMENTATION_RESULT: shortMsg=' pet-instrumentation.log; then
-  tail -30 pet-instrumentation.log | while IFS= read -r line; do
-    echo "::error title=pet instrumentation::${line//$'\r'/}"
-  done
-  exit 1
-fi
-summary="$(grep -E '^OK \([1-9][0-9]* tests?\)' pet-instrumentation.log | tail -1 | tr -d '\r')"
-echo "::notice title=pet instrumentation::$summary; Android SharedPreferences and tracker tests passed on the emulator"
+run_pet_tests() {
+  local class="$1" log="$2" label="$3" minimum="$4" details="$5" summary count
+  if ! adb shell am instrument -w -r \
+    -e class "$class" ai.tama.assistant.test/androidx.test.runner.AndroidJUnitRunner > "$log" 2>&1; then
+    echo "::error title=$label::instrumentation command failed"
+    tail -40 "$log"
+    return 1
+  fi
+  cat "$log"
+  if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' "$log" || \
+    grep -Eq '^FAILURES!!!|^INSTRUMENTATION_FAILED:|^INSTRUMENTATION_RESULT: shortMsg=' "$log"; then
+    tail -30 "$log" | while IFS= read -r line; do
+      echo "::error title=$label::${line//$'\r'/}"
+    done
+    return 1
+  fi
+  summary="$(grep -E '^OK \([1-9][0-9]* tests?\)' "$log" | tail -1 | tr -d '\r')"
+  count="${summary#OK (}"
+  count="${count%% *}"
+  if (( count < minimum )); then
+    echo "::error title=$label::Expected at least $minimum tests, got $count"
+    return 1
+  fi
+  echo "::notice title=$label::$summary; $details tests passed on the emulator"
+}
+run_pet_tests io.github.nanomuse.pet.PetPersistenceInstrumentedTest pet-instrumentation.log \
+  'pet instrumentation' 8 'Android SharedPreferences and tracker'
+run_pet_tests io.github.nanomuse.pet.PetScreenInstrumentedTest pet-screen-instrumentation.log \
+  'pet screen instrumentation' 2 'Android Compose Pet screen'
+# These screenshots are diagnostics from the isolated test preferences, not a visual approval.
+for image in pet-alive.png pet-memorial.png; do
+  if adb exec-out run-as ai.tama.assistant cat "cache/$image" > "$image" 2>/dev/null && [ -s "$image" ]; then
+    echo "::notice title=pet screenshot::$image captured"
+  else
+    rm -f "$image"
+    echo "::warning title=pet screenshot::$image unavailable"
+  fi
+done
 # The emulator is stopped when the action returns, so publish the activity details here.
 grep -E 'Status:|Error:|Activity:' am.log | while IFS= read -r line; do
   echo "::notice title=am start::${line//$'\r'/}"

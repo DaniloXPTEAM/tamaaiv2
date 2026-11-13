@@ -21,10 +21,12 @@ armazenar texto ou caminhos. Eventos antigos e botões de uma tela anterior são
 geração. Sonhar, descobrir, experimentar, diário e os dois jogos funcionam localmente e não
 iniciam chamadas de modelo. O ledger continua limitado a 256 identificadores por tipo de registro.
 
-Os testes JVM atuais usam stubs Android e preferências em memória. Os resultados Android e de
-emulador abaixo são anteriores a esta evolução e não comprovam sua compilação ou aparência. A UI,
-o APK atual, a persistência após morte real de processo e a atualização sobre o telefone precisam
-ser validados separadamente. Nenhuma reinstalação ou limpeza de dados foi autorizada.
+O commit `ddbe89f` passou no [run Android 43514279831](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43514279831): APK arm64, testes unitários Gradle, compilação do `androidTest`, instalação e inicialização do APK x86 no emulador e sete testes instrumentados de persistência e tracker. Os testes JVM locais usam stubs Android e preferências em memória. Essa rodada não exercitou a tela do Pet nem provou persistência após morte real de processo ou atualização sobre o telefone. A suíte de tela adicionada depois precisa ser executada separadamente. Nenhuma reinstalação ou limpeza de dados foi autorizada.
+
+O APK arm64 dessa rodada é o artefato `14080711663`, SHA-256
+`f922da9448b101e136dafcf9d273bdb1f43125e15c052065a7fe3b804e939b0a`. Seu certificado SHA-256
+`ccf6133896a2d66db7796376db4d95c13cdc40995e827805f6584294ac144339` difere do artefato anterior
+que a pessoa informou ter instalado. A assinatura efetivamente instalada não foi consultada.
 
 ## Escopo e identidade
 

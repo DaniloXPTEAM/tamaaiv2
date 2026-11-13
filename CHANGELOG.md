@@ -198,6 +198,7 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 ### Android
 
 - Added six Pet stages, a shared daily XP limit, local missions and mini-games, and feeding, memorial and generation history without replacing custom avatars.
+- Kept a damaged Pet preference from interrupting completion of an Android agent task.
 - Paused automatic following as soon as a person scrolled towards older messages, and kept new reply chunks, tool cards and keyboard layout changes from resuming it. For #898.
 - Reserved output space before summarizing long conversations, so nearly full inputs were split instead of leaving the summary only a few output tokens. For #719.
 - Added progress rings to active main and side chats in the Muse drawer, using this phone's existing task tracking while preserving unread reply markers. Approval and per-chat step indicators remain separate work. For #531.

@@ -170,6 +170,25 @@ class PetPersistenceInstrumentedTest {
         assertEquals(0L, PetStore.state.value.progress.xp)
     }
 
+    @Test fun damagedPetPreferencesCannotBreakATrackerRun() {
+        trackerInitialized = true
+        val broken = object : ContextWrapper(target) {
+            override fun getApplicationContext(): Context = this
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                if (name == "minis_settings") throw IllegalStateException("test preferences unavailable")
+                return super.getSharedPreferences(name, mode)
+            }
+            override fun startForegroundService(service: Intent): ComponentName? = null
+            override fun startService(service: Intent): ComponentName? = null
+            override fun stopService(service: Intent): Boolean = true
+        }
+        SessionActivityTracker.init(broken)
+        SessionActivityTracker.setCompletionListener(null)
+        val run = SessionActivityTracker.setActive(sessionId)
+        SessionActivityTracker.setInactive(sessionId, run)
+        assertFalse(SessionActivityTracker.isActive(sessionId))
+    }
+
     @Test fun trackerRunAndQueuedSignalsCannotCreditTheirSuccessor() {
         val now = System.currentTimeMillis()
         trackerInitialized = true

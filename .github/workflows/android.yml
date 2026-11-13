@@ -291,9 +291,12 @@ jobs:
           name: tama-device-smoke
           path: |
             launch.png
+            pet-alive.png
+            pet-memorial.png
             am.log
             install.log
             pet-install.log
             pet-instrumentation.log
+            pet-screen-instrumentation.log
           retention-days: 14
           if-no-files-found: warn

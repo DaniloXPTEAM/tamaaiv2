@@ -448,17 +448,20 @@ object SessionActivityTracker {
             // queued prompts; it does not claim per-message accounting. The stable id lets the
             // Pet reject repeated reports of this lifecycle even after other reports arrive.
             if (petTurnId != null) appContext?.let { ctx ->
-                io.github.nanomuse.pet.PetTurnRecorder.onTurnFinished(
-                    context = ctx,
-                    sessionId = sessionId,
-                    turnId = petTurnId,
-                    outcome = when {
-                        cancelled -> io.github.nanomuse.pet.PetTurnOutcome.CANCELLED
-                        wasError -> io.github.nanomuse.pet.PetTurnOutcome.FAILURE
-                        else -> io.github.nanomuse.pet.PetTurnOutcome.SUCCESS
-                    },
-                    expectedGeneration = petGeneration ?: -1L, // nanoMuse: do not pay a later Pet.
-                )
+                // nanoMuse: a damaged Pet preference must not break completion of the agent run.
+                runCatching {
+                    io.github.nanomuse.pet.PetTurnRecorder.onTurnFinished(
+                        context = ctx,
+                        sessionId = sessionId,
+                        turnId = petTurnId,
+                        outcome = when {
+                            cancelled -> io.github.nanomuse.pet.PetTurnOutcome.CANCELLED
+                            wasError -> io.github.nanomuse.pet.PetTurnOutcome.FAILURE
+                            else -> io.github.nanomuse.pet.PetTurnOutcome.SUCCESS
+                        },
+                        expectedGeneration = petGeneration ?: -1L, // nanoMuse: do not pay a later Pet.
+                    )
+                }.onFailure { Log.w(TAG, "Could not record the Pet run", it) }
             }
         }
     }
