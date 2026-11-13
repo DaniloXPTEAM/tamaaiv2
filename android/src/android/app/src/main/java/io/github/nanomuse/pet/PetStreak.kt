@@ -1,5 +1,7 @@
 package io.github.nanomuse.pet
 
+import java.util.TimeZone
+
 /**
  * Days in a row the person looked after the Pet, and what it remembers about that.
  *
@@ -7,10 +9,9 @@ package io.github.nanomuse.pet
  * back feel like something: a Pet that remembers you were here yesterday greets you differently
  * from one that does not.
  *
- * It counts *calendar days*, not rolling periods, because "yesterday" is what a person means. All
- * of it is pure arithmetic over day numbers — a day number is `epochMillis / DAY_MS`, so no
- * calendar library and no timezone database is needed, and a test can move through a month in a
- * loop.
+ * It counts the device's local *calendar days*, not rolling periods or UTC midnights. Day numbers
+ * are local dates expressed as days since the epoch, so successive dates stay consecutive across
+ * daylight-saving changes. The time zone can be supplied explicitly in tests.
  */
 data class PetStreak(
     /** The last day the person was here, as a day number; `null` before the first visit. */
@@ -23,8 +24,17 @@ data class PetStreak(
     companion object {
         const val DAY_MS = 24L * 60L * 60L * 1000L
 
-        /** The day number for an instant. */
-        fun dayOf(epochMillis: Long): Long = Math.floorDiv(epochMillis, DAY_MS)
+        /** The local date containing this instant, represented as an epoch day. */
+        fun dayOf(epochMillis: Long, zone: TimeZone = TimeZone.getDefault()): Long {
+            val utcDay = Math.floorDiv(epochMillis, DAY_MS)
+            val millisInUtcDay = Math.floorMod(epochMillis, DAY_MS)
+            // Add the offset only to the within-day part: adding it to an extreme Long instant
+            // could overflow. getOffset uses the offset in force at this particular instant.
+            return utcDay + Math.floorDiv(millisInUtcDay + zone.getOffset(epochMillis), DAY_MS)
+        }
+
+        /** The UTC day written by Pet versions predating local-calendar support. */
+        fun legacyUtcDayOf(epochMillis: Long): Long = Math.floorDiv(epochMillis, DAY_MS)
 
         /**
          * The streak after a visit on [day].
@@ -44,7 +54,11 @@ data class PetStreak(
                 return PetStreak(lastDay = day, days = 1, best = maxOf(streak.best, 1))
             }
             if (day <= last) return streak
-            val next = if (day == last + 1) streak.days + 1 else 1
+            val next = if (day == last + 1) {
+                if (streak.days == Int.MAX_VALUE) Int.MAX_VALUE else streak.days + 1
+            } else {
+                1
+            }
             return PetStreak(lastDay = day, days = next, best = maxOf(streak.best, next))
         }
 
@@ -56,7 +70,8 @@ data class PetStreak(
          */
         fun isAlive(streak: PetStreak, day: Long): Boolean {
             val last = streak.lastDay ?: return false
-            return day == last || day == last + 1
+            // A clock or time zone moving back must not hide an earned streak either.
+            return day <= last || (last < Long.MAX_VALUE && day == last + 1)
         }
 
         /** The streak as it should be *shown* on [day]: zero once it is no longer alive. */
@@ -83,11 +98,11 @@ data class PetMemory(
 ) {
     /** A care action, remembered. */
     fun afterCare(action: PetCareAction): PetMemory = copy(
-        careCount = (careCount + 1).coerceAtMost(MAX_COUNT),
+        careCount = increment(careCount),
         lastCare = action,
     )
 
-    fun afterTurn(): PetMemory = copy(turnsTogether = (turnsTogether + 1).coerceAtMost(MAX_COUNT))
+    fun afterTurn(): PetMemory = copy(turnsTogether = increment(turnsTogether))
 
     fun firstSeen(day: Long): PetMemory = if (firstDay == null) copy(firstDay = day) else this
 
@@ -101,5 +116,8 @@ data class PetMemory(
         /** Counters are capped so a long-lived account cannot overflow the copy or the layout. */
         const val MAX_COUNT = 1_000_000
         const val MAX_DAYS = 100_000
+
+        private fun increment(value: Int): Int =
+            if (value >= MAX_COUNT) MAX_COUNT else value.coerceAtLeast(0) + 1
     }
 }

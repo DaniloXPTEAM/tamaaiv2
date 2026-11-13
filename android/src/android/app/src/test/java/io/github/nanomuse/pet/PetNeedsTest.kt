@@ -137,6 +137,13 @@ class PetNeedsTest {
     }
 
     @Test
+    fun `the seventh finished turn is the first to cost energy`() {
+        val base = PetNeeds(energy = 80)
+        assertEquals(80, PetCare.afterTurn(base, PetTurnOutcome.SUCCESS, turnsToday = 5).energy)
+        assertEquals(75, PetCare.afterTurn(base, PetTurnOutcome.SUCCESS, turnsToday = 6).energy)
+    }
+
+    @Test
     fun `moods follow the action first, then the needs`() {
         val fine = full
         val low = PetNeeds(satiety = 5, energy = 5, mood = 5, bond = 5)
@@ -177,6 +184,13 @@ class PetNeedsTest {
         for (mood in PetMood.entries) assertTrue(mood.name, mood.asset in drawn)
         assertEquals(PetMoodAsset.ERROR, PetMood.GRUMPY.asset)
         assertEquals(PetMoodAsset.HAPPY, PetMood.CONTENT.asset)
+    }
+
+    @Test
+    fun `cancelled and unknown work do not change needs`() {
+        val before = PetNeeds(20, 30, 40, 50)
+        assertEquals(before, PetCare.afterTurn(before, PetTurnOutcome.CANCELLED, turnsToday = 7))
+        assertEquals(before, PetCare.afterTurn(before, PetTurnOutcome.UNKNOWN, turnsToday = 7))
     }
 
     @Test

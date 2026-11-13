@@ -28,10 +28,30 @@ object SessionActivityTracker {
 
     // nanoMuse: cancellation is distinct from both failure and a completed reply.
     private val cancelledReplies = java.util.Collections.synchronizedSet(mutableSetOf<String>())
-    fun markReplyIncomplete(sessionId: String) { cancelledReplies.add(sessionId) }
 
     private val _activeSessions = MutableStateFlow<Set<String>>(emptySet())
     val activeSessions: StateFlow<Set<String>> = _activeSessions.asStateFlow()
+
+    // Protect the active edge, outcome flags and run identity together. A tracker run can contain
+    // several queued prompts; these identities are not per-message ids.
+    private val petTurnIds = io.github.nanomuse.pet.PetRunIds()
+    private data class FinishedRun(
+        val wasActive: Boolean,
+        val petTurnId: String?,
+        val wasError: Boolean,
+        val cancelled: Boolean,
+    )
+
+    fun markReplyIncomplete(sessionId: String, expectedTurnId: String? = null) {
+        synchronized(petTurnIds) {
+            if (expectedTurnId == null || petTurnIds.isCurrent(sessionId, expectedTurnId)) {
+                cancelledReplies.add(sessionId)
+            }
+        }
+    }
+
+    fun isCurrentRun(sessionId: String, turnId: String): Boolean =
+        synchronized(petTurnIds) { petTurnIds.isCurrent(sessionId, turnId) }
 
     /**
      * T166: sessions the user is currently *present in* (composing /
@@ -299,18 +319,21 @@ object SessionActivityTracker {
      * loop's cancel callback — captured here so the notification's Stop
      * action can fan out to every running session.
      */
-    fun setActive(sessionId: String, onStop: (() -> Unit)? = null) {
-        // nanoMuse: begin a distinct unread-completion lifecycle.
-        SessionBadgeStore.replies.started(sessionId)
-        cancelledReplies.remove(sessionId)
+    fun setActive(sessionId: String, onStop: (() -> Unit)? = null): String {
         val wasIdle = !shouldRunService()
-        // [T-android-live-update-completed] Capture BEFORE mutating: a run
-        // "begins" only on the empty → non-empty edge. A second concurrent
-        // session joining an in-flight run must not restart the clock.
-        val wasRunIdle = _activeSessions.value.isEmpty()
-        _activeSessions.value = _activeSessions.value + sessionId
-        if (onStop != null) {
-            synchronized(streamCancellers) { streamCancellers[sessionId] = onStop }
+        // nanoMuse: a new start replaces an older run in this session, even if its cleanup is late.
+        val (wasRunIdle, petTurnId) = synchronized(petTurnIds) {
+            val idle = _activeSessions.value.isEmpty()
+            cancelledReplies.remove(sessionId)
+            synchronized(pendingErrorFlag) { pendingErrorFlag.remove(sessionId) }
+            val turnId = petTurnIds.begin(sessionId)
+            _activeSessions.value = _activeSessions.value + sessionId
+            SessionBadgeStore.replies.started(sessionId)
+            synchronized(streamCancellers) {
+                if (onStop != null) streamCancellers[sessionId] = onStop
+                else streamCancellers.remove(sessionId)
+            }
+            idle to turnId
         }
         // [T-android-overlay-reply-status-34599] Track which session is
         // driving the overlay so the tap-to-open intent lands in the
@@ -336,6 +359,7 @@ object SessionActivityTracker {
         } else {
             updateService()
         }
+        return petTurnId
     }
 
     /**
@@ -343,14 +367,28 @@ object SessionActivityTracker {
      * sessions remain active *and* the user is no longer present in any
      * chat.
      */
-    fun setInactive(sessionId: String) {
-        val wasActive = sessionId in _activeSessions.value
-        _activeSessions.value = _activeSessions.value - sessionId
-        synchronized(streamCancellers) { streamCancellers.remove(sessionId) }
-        val wasError = synchronized(pendingErrorFlag) { pendingErrorFlag.remove(sessionId) }
-        // nanoMuse: duplicate, failed, cancelled, and visible completions do not create unread badges.
-        val cancelled = cancelledReplies.remove(sessionId)
-        SessionBadgeStore.replies.finished(sessionId, wasActive && !wasError && !cancelled, sessionId in _presentSessions.value)
+    fun setInactive(sessionId: String, expectedTurnId: String? = null) {
+        val finished = synchronized(petTurnIds) {
+            // A cancelled coroutine may finish after a new run has started in the same session.
+            // It must not consume that run or its outcome flags.
+            if (expectedTurnId != null && !petTurnIds.isCurrent(sessionId, expectedTurnId)) return
+            val active = sessionId in _activeSessions.value
+            if (active) _activeSessions.value = _activeSessions.value - sessionId
+            synchronized(streamCancellers) { streamCancellers.remove(sessionId) }
+            val result = FinishedRun(
+                wasActive = active,
+                petTurnId = if (active) petTurnIds.finish(sessionId, expectedTurnId) else null,
+                wasError = synchronized(pendingErrorFlag) { pendingErrorFlag.remove(sessionId) },
+                cancelled = cancelledReplies.remove(sessionId),
+            )
+            // nanoMuse: finish the badge before another run can start in the same session.
+            SessionBadgeStore.replies.finished(
+                sessionId, result.wasActive && !result.wasError && !result.cancelled,
+                sessionId in _presentSessions.value,
+            )
+            result
+        }
+        val (wasActive, petTurnId, wasError, cancelled) = finished
         Log.d(TAG, "Session deactivated: $sessionId (total: ${_activeSessions.value.size})")
 
         if (_activeSessions.value.isEmpty()) {
@@ -392,13 +430,14 @@ object SessionActivityTracker {
         // the "completed" semantic honest).
         if (wasActive) {
             completionListener?.invoke(sessionId, wasError)
-            // TAMA AI: the Pet is paid here, at the one point a turn is known to have
-            // finished with a known outcome. The ledger makes a repeated report of the
-            // same turn a no-op, because this can be reached more than once for one turn.
-            appContext?.let { ctx ->
+            // This seam accounts for one active tracker lifecycle. It can include multiple
+            // queued prompts; it does not claim per-message accounting. The stable id lets the
+            // Pet reject repeated reports of this lifecycle even after other reports arrive.
+            if (petTurnId != null) appContext?.let { ctx ->
                 io.github.nanomuse.pet.PetTurnRecorder.onTurnFinished(
                     context = ctx,
                     sessionId = sessionId,
+                    turnId = petTurnId,
                     outcome = when {
                         cancelled -> io.github.nanomuse.pet.PetTurnOutcome.CANCELLED
                         wasError -> io.github.nanomuse.pet.PetTurnOutcome.FAILURE
@@ -415,8 +454,12 @@ object SessionActivityTracker {
      * inside setInactive). If never called, the completion listener fires
      * with `isError=false`.
      */
-    fun markStreamError(sessionId: String) {
-        synchronized(pendingErrorFlag) { pendingErrorFlag.add(sessionId) }
+    fun markStreamError(sessionId: String, expectedTurnId: String? = null) {
+        synchronized(petTurnIds) {
+            if (expectedTurnId == null || petTurnIds.isCurrent(sessionId, expectedTurnId)) {
+                synchronized(pendingErrorFlag) { pendingErrorFlag.add(sessionId) }
+            }
+        }
     }
 
     /**

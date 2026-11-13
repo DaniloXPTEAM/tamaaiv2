@@ -1153,6 +1153,8 @@ class ChatViewModel(
     // streaming, hiding the Stop button while the new turn was live).
     @Volatile
     private var streamJob: Job? = null
+    // nanoMuse: Stop must only retire the tracker run owned by the job it cancels.
+    private val nmTrackedLocalRuns = io.github.nanomuse.pet.PetRunBindings<Job>()
     private var currentProvider: LLMProvider? = null
     private var currentModel: LLMModel? = null
 
@@ -5648,25 +5650,28 @@ class ChatViewModel(
         streamJob = viewModelScope.launch(Dispatchers.IO) {
             AppLogger.info(TAG_STREAM, "$label streamJob ENTER sid=$activeSessionId")
             try {
-                SessionConcurrencyManager.acquireSlot(activeSessionId)
+                val trackedSessionId = activeSessionId
+                SessionConcurrencyManager.acquireSlot(trackedSessionId)
                 AppLogger.debug(TAG_STREAM, "$label streamJob slot acquired")
-                SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-                val activeFallbackStrategy = run {
-                    val groupId = _selectedGroupId.value
-                    groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                        ?: com.openminis.app.data.model.FallbackStrategy.default
-                }
-                val fallbackProviders = buildFallbackProviders(launchedProvider)
+                val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
                 try {
+                    val activeFallbackStrategy = run {
+                        val groupId = _selectedGroupId.value
+                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                            ?: com.openminis.app.data.model.FallbackStrategy.default
+                    }
+                    val fallbackProviders = buildFallbackProviders(launchedProvider)
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop CALL")
                     runAgentLoop(
                         provider = launchedProvider,
                         systemPrompt = systemPrompt,
                         fallbackProviders = fallbackProviders,
                         fallbackStrategy = activeFallbackStrategy,
+                        onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                     )
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop RETURN normal")
                 } catch (e: CancellationException) {
+                    SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop CANCELLED")
                     Log.d(TAG, "Agent loop cancelled")
                 } catch (e: Exception) {
@@ -5676,7 +5681,7 @@ class ChatViewModel(
                     // T298: flag the upcoming setInactive() so the
                     // background completion notifier renders the ❌
                     // variant instead of a clean success.
-                    SessionActivityTracker.markStreamError(activeSessionId)
+                    SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                 } finally {
                     AppLogger.info(TAG_STREAM, "$label streamJob FINALLY enter")
                     // [T-android-overlay-reply-status-34599] Surface
@@ -5687,8 +5692,11 @@ class ChatViewModel(
                     // we're in the finally block of the agent loop and
                     // the stream has already flushed its last delta.
 
-                    finishTrackedReply(activeSessionId)
-                    SessionConcurrencyManager.releaseSlot(activeSessionId)
+                    try {
+                        finishTrackedReply(trackedSessionId, trackedTurnId)
+                    } finally {
+                        SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                    }
                     AppLogger.info(TAG_STREAM, "$label streamJob FINALLY exit")
                 }
             } catch (e: CancellationException) {
@@ -6184,6 +6192,7 @@ class ChatViewModel(
         systemPrompt: String?,
         fallbackProviders: List<FallbackCandidate>,
         fallbackStrategy: com.openminis.app.data.model.FallbackStrategy,
+        onTerminalFailure: () -> Unit,
     ) {
         while (_promptQueue.value.isNotEmpty()) {
             val queued = _promptQueue.value
@@ -6262,6 +6271,7 @@ class ChatViewModel(
                     systemPrompt = systemPrompt,
                     fallbackProviders = fallbackProviders,
                     fallbackStrategy = fallbackStrategy,
+                    onTerminalFailure = onTerminalFailure,
                 )
                 nmAfterTurn() // nanoMuse: queued prompts complete turns too
             } catch (e: CancellationException) {
@@ -6273,6 +6283,7 @@ class ChatViewModel(
             } catch (e: Exception) {
                 Log.e(TAG, "Agent loop (queued-drain) error", e)
                 setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
+                onTerminalFailure()
                 break
             }
         }
@@ -6329,6 +6340,7 @@ class ChatViewModel(
     // nanoMuse: only the adapter touches upstream state; the lifecycle lives in RemoteChatBridge.
     private val nmRemoteBridge: io.github.nanomuse.sync.RemoteChatBridge by lazy {
         val host = object : io.github.nanomuse.sync.RemoteChatBridge.Host {
+            private var trackedTurnId: String? = null
             override val busy: Boolean get() = _isStreaming.value
             override fun setBusy(value: Boolean) { _isStreaming.value = value }
             override fun error(issue: io.github.nanomuse.sync.RemoteChatBridge.Issue, device: String) {
@@ -6348,12 +6360,16 @@ class ChatViewModel(
             override suspend fun session(): String = ensureSession()
             override suspend fun user(sessionId: String, text: String) = nmAppendUserLine(sessionId, text)
             override fun started(sessionId: String) {
-                SessionActivityTracker.setActive(sessionId) { nmRemoteBridge.cancel() }
+                trackedTurnId = SessionActivityTracker.setActive(sessionId) { nmRemoteBridge.cancel() }
             }
-            override fun ended(sessionId: String, completed: Boolean) {
-                if (!completed) SessionActivityTracker.markReplyIncomplete(sessionId)
+            override fun ended(sessionId: String, completed: Boolean, failed: Boolean) {
+                val turnId = trackedTurnId ?: return
+                trackedTurnId = null
+                if (!SessionActivityTracker.isCurrentRun(sessionId, turnId)) return
+                if (failed) SessionActivityTracker.markStreamError(sessionId, turnId)
+                else if (!completed) SessionActivityTracker.markReplyIncomplete(sessionId, turnId)
                 publishOverlayReplyExcerpt(sessionId)
-                SessionActivityTracker.setInactive(sessionId)
+                SessionActivityTracker.setInactive(sessionId, turnId)
             }
             override fun show(id: String, task: io.github.nanomuse.sync.RemoteChatBridge.Task) {
                 val message = ChatMessage(id = "nm_remote_$id", role = "assistant", content = task.text,
@@ -7061,27 +7077,29 @@ class ChatViewModel(
                             SessionConcurrencyManager.diagSnapshot(),
                     )
                     // Acquire concurrency slot (suspends if at max)
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
+                    val trackedSessionId = activeSessionId
+                    SessionConcurrencyManager.acquireSlot(trackedSessionId)
                     AppLogger.debug(TAG_STREAM, "send streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-
-                    // Resolve the active group's fallback strategy
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                            ?: com.openminis.app.data.model.FallbackStrategy.default
-                    }
-
-                    // Build full fallback provider list upfront (mirrors iOS triedEntries approach)
-                    val fallbackProviders = buildFallbackProviders(provider)
-
+                    val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
                     try {
+
+                        // Resolve the active group's fallback strategy
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                                ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+
+                        // Build full fallback provider list upfront (mirrors iOS triedEntries approach)
+                        val fallbackProviders = buildFallbackProviders(provider)
+
                         AppLogger.info(TAG_STREAM, "send runAgentLoop CALL")
                         runAgentLoop(
                             provider = provider,
                             systemPrompt = systemPrompt,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "send runAgentLoop RETURN normal")
                         // nanoMuse: settle this turn before draining unrelated queued prompts.
@@ -7092,10 +7110,13 @@ class ChatViewModel(
                         nmAfterTurn() // nanoMuse: the first conversation steps forward when a turn completes
                         // Drain any prompts the user queued while this loop was running.
                         // Skipped on cancel: cancelled job won't reach here.
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy)
+                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy) {
+                            SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                        }
                         AppLogger.info(TAG_STREAM, "send drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
                         headless?.requestStop() // nanoMuse: idle does not imply successful completion.
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "send runAgentLoop CANCELLED")
                         Log.d(TAG, "Agent loop cancelled")
                     } catch (e: Exception) {
@@ -7104,7 +7125,7 @@ class ChatViewModel(
                         Log.e(TAG, "Agent loop error (all fallbacks exhausted)", e)
                         setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // T298: completion notifier should show the ❌ variant.
-                        SessionActivityTracker.markStreamError(activeSessionId)
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "send streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -7115,8 +7136,11 @@ class ChatViewModel(
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
 
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                        }
                         AppLogger.info(TAG_STREAM, "send streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -7452,28 +7476,33 @@ class ChatViewModel(
             streamJob = launch(Dispatchers.IO) {
                 AppLogger.info(TAG_STREAM, "retryLast streamJob ENTER sid=$activeSessionId")
                 try {
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
+                    val trackedSessionId = activeSessionId
+                    SessionConcurrencyManager.acquireSlot(trackedSessionId)
                     AppLogger.debug(TAG_STREAM, "retryLast streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                            ?: com.openminis.app.data.model.FallbackStrategy.default
-                    }
-                    val fallbackProviders = buildFallbackProviders(provider)
+                    val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
                     try {
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                                ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+                        val fallbackProviders = buildFallbackProviders(provider)
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop CALL")
                         runAgentLoop(
                             provider = provider,
                             systemPrompt = systemPrompt,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop RETURN normal")
                         nmAfterTurn() // nanoMuse
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy)
+                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy) {
+                            SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                        }
                         AppLogger.info(TAG_STREAM, "retryLast drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop CANCELLED")
                         Log.d(TAG, "Agent loop cancelled")
                     } catch (e: Exception) {
@@ -7481,7 +7510,7 @@ class ChatViewModel(
                         Log.e(TAG, "Agent loop error (retryLast)", e)
                         setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // T298: completion notifier should show the ❌ variant.
-                        SessionActivityTracker.markStreamError(activeSessionId)
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "retryLast streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -7492,8 +7521,11 @@ class ChatViewModel(
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
 
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                        }
                         AppLogger.info(TAG_STREAM, "retryLast streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -7651,6 +7683,7 @@ class ChatViewModel(
         systemPrompt: String?,
         fallbackProviders: List<FallbackCandidate> = emptyList(),
         fallbackStrategy: com.openminis.app.data.model.FallbackStrategy = com.openminis.app.data.model.FallbackStrategy.default,
+        onTerminalFailure: () -> Unit,
     ) {
         AppLogger.info(TAG_STREAM, "runAgentLoop ENTER provider=${provider.javaClass.simpleName} historySize=${agentHistory.size}")
         // [T-android-mem-probe-trust] Send-path context shape. The existing
@@ -8962,6 +8995,7 @@ class ChatViewModel(
                             context.getString(R.string.chat_error_stream_dropped_partial),
                         )
                     }
+                    onTerminalFailure()
                     // [T-android-group-pause-badge-restamp] A LIVE interruption just
                     // happened: this is a real entry into the paused state, so the
                     // badge's 24h freshness stamp must be refreshed. Cancel any
@@ -9032,6 +9066,7 @@ class ChatViewModel(
                             context.getString(R.string.error_empty_response_generic)
                     }
                     withContext(Dispatchers.Main) { setInlineError(hint) }
+                    onTerminalFailure()
                 }
                 // Auto-title after first exchange
                 if (turn == 0) generateSessionTitleIfNeeded()
@@ -9458,6 +9493,7 @@ class ChatViewModel(
         // (a) must NOT be touched or every normal completion gets a fake "hit
         // 200 turns" sticker (the bug user hit at v1.4.0-dev tip).
         if (!loopExitedNormally) {
+            onTerminalFailure()
             AppLogger.warning(
                 TAG_STREAM,
                 "runAgentLoop EXIT — hit MAX_AGENT_TURNS=$MAX_AGENT_TURNS, finalizing as resumable",
@@ -11738,13 +11774,54 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         }?.content
         SessionActivityTracker.publishLastReply(sessionId, text)
     }
-    // nanoMuse: every stream path shares completion classification before publishing its badge.
-    private suspend fun finishTrackedReply(id: String) {
-        if (kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]?.isCancelled == true) {
-            SessionActivityTracker.markReplyIncomplete(id)
+    // nanoMuse: bind the run to its actual coroutine, including a Stop racing slot acquisition.
+    private fun beginTrackedReply(id: String, job: Job): String = try {
+        val binding = nmTrackedLocalRuns.begin(job, { job.isActive }) {
+            val turnId = SessionActivityTracker.setActive(id, onStop = {
+                if (streamJob === job) cancelStream()
+                else stopObsoleteTrackedReply(job)
+            })
+            io.github.nanomuse.pet.PetRunBinding(id, turnId)
+        } ?: throw CancellationException("Stopped before tracker start")
+        // A parent scope can cancel independently of cancelStream while registration is running.
+        if (!job.isActive) {
+            stopObsoleteTrackedReply(job)
+            throw CancellationException("Stopped during tracker start")
         }
+        binding.turnId
+    } catch (e: Throwable) {
+        // Every caller already acquired this slot; no agent-loop finally exists yet.
+        SessionConcurrencyManager.releaseSlot(id)
+        throw e
+    }
+
+    // nanoMuse: a callback captured by an older job must never cancel the newer streamJob.
+    private fun stopObsoleteTrackedReply(job: Job) {
+        val binding = nmTrackedLocalRuns.stop(job) { job.cancel() }
+        finishStoppedReply(binding, publishReply = false)
+    }
+
+    private fun finishStoppedReply(binding: io.github.nanomuse.pet.PetRunBinding?, publishReply: Boolean) {
+        if (binding == null) return
+        val (id, turnId) = binding
+        SessionActivityTracker.markReplyIncomplete(id, turnId)
+        if (SessionActivityTracker.isCurrentRun(id, turnId)) {
+            if (publishReply) publishOverlayReplyExcerpt(id)
+            SessionActivityTracker.clearToolRunning(com.openminis.app.service.ToolOutcome.Cancelled)
+        }
+        SessionActivityTracker.setInactive(id, turnId)
+    }
+
+    // nanoMuse: every stream path shares completion classification before publishing its badge.
+    private suspend fun finishTrackedReply(id: String, turnId: String) {
+        val job = kotlin.coroutines.coroutineContext[Job] ?: return
+        val binding = nmTrackedLocalRuns.finish(job) ?: return
+        if (binding.sessionId != id || binding.turnId != turnId) return
+        if (!SessionActivityTracker.isCurrentRun(id, turnId)) return
+        if (job.isCancelled) SessionActivityTracker.markReplyIncomplete(id, turnId)
+        if (!SessionActivityTracker.isCurrentRun(id, turnId)) return
         publishOverlayReplyExcerpt(id)
-        SessionActivityTracker.setInactive(id)
+        SessionActivityTracker.setInactive(id, turnId)
     }
 
 
@@ -11754,7 +11831,9 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         nmHeadlessReceipt?.requestStop() // nanoMuse: request local Stop before publishing idle.
         AppLogger.info(TAG_STREAM, "cancelStream invoked _isStreaming=false (sid=$activeSessionId)")
         if (_isStreaming.value) io.github.nanomuse.ui.feedback.TurnFeedback.stopped(activeSessionId) // nanoMuse: the record hears the Stop; the chat asks why, once (relay 0.31)
-        streamJob?.cancel()
+        // nanoMuse: snapshot the stopped job and its own run under the registration lock.
+        val stoppedJob = streamJob
+        val stoppedBinding = stoppedJob?.let { job -> nmTrackedLocalRuns.stop(job) { job.cancel() } }
         _isStreaming.value = false
         // T-streaming-side-channel: flush any in-flight delta back into the
         // canonical message so the rest of cancelStream's cleanup (publish
@@ -11771,15 +11850,8 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // surface any reply we already streamed + tag outcome as
         // Cancelled so the overlay's glyph reflects the actual end
         // state (⊘) instead of carrying over the prior tool's outcome.
-        // nanoMuse: cancellation must be recorded before the immediate tracker teardown.
-        SessionActivityTracker.markReplyIncomplete(activeSessionId)
-        publishOverlayReplyExcerpt(activeSessionId)
-        SessionActivityTracker.clearToolRunning(com.openminis.app.service.ToolOutcome.Cancelled)
-        SessionActivityTracker.setInactive(activeSessionId)
-        if (isDraft && realSessionId.isNotEmpty() && activeSessionId != sessionId) {
-            SessionActivityTracker.markReplyIncomplete(sessionId)
-            SessionActivityTracker.setInactive(sessionId)
-        }
+        // nanoMuse: never tear down another job's tracker run, even after draft promotion.
+        finishStoppedReply(stoppedBinding, publishReply = true)
         // Stop whichever shell the agent loop is actually dispatching against.
         // Before `ensureSession()` that is the draft id; after, the real id.
         // Stopping the wrong one leaves a runaway yt-dlp/ffmpeg alive.
@@ -11880,34 +11952,37 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             streamJob = launch(Dispatchers.IO) {
                 AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob ENTER sid=$activeSessionId")
                 try {
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
+                    val trackedSessionId = activeSessionId
+                    SessionConcurrencyManager.acquireSlot(trackedSessionId)
                     AppLogger.debug(TAG_STREAM, "resumeQueueAfterCancel streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                            ?: com.openminis.app.data.model.FallbackStrategy.default
-                    }
-                    val fallbackProviders = buildFallbackProviders(provider)
-
+                    val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
                     try {
+
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                                ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+                        val fallbackProviders = buildFallbackProviders(provider)
+
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drainQueuedPrompts CALL")
                         drainQueuedPrompts(
                             provider = provider,
                             systemPrompt = systemPrompt,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drain CANCELLED")
                     } catch (e: Exception) {
                         AppLogger.error(TAG_STREAM, "resumeQueueAfterCancel drain EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Queued drain error (resumeQueueAfterCancel)", e)
                         setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
-                        // nanoMuse: a failed resumed run is not a new unread answer.
-                        SessionActivityTracker.markReplyIncomplete(activeSessionId)
+                        // An error suppresses unread and remains distinct from a user cancellation.
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -11917,8 +11992,11 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         // non-null excerpt. Reading _messages here is safe:
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                        }
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -12165,37 +12243,42 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             streamJob = launch(Dispatchers.IO) {
                 AppLogger.info(TAG_STREAM, "resume streamJob ENTER sid=$activeSessionId")
                 try {
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
+                    val trackedSessionId = activeSessionId
+                    SessionConcurrencyManager.acquireSlot(trackedSessionId)
                     AppLogger.debug(TAG_STREAM, "resume streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let {
-                            providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy
-                        } ?: com.openminis.app.data.model.FallbackStrategy.default
-                    }
-                    val fallbackProviders = buildFallbackProviders(provider)
+                    val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
                     try {
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let {
+                                providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy
+                            } ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+                        val fallbackProviders = buildFallbackProviders(provider)
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop CALL")
                         runAgentLoop(
                             provider = provider,
                             systemPrompt = systemPrompt,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop RETURN normal")
                         nmAfterTurn() // nanoMuse
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy)
+                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy) {
+                            SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                        }
                         AppLogger.info(TAG_STREAM, "resume drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop CANCELLED")
                         Log.d(TAG, "Agent loop cancelled (resume)")
                     } catch (e: Exception) {
                         AppLogger.error(TAG_STREAM, "resume runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Agent loop error (resume)", e)
                         setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
-                        // nanoMuse: a failed resumed run is not a new unread answer.
-                        SessionActivityTracker.markReplyIncomplete(activeSessionId)
+                        // An error suppresses unread and remains distinct from a user cancellation.
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "resume streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -12205,8 +12288,11 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         // non-null excerpt. Reading _messages here is safe:
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                        }
                         AppLogger.info(TAG_STREAM, "resume streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {

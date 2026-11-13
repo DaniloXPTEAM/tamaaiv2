@@ -191,6 +191,7 @@ enum class PetMoodAsset { IDLE, WORKING, WAITING, HAPPY, ERROR }
  */
 object PetCare {
     fun afterTurn(needs: PetNeeds, outcome: PetTurnOutcome, turnsToday: Int): PetNeeds {
+        if (outcome == PetTurnOutcome.CANCELLED || outcome == PetTurnOutcome.UNKNOWN) return needs
         val fed = needs.with(PetNeed.SATIETY, needs.satiety + when (outcome) {
             PetTurnOutcome.SUCCESS -> 12
             PetTurnOutcome.FAILURE -> 6
@@ -204,7 +205,8 @@ object PetCare {
         val seen = company.with(PetNeed.BOND, company.bond + 10)
         // Attention is company but not rest: every turn past a handful costs energy, so a person
         // who works the agent all night finds a tired Pet in the morning rather than a full one.
-        val tired = if (turnsToday > BUSY_TURNS) {
+        // turnsToday is the number already completed, so index 6 is the seventh turn.
+        val tired = if (turnsToday >= BUSY_TURNS) {
             seen.with(PetNeed.ENERGY, seen.energy - ENERGY_PER_EXTRA_TURN)
         } else {
             seen

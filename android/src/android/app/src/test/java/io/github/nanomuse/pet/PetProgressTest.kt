@@ -69,12 +69,12 @@ class PetProgressTest {
         val midway = PetLadder.progressFor(175) // level 2 spans 100..250, so 75 of 150
         assertEquals(2, midway.level)
         assertEquals(75L, midway.toNextLevel)
-        assertEquals(0.5f, midway.levelFraction, 0.001f)
+        assertEquals(0.5, midway.levelFraction.toDouble(), 0.001)
 
         // At a boundary the ring is empty and the next level is the whole span away.
         val fresh = PetLadder.progressFor(100)
         assertEquals(2, fresh.level)
-        assertEquals(0f, fresh.levelFraction, 0.001f)
+        assertEquals(0.0, fresh.levelFraction.toDouble(), 0.001)
         assertEquals(150L, fresh.toNextLevel)
 
         // Just below the next boundary the ring is nearly full.
@@ -84,7 +84,7 @@ class PetProgressTest {
 
         // At the top there is no next level and the ring reads full.
         val top = PetLadder.progressFor(PetLadder.levelStart(PetLadder.MAX_LEVEL) + 10_000)
-        assertEquals(1f, top.levelFraction, 0.001f)
+        assertEquals(1.0, top.levelFraction.toDouble(), 0.001)
         assertNull(top.toNextLevel)
     }
 
@@ -125,6 +125,13 @@ class PetProgressTest {
         assertEquals(PetXpRules.TURN_CAP, PetXpRules.apply(0, 1_000_000))
         // A negative starting total is repaired, not propagated.
         assertEquals(10L, PetXpRules.apply(-500, PetXpRules.SUCCESS))
+    }
+
+    @Test
+    fun `a very large XP total saturates instead of resetting`() {
+        assertEquals(Long.MAX_VALUE, PetXpRules.apply(Long.MAX_VALUE - 5L, 10L))
+        assertEquals(Long.MAX_VALUE, PetXpRules.apply(Long.MAX_VALUE, PetXpRules.TURN_CAP))
+        assertEquals(Long.MAX_VALUE - 1L, PetXpRules.apply(Long.MAX_VALUE - 1L, 0L))
     }
 
     @Test

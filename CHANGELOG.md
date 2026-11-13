@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Preserved the Android Pet's care history and corrected its needs, local-day streaks and chat-cycle rewards when returning to the app.
+
 - Distinguished Android provider authentication, access, credit and request-limit refusals, keeping the provider's message with credentials redacted instead of calling every 403 an invalid key.
 
 - Prevented failed coding runs from retrying in a new conversation after a tool had already started or returned a result.

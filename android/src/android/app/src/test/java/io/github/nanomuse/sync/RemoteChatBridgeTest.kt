@@ -19,9 +19,11 @@ class RemoteChatBridgeTest {
         var saved = 0
         var failSave = false
         var updates = 0
+        var onShow: (() -> Unit)? = null
         var ended = 0
         var tracked = 0
         val completions = mutableListOf<Boolean>()
+        val failures = mutableListOf<Boolean>()
         val errors = mutableListOf<RemoteChatBridge.Issue>()
         override fun setBusy(value: Boolean) { running = value }
         override fun error(issue: RemoteChatBridge.Issue, device: String) { errors += issue }
@@ -30,24 +32,30 @@ class RemoteChatBridgeTest {
         override suspend fun session() = "session"
         override suspend fun user(sessionId: String, text: String) { userCount++ }
         override fun started(sessionId: String) { tracked++ }
-        override fun ended(sessionId: String, completed: Boolean) { tracked--; completions += completed }
-        override fun show(id: String, task: RemoteChatBridge.Task) { updates++ }
+        override fun ended(sessionId: String, completed: Boolean, failed: Boolean) {
+            tracked--; completions += completed; failures += failed
+        }
+        override fun show(id: String, task: RemoteChatBridge.Task) { updates++; onShow?.invoke() }
         override suspend fun finish(sessionId: String, id: String, task: RemoteChatBridge.Task) {
             check(!failSave) { "storage unavailable" }
             saved++
         }
         override fun afterTurn() { ended++ }
     }
-    private class Task(private val wait: Boolean = false) : RemoteChatBridge.Task {
+    private class Task(
+        private val wait: Boolean = false,
+        override val failed: Boolean = false,
+        private val throwOnRun: Boolean = false,
+    ) : RemoteChatBridge.Task {
         override val text = "remote answer"
         override val blocks = emptyList<AssistantBlock>()
-        override val failed = false
         override var stopped = false
         var stops = 0
         var lateUpdate: (() -> Unit)? = null
         override suspend fun run(sessionId: String, update: () -> Unit) {
             lateUpdate = update
             update()
+            if (throwOnRun) error("remote transport failed")
             if (wait) awaitCancellation()
         }
         override fun stop() { stops++; stopped = true }
@@ -69,6 +77,7 @@ class RemoteChatBridgeTest {
         assertEquals(1, host.saved)
         assertEquals(1, host.ended)
         assertEquals(listOf(true), host.completions)
+        assertEquals(listOf(false), host.failures)
         assertEquals(0, host.tracked)
         assertFalse(host.busy)
         val updates = host.updates
@@ -98,9 +107,65 @@ class RemoteChatBridgeTest {
         runCurrent()
         assertEquals(1, host.saved)
         assertEquals(listOf(false), host.completions)
+        assertEquals(listOf(false), host.failures)
         assertEquals(0, host.tracked)
         assertFalse(host.busy)
         assertFalse(bridge.cancel())
+    }
+
+    @Test fun `stop during the first update does not leave the remote turn running`() = runTest {
+        val host = Host()
+        val task = Task(wait = true)
+        lateinit var bridge: RemoteChatBridge
+        bridge = RemoteChatBridge(this, host) { _, _, _ -> task }
+        host.onShow = {
+            host.onShow = null // cancel itself publishes one final update
+            assertTrue(bridge.cancel())
+        }
+        bridge.send("@Desk hello", listOf(device), false, false)
+        runCurrent()
+        val stillBusyAfterFirstStop = host.busy
+        if (host.busy) { // Clean up even on the regression, so runTest does not wait forever.
+            bridge.cancel()
+            runCurrent()
+        }
+        assertFalse("the first stop must cancel a job that has not yet been assigned", stillBusyAfterFirstStop)
+        assertEquals(listOf(false), host.completions)
+        assertEquals(listOf(false), host.failures)
+        assertEquals(1, task.stops)
+    }
+
+    @Test fun `stop during an undispatched task update cancels after the job is assigned`() = runTest {
+        val host = Host()
+        val task = Task(wait = true)
+        lateinit var bridge: RemoteChatBridge
+        bridge = RemoteChatBridge(this, host) { _, _, _ -> task }
+        host.onShow = {
+            if (host.updates == 2) {
+                host.onShow = null
+                assertTrue(bridge.cancel())
+            }
+        }
+        bridge.send("@Desk hello", listOf(device), false, false)
+        runCurrent()
+        val stillBusyAfterFirstStop = host.busy
+        if (host.busy) { bridge.cancel(); runCurrent() }
+        assertFalse(stillBusyAfterFirstStop)
+        assertEquals(listOf(false), host.completions)
+        assertEquals(listOf(false), host.failures)
+        assertEquals(1, task.stops)
+    }
+
+    @Test fun `remote failure is not mistaken for cancellation`() = runTest {
+        for (task in listOf(Task(failed = true), Task(throwOnRun = true))) {
+            val host = Host()
+            val bridge = RemoteChatBridge(this, host) { _, _, _ -> task }
+            bridge.send("@Desk hello", listOf(device), false, false)
+            runCurrent()
+            assertEquals(listOf(false), host.completions)
+            assertEquals(listOf(true), host.failures)
+            assertEquals(0, host.tracked)
+        }
     }
 
     @Test fun `failed persistence releases tracking without marking an answer unread`() = runTest {
@@ -110,6 +175,7 @@ class RemoteChatBridgeTest {
         runCurrent()
         assertEquals(0, host.saved)
         assertEquals(listOf(false), host.completions)
+        assertEquals(listOf(true), host.failures)
         assertEquals(0, host.tracked)
         assertFalse(host.busy)
     }

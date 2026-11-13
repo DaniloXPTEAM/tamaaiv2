@@ -31,6 +31,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,11 +45,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.openminis.app.R
+import com.openminis.app.service.SessionActivityTracker
 import io.github.nanomuse.ui.avatar.AgentAvatar
 import io.github.nanomuse.ui.avatar.AgentMood
 import io.github.nanomuse.ui.home.MuseRoundButton
 import io.github.nanomuse.ui.home.MuseTones
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 /** The Pet's own page: the face, its mood, its needs and its level. */
 const val ROUTE_PET = "tama/pet"
@@ -61,24 +71,42 @@ const val ROUTE_PET = "tama/pet"
  * the app is closed.
  */
 @Composable
-fun PetScreen(
-    onBack: () -> Unit,
-    /** Whether a turn is running right now, so the Pet looks up while the work happens. */
-    streaming: Boolean = false,
-    /** The current error, when one is showing, so a failure becomes a wince. */
-    error: String? = null,
-) {
+fun PetScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    // Idempotent and cheap: it makes the screen correct even when opened in a cold process.
-    LaunchedEffect(Unit) { PetStore.load(context) }
-    // Leaving the screen is what starts the absence, so stamp the visit on dispose rather than on
-    // every recomposition: the person looked at the Pet, and the next load decays from here.
-    DisposableEffect(Unit) {
-        onDispose { PetStore.touch(context) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // A screen can remain composed while the phone is backgrounded. Only a resumed Pet screen
+    // counts as visible, and returning from the background must reconcile the absence again.
+    DisposableEffect(lifecycle, context) {
+        fun updateVisibility() {
+            PetStore.setVisible(context, lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+        }
+        val observer = LifecycleEventObserver { _, _ -> updateVisibility() }
+        lifecycle.addObserver(observer)
+        updateVisibility()
+        onDispose {
+            lifecycle.removeObserver(observer)
+            PetStore.setVisible(context, false)
+        }
+    }
+    var today by remember { mutableLongStateOf(PetStreak.dayOf(System.currentTimeMillis())) }
+    // Refresh a screen left open over midnight; the loop is suspended in the background and only
+    // writes when the local date actually changes.
+    LaunchedEffect(lifecycle, context) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (isActive) {
+                val now = System.currentTimeMillis()
+                val day = PetStreak.dayOf(now)
+                if (today != day) {
+                    today = day
+                    PetStore.load(context, now)
+                }
+                delay(60_000L)
+            }
+        }
     }
     val state by PetStore.state.collectAsState()
-    // The live seam (2.3): the face follows the action, then settles back into its needs.
-    val presence = rememberPetPresence(streaming = streaming, error = error)
+    val activeSessions by SessionActivityTracker.activeSessions.collectAsState()
+    val presence = rememberPetPresence(streaming = activeSessions.isNotEmpty())
     val mood = PetLive.mood(presence = presence, needs = state.needs, aloneHours = state.aloneHours)
 
     Scaffold(containerColor = MuseTones.canvas) { padding ->
@@ -104,14 +132,13 @@ fun PetScreen(
 
             // What the Pet is feeling, in words, so the face is not the only carrier.
             Text(
-                text = stringResource(state.mood.labelRes()),
+                text = stringResource(mood.labelRes()),
                 fontSize = 15.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(6.dp))
             // What it remembers: the run of days, and how long the two of them have known each
             // other. A streak of zero is simply not shown rather than shown as a failure.
-            val today = PetStreak.dayOf(System.currentTimeMillis())
             val streakDays = PetStreak.shownOn(state.streak, today)
             Text(
                 text = buildString {
@@ -358,7 +385,7 @@ private fun WardrobeRow(state: PetState, onPick: (PetOutfit) -> Unit) {
                     color = if (worn) MuseTones.action else MuseTones.surface,
                     modifier = Modifier
                         .size(width = 74.dp, height = 64.dp)
-                        .clickable(enabled = unlocked) { onPick(outfit) },
+                        .clickable { onPick(outfit) },
                 ) {
                     Column(
                         modifier = Modifier.padding(vertical = 8.dp),

@@ -116,10 +116,11 @@ object PetXpRules {
         PetTurnOutcome.UNKNOWN -> 0L
     }
 
-    /** Adds [amount] to [current], clamped so XP never decreases and a turn never exceeds the cap. */
+    /** Adds [amount] without ever wrapping a very large lifetime XP total back to zero. */
     fun apply(current: Long, amount: Long): Long {
         val gain = amount.coerceIn(0L, TURN_CAP)
-        return (current.coerceAtLeast(0L) + gain).coerceAtLeast(0L)
+        val total = current.coerceAtLeast(0L)
+        return if (total > Long.MAX_VALUE - gain) Long.MAX_VALUE else total + gain
     }
 }
 

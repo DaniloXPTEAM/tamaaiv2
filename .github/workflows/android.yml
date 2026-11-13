@@ -180,6 +180,17 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+      # Upload the phone APK first: a later emulator-only artifact failure must not hide it.
+      # The separate x86 job needs rclone's Java binding even though its arm64 native payload
+      # is excluded by the emulator ABI filter. The generated AAR is otherwise git-ignored.
+      - name: Stage rclone binding for emulator build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tama-smoke-rclone
+          path: android/src/android/app/libs/rclone.aar
+          retention-days: 2
+          if-no-files-found: error
+
   # TAMA: the APK the job above builds was never *run* - only assembled, unit-tested and dumped.
   # assembleDebug proves it compiles; it says nothing about whether the app opens. This installs
   # it on a real Android runtime, starts the launcher activity, and fails if the process dies.
@@ -189,7 +200,7 @@ jobs:
     name: device smoke · emulator
     needs: debug-apk
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -204,14 +215,37 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
-      - name: Build the emulator's own APK (x86_64)
+      - name: Fetch the generated rclone binding
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: tama-smoke-rclone
+          path: android/src/android/app/libs
+
+      - name: Build the emulator's own APKs (x86_64)
         working-directory: android/src/android
-        env:
-          ORG_GRADLE_PROJECT_nm_abi: x86_64
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          ./gradlew :app:assembleDebug --console=plain --no-daemon 2>&1 | tail -20
+          # Gradle preserves underscores in ORG_GRADLE_PROJECT_* names; nm_abi is not nm.abi.
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest -Pnm.abi=x86_64 --console=plain --no-daemon 2>&1 | tee /tmp/gradle-emulator.log
           exit "${PIPESTATUS[0]}"
+
+      - name: Verify the emulator APK ABI
+        run: |
+          bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          badging="$("$bt/aapt" dump badging android/src/android/app/build/outputs/apk/debug/app-debug.apk)"
+          echo "$badging" | grep -E '^package:|^native-code:'
+          if ! echo "$badging" | grep '^native-code:' | grep -Fq "'x86_64'"; then
+            echo '::error title=emulator ABI::The smoke APK does not contain x86_64 native code.'
+            exit 1
+          fi
+
+      - name: Publish emulator build errors
+        if: failure()
+        run: |
+          if [ -f /tmp/gradle-emulator.log ]; then
+            grep -E '^e: |^> Task .*FAILED|error: |AAPT2|Execution failed for task|Could not find |Could not resolve ' /tmp/gradle-emulator.log \
+              | head -40 | while IFS= read -r line; do echo "::error title=emulator build::${line}"; done || true
+          fi
 
       - name: Enable KVM
         run: |
@@ -265,6 +299,28 @@ jobs:
             adb exec-out screencap -p > launch.png
             echo "::notice title=screenshot::$(stat -c%s launch.png) bytes"
             adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime.*E ' | head -20 || true
+
+            TEST_APK="$(find "$GITHUB_WORKSPACE/android/src/android/app/build/outputs/apk/androidTest/debug" -name '*.apk' -print -quit)"
+            if [ -z "$TEST_APK" ] || ! adb install -r -t "$TEST_APK" > pet-install.log 2>&1; then
+              echo "::error title=pet instrumentation::test APK missing or could not be installed"
+              [ ! -f pet-install.log ] || cat pet-install.log
+              exit 1
+            fi
+            if ! adb shell am instrument -w -r \
+              -e class io.github.nanomuse.pet.PetPersistenceInstrumentedTest \
+              ai.tama.assistant.test/androidx.test.runner.AndroidJUnitRunner > pet-instrumentation.log 2>&1; then
+              echo "::error title=pet instrumentation::instrumentation command failed"
+              tail -40 pet-instrumentation.log
+              exit 1
+            fi
+            cat pet-instrumentation.log
+            if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' pet-instrumentation.log; then
+              tail -30 pet-instrumentation.log | while IFS= read -r l; do
+                echo "::error title=pet instrumentation::${l//$'\r'/}"
+              done
+              exit 1
+            fi
+            echo "::notice title=pet instrumentation::Android SharedPreferences and tracker tests passed on the emulator"
             # Published here, not in a later step: once this step ends the emulator is gone, and
             # an adb call after it hangs rather than failing.
             [ -f am.log ] && grep -E 'Status:|Error:|Activity:' am.log | while IFS= read -r l; do
@@ -282,5 +338,7 @@ jobs:
             launch.png
             am.log
             install.log
+            pet-install.log
+            pet-instrumentation.log
           retention-days: 14
           if-no-files-found: warn

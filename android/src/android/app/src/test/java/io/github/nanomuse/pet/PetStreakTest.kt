@@ -1,5 +1,6 @@
 package io.github.nanomuse.pet
 
+import java.util.TimeZone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -65,6 +66,7 @@ class PetStreakTest {
         assertEquals(3, earlier.days)
         assertEquals(3, earlier.best)
         assertEquals(day0 + 2, earlier.lastDay)
+        assertEquals("a backwards clock must not hide the earned streak", 3, PetStreak.shownOn(earlier, day0))
     }
 
     @Test
@@ -96,14 +98,29 @@ class PetStreakTest {
 
     @Test
     fun `a millisecond earlier is the same day, and the epoch floors instead of truncating`() {
-        val atNoon = PetStreak.dayOf(1_700_000_000_000L)
+        val utc = TimeZone.getTimeZone("UTC")
+        val atNoon = PetStreak.dayOf(1_700_000_000_000L, utc)
         // One millisecond before an instant is still that instant's day; a boundary is where the
         // day changes, not where a rounding error lands.
-        assertEquals(atNoon, PetStreak.dayOf(1_700_000_000_000L - 1))
+        assertEquals(atNoon, PetStreak.dayOf(1_700_000_000_000L - 1, utc))
         // The sign of the division must be consistent on both sides of the epoch.
-        assertEquals(atNoon - 1, PetStreak.dayOf(atNoon * PetStreak.DAY_MS - 1))
-        val before = PetStreak.dayOf(-1L)
+        assertEquals(atNoon - 1, PetStreak.dayOf(atNoon * PetStreak.DAY_MS - 1, utc))
+        val before = PetStreak.dayOf(-1L, utc)
         assertEquals("floor division, not truncation", -1L, before)
+    }
+
+    @Test
+    fun `local midnight and daylight saving follow the device calendar`() {
+        val fortaleza = TimeZone.getTimeZone("America/Fortaleza")
+        val beforeMidnight = 1_704_164_399_999L // 2024-01-02 02:59:59.999 UTC
+        val midnight = beforeMidnight + 1
+        assertEquals(PetStreak.dayOf(beforeMidnight, fortaleza) + 1, PetStreak.dayOf(midnight, fortaleza))
+        assertEquals(PetStreak.legacyUtcDayOf(beforeMidnight), PetStreak.legacyUtcDayOf(midnight))
+
+        val newYork = TimeZone.getTimeZone("America/New_York")
+        val march9Noon = 1_710_003_600_000L // 2024-03-09 17:00 UTC
+        val march10Noon = 1_710_086_400_000L // 2024-03-10 16:00 UTC: 23 hours later
+        assertEquals(PetStreak.dayOf(march9Noon, newYork) + 1, PetStreak.dayOf(march10Noon, newYork))
     }
 
     @Test
