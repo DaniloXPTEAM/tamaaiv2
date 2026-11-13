@@ -71,7 +71,7 @@ de `Long.MAX_VALUE` zerava o total por overflow.
   com dependências simuladas; isso não compila o ViewModel inteiro. Sete testes da ponte remota da
   árvore passaram com stubs e `kotlinx-coroutines-test` 1.6.4 compilado para o harness, com um
   shim de operações atômicas; o projeto usa a versão 1.9.0 no Gradle.
-- **Android:** o run `43492356964`, commit `cc34b44`, compilou o aplicativo arm64, incluindo
+- **Android:** o run `43494804942`, commit `de0d28b`, compilou o aplicativo arm64, incluindo
   Compose, `ChatViewModel` e a correção de vagas, passou os testes unitários do Gradle e compilou
   o APK de testes. Também compilou o APK x86 e confirmou seu ABI. A suíte instrumentada usa um
   arquivo de preferências exclusivo por teste e verifica `SharedPreferences`, XP, recarga da store
@@ -100,9 +100,16 @@ de `Long.MAX_VALUE` zerava o total por overflow.
 
 `android:allowBackup="false"` continua em vigor e a função `PetStore.restore` **não** está ligada
 à restauração de backup do aplicativo. As alterações não habilitam backup nem transferem o Pet
-entre instalações. No run `43492356964`, a comparação não conseguiu ler pelo menos um dos
-certificados; isso não identifica o certificado instalado e não prova uma atualização segura.
-O APK arm64 desse run é o artefato `nanoMuse-debug-apk` (`14070767307`), SHA-256
-`7b47f4a513015ee2a02788498eb4a272d67f41cab5fb208a3f46d2358bce4166`. Não desinstalar, limpar
-os dados nem instalar por cima como procedimento presumido: antes é necessário confirmar a
-identidade e a assinatura do APK instalado e dispor de uma forma validada de preservar os dados.
+entre instalações. No run `43494804942`, o certificado do APK arm64 anterior, do run
+`43447089686`, foi **diferente** do certificado do APK novo. O primeiro tem SHA-256
+`0145f8ffb97f619ce47fcd9820fdf55de5b45c7007ae95f401c0e965314cb1e8`; o segundo,
+`7bb7cea9927e7104096b5061062394ad86b5a84be774c66883e00030fdf23879`. O APK novo é o artefato
+`nanoMuse-debug-apk` (`14072095885`), SHA-256 do arquivo
+`3ad3010118d043c49c93f58992676ceb45da15fa818301dd3d69737a13c827dc`.
+
+O certificado do aplicativo **instalado** ainda não foi confirmado. Se ele for o APK anterior,
+o novo não deve ser tratado como atualização compatível. Não desinstalar nem limpar os dados para
+contornar uma recusa: antes é necessário confirmar a identidade e a assinatura do APK instalado
+e dispor de uma forma validada de preservar os dados. Uma atualização compatível normalmente
+exige a chave de assinatura original ou uma linhagem de rotação aceita pelo Android; a chave
+privada não pode ser recuperada a partir do APK.
