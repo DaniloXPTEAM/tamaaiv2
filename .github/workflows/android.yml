@@ -173,15 +173,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Downloading by name across jobs did not work here (v8 dropped same-run defaults that v4
-      # relied on), and the failure reads as "no apk found" three steps later. Pinning the run id
-      # is the supported way to reach an artifact from another job in the same workflow.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      # Downloading one artifact by name produced an empty directory twice, with no error to read,
+      # so this uses the first-party action with no filters: every artifact of this run, one
+      # directory each. If that lands nothing, the listing below says so instead of the APK
+      # silently not being there.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: nanoMuse-debug-apk
           path: apk
-          run-id: ${{ github.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install, launch, and check the process is alive
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
@@ -195,7 +193,9 @@ jobs:
           script: |
             set -o pipefail
             # Prove what the download step produced before blaming the APK for not being there.
-            echo "::notice title=apk tree::$(pwd) :: $(ls -la; find . -maxdepth 3 -name '*.apk' -o -maxdepth 3 -name 'apk' -type d | head)"
+            echo "::notice title=apk tree::$(pwd)"
+            ls -la apk || true
+            find apk -maxdepth 3 -type f | head -20 || true
             APK="$(find . -name '*.apk' | head -1)"
             echo "::notice title=apk::${APK:-none found}"
             if [ -z "$APK" ]; then
