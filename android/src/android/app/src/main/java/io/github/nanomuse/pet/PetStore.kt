@@ -232,7 +232,7 @@ object PetStore {
             .apply()
     }
 
-    /** Restores a backed-up total (the app's own backup/restore path calls this). */
+    /** Restore primitive for future integration; the app's backup/restore path does not call it yet. */
     @Synchronized
     fun restore(context: Context, xp: Long, needs: PetNeeds? = null) {
         prefs(context).edit()

@@ -231,7 +231,11 @@ object OwnProviderProxy {
                 .build()
             client.newCall(Request.Builder().url(url).header("User-Agent", "TAMA AI").build()).await { r ->
                 val body = if (r.code == 403) r.peekBody(4096).string() else ""
-                val reach = ProviderReach.fromHttp(r.code, body, host, oauth = false)
+                // A network probe sends no provider key. Ordinary 401/403/429 still prove the
+                // host was reached; only region and interception pages are reach failures here.
+                val reach = ProviderReach.fromHttp(r.code, body, host, oauth = false)?.takeIf {
+                    it.kind == ProviderReach.Kind.REGION_BLOCKED || it.kind == ProviderReach.Kind.UNREACHABLE
+                }
                 Probe(reach == null && r.code < 500, r.code, System.currentTimeMillis() - started, host, reach)
             }
         } catch (e: IOException) {

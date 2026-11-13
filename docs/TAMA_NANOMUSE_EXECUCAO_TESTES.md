@@ -436,3 +436,46 @@ notificação passar a usar uma variante com costura, ou se o código do app vol
 
 O que **não** foi feito: os ícones do iOS (`android/src/ios/...`) e o favicon da Web continuam os
 do nanoMuse; e a arte não passou por revisão visual humana além da minha.
+
+---
+
+## 11. Instalação em telefone e diagnóstico do OpenRouter
+
+- A pessoa informou que instalou o APK arm64 no telefone. Isso comprova a instalação daquele
+  APK, não todos os fluxos do aparelho nem uma chamada bem-sucedida ao provedor.
+- Ela relatou `Invalid API key` tanto no TAMA AI quanto no nanoMuse original, usando uma chave
+  temporária de teste. O valor da chave não é registrado aqui. Não foi possível consultar o
+  OpenRouter a partir do sandbox; portanto não há evidência de que a chave é válida ou inválida,
+  nem de que a conta tem ou não crédito.
+- O código herdado de `OpenAIProvider.mapHttpError` classificava todo HTTP 403 como chave
+  inválida. A documentação do OpenRouter distingue 401 (autenticação), 402 (crédito), 403
+  (por exemplo permissão, filtro ou limite de orçamento) e 429 (limite de pedidos). Uma resposta
+  403 sem explicação não prova falta de crédito. Fonte: <https://openrouter.ai/docs/api_reference/errors-and-debugging>
+  e <https://openrouter.ai/docs/api_reference/limits>.
+- Os diagnósticos do provedor e do relay são associados à exceção da própria chamada, em vez
+  de uma última resposta global; exibe o status e, quando disponível, a mensagem do provedor,
+  com a credencial redigida. Códigos compartilhados, como `rate_limited`, só identificam o
+  relay quando a origem ou o tipo o confirma. Uma
+  recusa por crédito só recebe essa classificação quando o status 402 é do OpenRouter ou o
+  provedor menciona explicitamente crédito. O teste de rede continua tratando 401, 403 e 429
+  comuns como prova de que o host foi alcançado. Modelos gratuitos permanecem sujeitos a limites.
+- Verificação local real: `ProviderReachTest`, `AllowanceSignalTest`, `GuidanceTest` e
+  `NmStringsParityTest`, **24 testes passando**, com Kotlin 2.1.0, JRE 21 e JUnit 4.10. As classes
+  reais de classificação e catálogo foram compiladas com substitutos mínimos para dependências
+  Android e de conta; não é um build Android, teste da interface ou chamada ao OpenRouter. As
+  dependências locais vieram de fontes públicas e ficaram fora do Git.
+- Os testes com MockWebServer cobrem a requisição compatível, as recusas e a separação entre
+  chamadas; sua execução pelo Gradle depende do CI Android. As tentativas anteriores do CI para
+  `2187847` e `841fdb9` falharam, respectivamente, na compilação e numa asserção de quota. Essas
+  falhas não são PASS; o resultado do novo commit deve ser consultado no Actions.
+- **Preservar o Pet e os dados:** o manifesto desativa o backup automático do Android e, na
+  árvore atual, `PetStore.restore` não é chamado pelo backup do app. A assinatura de APKs debug
+  pode mudar entre runners; portanto não orientar a desinstalação nem presumir que outro APK pode
+  atualizar o que já está no telefone. O CI compara a assinatura com o artefato arm64 do run
+  `43447089686`, mas ainda é preciso saber se é esse o APK instalado. A comparação pode ficar
+  indisponível quando o artefato expirar. Backup/restauração do Pet segue não integrado e precisa
+  de trabalho próprio e teste real antes de qualquer migração destrutiva.
+- `PROVIDER_LIVE_PASS`: **NOT_RUN**. Próximo passo: verificar o CI, a assinatura do APK instalado
+  e um caminho de atualização que preserve os dados; só então selecionar o provedor e um modelo
+  gratuito disponível e enviar uma mensagem. Se falhar, registrar o código e a mensagem do
+  provedor sem compartilhar a chave.

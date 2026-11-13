@@ -46,34 +46,21 @@ class ProviderReachTest {
         assertEquals("api.openai.com", quota.host)
     }
 
-    @Test fun `the side channel keeps what mapHttpError drops`() {
-        ReachSignal.clear()
-        assertNull(ReachSignal.takeFresh())
-        // an API-key 401 is upstream's business
-        ReachSignal.noteHttpError(401, "{\"error\":{\"message\":\"bad key\"}}", "api.openai.com", oauth = false)
-        assertNull(ReachSignal.takeFresh())
-        // the plan's 401 is "sign in again"
-        ReachSignal.noteHttpError(401, "", "chatgpt.com", oauth = true)
-        val out = ReachSignal.takeFresh()!!
-        assertEquals(ProviderReach.Kind.SIGNED_OUT, out.kind)
-        assertNull(ReachSignal.takeFresh()) // consumed
-        // the region page as OpenAI serves it
-        ReachSignal.noteHttpError(403, """{"error":{"code":"unsupported_country_region_territory","message":"not here"}}""", "chatgpt.com", oauth = true)
-        assertEquals(ProviderReach.Kind.REGION_BLOCKED, ReachSignal.takeFresh()!!.kind)
-        // an interception page where JSON was due
-        ReachSignal.noteHttpError(403, "<!DOCTYPE html><html><body>blocked</body></html>", "chatgpt.com", oauth = true)
-        assertEquals(ProviderReach.Kind.UNREACHABLE, ReachSignal.takeFresh()!!.kind)
-        // the plan with nothing left, and OpenAI's own words kept
-        ReachSignal.noteHttpError(429, """{"error":{"code":"usage_limit_reached","message":"Resets in 3 hours."}}""", "chatgpt.com", oauth = true, retryAfter = "7200")
-        val quota = ReachSignal.takeFresh()!!
+    @Test fun `HTTP diagnostics keep the reason from the actual response`() {
+        val auth = ProviderReach.fromHttp(401, "{\"error\":{\"message\":\"bad key\"}}", "api.openai.com", oauth = false)!!
+        assertEquals(ProviderReach.Kind.AUTH_REJECTED, auth.kind)
+        assertEquals("bad key", auth.detail)
+        assertEquals(ProviderReach.Kind.SIGNED_OUT, ProviderReach.fromHttp(401, "", "chatgpt.com", oauth = true)!!.kind)
+        val region = ProviderReach.fromHttp(403, """{"error":{"code":"unsupported_country_region_territory","message":"not here"}}""", "chatgpt.com", oauth = true)!!
+        assertEquals(ProviderReach.Kind.REGION_BLOCKED, region.kind)
+        val interception = ProviderReach.fromHttp(403, "<!DOCTYPE html><html><body>blocked</body></html>", "chatgpt.com", oauth = true)!!
+        assertEquals(ProviderReach.Kind.UNREACHABLE, interception.kind)
+        val quota = ProviderReach.fromHttp(429, """{"error":{"code":"usage_limit_reached","message":"Resets in 3 hours."}}""", "chatgpt.com", oauth = true, retryAfterS = 7200)!!
         assertEquals(ProviderReach.Kind.QUOTA, quota.kind)
-        assertEquals("Resets in 3 hours.", quota.detail)
+        assertEquals("HTTP 429: Resets in 3 hours.", quota.detail)
         assertEquals(7200, quota.retryAfterS)
-        // a burst 429 on the plan is a wait, on an own key it is upstream's "Rate limited"
-        ReachSignal.noteHttpError(429, "{}", "chatgpt.com", oauth = true)
-        assertEquals(ProviderReach.Kind.RATE_LIMITED, ReachSignal.takeFresh()!!.kind)
-        ReachSignal.noteHttpError(429, "{}", "api.deepseek.com", oauth = false)
-        assertNull(ReachSignal.takeFresh())
+        assertEquals(ProviderReach.Kind.RATE_LIMITED, ProviderReach.fromHttp(429, "{}", "chatgpt.com", oauth = true)!!.kind)
+        assertEquals(ProviderReach.Kind.RATE_LIMITED, ProviderReach.fromHttp(429, "{}", "api.deepseek.com", oauth = false)!!.kind)
     }
 
     @Test fun `the canonical line survives a round trip`() {
@@ -101,32 +88,52 @@ class ProviderReachTest {
         assertFalse(ProviderReach.looksLikeHtml("{\"a\":1}"))
     }
 
-    // TAMA: the failure that produced "Invalid API key" for a key that was valid. OpenRouter
-    // answers a key with no balance with a 403, and upstream maps every 401 and 403 to
-    // InvalidApiKey, so a free key's owner is told to check a key that is fine.
-    @Test fun `a credit refusal is not an invalid key, whichever status carried it`() {
-        val forbidden = """{"error":{"message":"Insufficient credits. Add more credits to continue.","code":403}}"""
-        val r = ProviderReach.fromHttp(403, forbidden, "openrouter.ai", oauth = false)!!
+    @Test fun `credit limits require a credit response, not an arbitrary forbidden status`() {
+        val credit = """{"error":{"message":"Insufficient credits. Add more credits to continue.","code":402}}"""
+        val r = ProviderReach.fromHttp(402, credit, "openrouter.ai", oauth = false)!!
         assertEquals(ProviderReach.Kind.NO_CREDIT, r.kind)
         assertEquals("openrouter.ai", r.host)
-        // the vendor's own sentence survives, because it is the only thing that says what to do
-        assertTrue(r.detail, r.detail.contains("Insufficient credits"))
+        assertEquals("HTTP 402: Insufficient credits. Add more credits to continue.", r.detail)
+        assertEquals(ProviderReach.Kind.NO_CREDIT, ProviderReach.fromHttp(402, "", "openrouter.ai", oauth = false)!!.kind)
+        assertNull(ProviderReach.fromHttp(402, "", "other.example", oauth = false))
+        assertEquals(ProviderReach.Kind.NO_CREDIT, ProviderReach.fromHttp(403, credit, "openrouter.ai", oauth = false)!!.kind)
 
-        val asQuota = """{"error":{"message":"This request requires more credits","code":402}}"""
-        assertEquals(ProviderReach.Kind.NO_CREDIT, ProviderReach.fromHttp(429, asQuota, "openrouter.ai", oauth = false)!!.kind)
-    }
-
-    @Test fun `a plain 403 is a refusal, not an authentication failure`() {
-        val r = ProviderReach.fromHttp(403, "forbidden", "openrouter.ai", oauth = false)!!
-        assertEquals(ProviderReach.Kind.NO_CREDIT, r.kind)
-        // a 401 is still about the key, and stays where it was
-        assertNull(ProviderReach.fromHttp(401, "unauthorized", "openrouter.ai", oauth = false))
-        // an OAuth 401 is a sign-in that expired, unchanged
+        // An unrelated 403 may be a moderation or permission refusal, with no credit diagnosis.
+        val forbidden = """{"error":{"message":"Request blocked by policy","code":403}}"""
+        val denied = ProviderReach.fromHttp(403, forbidden, "openrouter.ai", oauth = false)!!
+        assertEquals(ProviderReach.Kind.ACCESS_DENIED, denied.kind)
+        assertEquals("Request blocked by policy", denied.detail)
+        assertEquals(ProviderReach.Kind.ACCESS_DENIED, ProviderReach.fromHttp(403, "", "openrouter.ai", oauth = false)!!.kind)
+        // A credit phrase in opaque metadata is not the provider's explanation for a policy refusal.
+        val echoedMetadata = """{"error":{"message":"Request blocked by policy","metadata":{"prompt":"insufficient credits"}}}"""
+        assertEquals(ProviderReach.Kind.ACCESS_DENIED, ProviderReach.fromHttp(403, echoedMetadata, "openrouter.ai", oauth = false)!!.kind)
+        assertEquals("forbidden", ProviderReach.fromHttp(403, "forbidden", "openrouter.ai", oauth = false)!!.detail)
+        assertEquals(ProviderReach.Kind.AUTH_REJECTED, ProviderReach.fromHttp(401, "unauthorized", "openrouter.ai", oauth = false)!!.kind)
         assertEquals(ProviderReach.Kind.SIGNED_OUT, ProviderReach.fromHttp(401, "", "chatgpt.com", oauth = true)!!.kind)
     }
 
-    @Test fun `the credit sentence survives a reload`() {
-        val r = ProviderReach.fromHttp(403, """{"error":{"message":"Insufficient credits"}}""", "openrouter.ai", oauth = false)!!
-        assertEquals(r, ProviderReach.classify(ProviderReach.canonical(r)))
+    @Test fun `new diagnostics survive a reload`() {
+        for (reach in listOf(
+            ProviderReach.fromHttp(402, "", "openrouter.ai", oauth = false)!!,
+            ProviderReach.fromHttp(403, """{"error":{"message":"blocked"}}""", "openrouter.ai", oauth = false)!!,
+            ProviderReach.fromHttp(401, """{"error":{"message":"unauthorized"}}""", "openrouter.ai", oauth = false)!!,
+        )) assertEquals(reach, ProviderReach.classify(ProviderReach.canonical(reach)))
+    }
+
+    @Test fun `redaction removes the actual credential and known key forms before truncation`() {
+        val credential = "fixture-credential-123456"
+        val knownForm = "sk-" + "or-v1-" + "f".repeat(20)
+        val body = """{"error":{"message":"$credential $knownForm"}}"""
+        val safe = ProviderReach.redactBody(body, credential)
+        assertFalse(safe.contains(credential))
+        assertFalse(safe.contains(knownForm))
+        val detail = ProviderReach.fromHttp(401, safe, "openrouter.ai", oauth = false)!!.detail
+        assertTrue(detail.contains("[redacted]"))
+        assertFalse(ProviderReach.canonical(ProviderReach.fromHttp(401, safe, "openrouter.ai", oauth = false)!!).contains(credential))
+    }
+
+    @Test fun `unparsed JSON metadata is not displayed`() {
+        val r = ProviderReach.fromHttp(403, """{"error":{"metadata":{"private":"do not show"}}}""", "openrouter.ai", oauth = false)!!
+        assertEquals("", r.detail)
     }
 }

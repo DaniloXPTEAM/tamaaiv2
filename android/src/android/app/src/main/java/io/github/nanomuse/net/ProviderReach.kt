@@ -9,10 +9,9 @@ import java.util.Locale
  *
  * Two sources feed it. Most failures are classified from the text of the error itself
  * ([classify]): OkHttp's connect, DNS, TLS and timeout sentences name the host, so the card can
- * too. The ones whose text upstream flattens — a 401 or 403 becomes "Invalid API key", a 429
- * "Rate limited" — are kept aside by [ReachSignal] on their way through `mapHttpError`, with
- * the status, the body and the host, and the view model turns them into a [canonical] line the
- * classifier reads back. The canonical line is what is persisted, so the card survives a reload.
+ * too. HTTP failures are classified by [fromHttp] and attached to the particular exception that
+ * carried them. The view model stores a [canonical] line so the card survives a reload. Keeping
+ * the diagnostic on the exception prevents a concurrent call or fallback from replacing it.
  *
  * Pure Kotlin: the unit tests run it without Android.
  */
@@ -34,17 +33,14 @@ object ProviderReach {
         /** Too many requests at once (any other 429). */
         RATE_LIMITED,
 
-        /**
-         * The key was accepted and the request was still refused: no credit left, or the model is
-         * not enabled for this key's tier.
-         *
-         * This is the case that reads as "Invalid API key" and is not one. Upstream maps every 401
-         * *and* 403 to [com.openminis.app.data.model.LLMError.InvalidApiKey], and a credit problem
-         * is a 403: OpenRouter answers a key with no balance exactly that way, so a person with a
-         * free key is told to check a key that is fine. Every one of these carries the vendor's
-         * own sentence in `detail`, which is what the card shows.
-         */
+        /** The provider reported a credit or payment limit, not necessarily a zero balance. */
         NO_CREDIT,
+
+        /** Authentication was rejected (401); this alone does not explain why. */
+        AUTH_REJECTED,
+
+        /** Access was refused (403); the status alone says nothing about the balance. */
+        ACCESS_DENIED,
     }
 
     data class Reach(
@@ -70,9 +66,15 @@ object ProviderReach {
     private val QUOTA_MARKERS = listOf(
         "usage_limit_reached", "usage_not_included", "insufficient_quota", "quota_exceeded",
         "plan_limit", "exceeded your current quota", "reached your usage limit", "usage limit",
-        // OpenRouter's own words for "the key is fine, the balance is not" (a 403, not a 429).
-        "insufficient credit", "more credits", "not enough credits", "negative balance",
     )
+
+    // These phrases assert a credit problem; a generic "403 forbidden" does not.
+    private val CREDIT_MARKERS = listOf(
+        "insufficient credit", "requires more credits", "not enough credits", "negative balance",
+    )
+
+    private val KEY_RX = Regex("""(?i)\b(?:sk-|xai-)[a-z0-9_-]{6,}""")
+    private val BEARER_RX = Regex("""(?i)\bBearer\s+[a-z0-9._~+/-]{6,}""")
 
     // OkHttp / java.net sentences that carry the host
     private val CONNECT_RX = Regex("""failed to connect to ([A-Za-z0-9.\-]+)(?:/[0-9a-fA-F:.]+)? \(port \d+\)""")
@@ -100,6 +102,7 @@ object ProviderReach {
 
         // the vendor's own codes first — they are not network failures
         if (REGION_CODE in low) return Reach(Kind.REGION_BLOCKED, hostIn(t) ?: hint, vendorMessage(t))
+        if (CREDIT_MARKERS.any { it in low }) return Reach(Kind.NO_CREDIT, hostIn(t) ?: hint, vendorMessage(t))
         if (QUOTA_MARKERS.any { it in low }) return Reach(Kind.QUOTA, hostIn(t) ?: hint, vendorMessage(t))
 
         CONNECT_RX.find(t)?.let { return Reach(Kind.UNREACHABLE, it.groupValues[1].lowercase(Locale.ROOT), t) }
@@ -114,27 +117,39 @@ object ProviderReach {
         return null
     }
 
-    /**
-     * The side channel's record as a reach, when the status and the body say it is one; the
-     * ordinary "invalid key on an API-key provider" stays null and keeps upstream's text.
-     */
+    /** Classify an HTTP response without guessing that a forbidden request means no credit. */
     fun fromHttp(status: Int, body: String?, host: String, oauth: Boolean, retryAfterS: Int? = null): Reach? {
         val b = body.orEmpty()
         val low = b.lowercase(Locale.ROOT)
         val h = host.lowercase(Locale.ROOT)
+        val message = vendorMessage(b)
+        // Look at the provider's sentence, not arbitrary JSON metadata or echoed prompt text.
+        val creditReported = CREDIT_MARKERS.any { it in message.lowercase(Locale.ROOT) }
         return when {
-            status == 403 && REGION_CODE in low -> Reach(Kind.REGION_BLOCKED, h, vendorMessage(b))
+            status == 403 && REGION_CODE in low -> Reach(Kind.REGION_BLOCKED, h, message)
             status in setOf(403, 404, 503) && looksLikeHtml(b) -> Reach(Kind.UNREACHABLE, h, "")
-            status == 401 && oauth -> Reach(Kind.SIGNED_OUT, h, "")
-            // Credit first, whichever status carried it: a 403 with "insufficient credits" is not
-            // an authentication problem, and saying so is the whole point of this branch.
-            (status == 401 || status == 403 || status == 429) && QUOTA_MARKERS.any { it in low } ->
-                Reach(Kind.NO_CREDIT, h, vendorMessage(b), retryAfterS)
-            status == 403 && !oauth -> Reach(Kind.NO_CREDIT, h, vendorMessage(b))
-            status == 429 && QUOTA_MARKERS.any { it in low } -> Reach(Kind.QUOTA, h, vendorMessage(b), retryAfterS)
-            status == 429 && isPlanHost(h) -> Reach(Kind.RATE_LIMITED, h, "", retryAfterS)
+            status == 401 && oauth -> Reach(Kind.SIGNED_OUT, h, message)
+            status == 401 -> Reach(Kind.AUTH_REJECTED, h, message)
+            // OpenRouter documents 402 for credit limits. Other hosts need an explicit credit
+            // message; 403 can instead mean moderation, a workspace budget or access policy.
+            status == 402 && (h == "openrouter.ai" || h.endsWith(".openrouter.ai") || creditReported) ->
+                Reach(Kind.NO_CREDIT, h, statusDetail(status, message), retryAfterS)
+            status == 403 && creditReported ->
+                Reach(Kind.NO_CREDIT, h, statusDetail(status, message), retryAfterS)
+            status == 403 -> Reach(Kind.ACCESS_DENIED, h, message)
+            status == 429 && QUOTA_MARKERS.any { it in low } -> Reach(Kind.QUOTA, h, statusDetail(status, message), retryAfterS)
+            status == 429 -> Reach(Kind.RATE_LIMITED, h, message, retryAfterS)
             else -> null
         }
+    }
+
+    private fun statusDetail(status: Int, message: String): String =
+        if (message.isBlank()) "HTTP $status" else "HTTP $status: $message"
+
+    /** Remove the credential actually used and common key forms before logging or persisting errors. */
+    fun redactBody(body: String, credential: String? = null): String {
+        val withoutCredential = credential?.takeIf { it.isNotEmpty() }?.let { body.replace(it, "[redacted]") } ?: body
+        return BEARER_RX.replace(KEY_RX.replace(withoutCredential, "[redacted]"), "Bearer [redacted]")
     }
 
     /** `nm_reach:<kind>:<host>:<retry_after>|<detail>` — what the view model stores for a side-channel reach. */
@@ -167,7 +182,7 @@ object ProviderReach {
             ?: RESOLVE_RX.find(t)?.groupValues?.get(1)?.lowercase(Locale.ROOT)
             ?: HOST_IN_URL_RX.find(t)?.groupValues?.get(1)?.lowercase(Locale.ROOT)
 
-    /** The `error.message` of an OpenAI-shaped body inside [t], or empty. */
+    /** The provider's `error.message`, or a short plain-text response when it sent one. */
     private fun vendorMessage(t: String): String {
         val start = t.indexOf('{')
         if (start >= 0) {
@@ -175,36 +190,12 @@ object ProviderReach {
                 val json = org.json.JSONObject(t.substring(start))
                 val err = json.optJSONObject("error") ?: json
                 val m = err.optString("message")
-                if (m.isNotBlank()) return m.take(300)
+                if (m.isNotBlank()) return redactBody(m).replace('\n', ' ').take(300)
             }
+            return "" // Do not display an unparsed JSON body, which may contain private metadata.
         }
-        return ""
+        val plain = t.trim()
+        if (plain.isBlank() || looksLikeHtml(plain) || plain.startsWith("<")) return ""
+        return redactBody(plain).replace('\n', ' ').take(300)
     }
-}
-
-/**
- * The HTTP failures upstream flattens, kept for the chat for a few seconds: the status, the
- * body and the host, noted in `mapHttpError` before "Invalid API key" / "Rate limited" is all
- * that is left. [takeFresh] is consumed by the view model when the error is about to be shown.
- */
-object ReachSignal {
-    private class Note(val reach: ProviderReach.Reach, val at: Long)
-
-    @Volatile private var last: Note? = null
-
-    /** Call for every non-2xx answer of a model request; only the ones the card is for are kept. */
-    fun noteHttpError(status: Int, body: String?, host: String, oauth: Boolean, retryAfter: String? = null) {
-        val reach = ProviderReach.fromHttp(status, body, host, oauth, retryAfter?.trim()?.toDoubleOrNull()?.toInt()) ?: return
-        last = Note(reach, System.currentTimeMillis())
-    }
-
-    /** The reach behind the error the chat is about to show, if there is a fresh one; consumed. */
-    fun takeFresh(maxAgeMs: Long = 30_000): ProviderReach.Reach? {
-        val n = last ?: return null
-        last = null
-        return n.reach.takeIf { System.currentTimeMillis() - n.at <= maxAgeMs }
-    }
-
-    /** Tests only. */
-    fun clear() { last = null }
 }

@@ -1,6 +1,10 @@
 package com.openminis.app.data.model
 
 sealed class LLMError(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    // nanoMuse: attach diagnostics to this failure, never to a global last-call slot.
+    var nmProviderReach: io.github.nanomuse.net.ProviderReach.Reach? = null
+    var nmRelayError: io.github.nanomuse.cloud.AllowanceSignal.HttpError? = null
+
     class InvalidApiKey(val detail: String = "") : LLMError(if (detail.isBlank()) "Invalid API key" else "Invalid API key: $detail")
     class NetworkError(cause: Throwable) : LLMError("Network error: ${cause.message}", cause)
     class ProviderError(val detail: String) : LLMError("Provider error: $detail")

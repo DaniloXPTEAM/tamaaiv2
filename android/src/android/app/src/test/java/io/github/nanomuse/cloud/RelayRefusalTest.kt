@@ -84,8 +84,13 @@ class RelayRefusalTest {
         assertNull(RelayRefusal.parse(429, """{"error":{"message":"Rate limit reached","type":"tokens","code":"rate_limit_exceeded"}}""", fromRelay = true))
         assertNull(RelayRefusal.parse(413, "Request too large")) // a 413 from a provider of one's own
         assertNull(RelayRefusal.parse(500, null))
-        // the relay's code without the type still counts (an older relay)
-        assertEquals(RelayRefusal.Kind.TOO_LARGE, RelayRefusal.parse(413, """{"error":{"message":"too big","code":"too_large"}}""")!!.kind)
+        // Older relays may omit the type, but an overlapping code is not proof on a different host.
+        val oldRelayBody = """{"error":{"message":"too big","code":"too_large"}}"""
+        assertNull(RelayRefusal.parse(413, oldRelayBody))
+        assertEquals(RelayRefusal.Kind.TOO_LARGE, RelayRefusal.parse(413, oldRelayBody, fromRelay = true)!!.kind)
+        val providerRateLimit = """{"error":{"message":"Slow down","code":"rate_limited"}}"""
+        assertNull(RelayRefusal.parse(429, providerRateLimit))
+        assertEquals(RelayRefusal.Kind.BUSY, RelayRefusal.parse(429, providerRateLimit, fromRelay = true)!!.kind)
     }
 
     @Test fun `a content check saying no is one kind, from the relay or from a key of one's own, and nothing splits it`() {
@@ -97,7 +102,7 @@ class RelayRefusalTest {
         assertEquals("The model provider's content check declined this request; try different words", fromRelay.message)
         assertFalse(fromRelay.isAllowance)
         // the same inside a stream: the relay answers 200 and puts the error in a data: line, so the
-        // client maps it with status 0; the code alone says what it is
+        // client maps it with status 0; the content-check marker also works for an own-key provider
         assertEquals(RelayRefusal.Kind.CONTENT_REJECTED, RelayRefusal.parse(0, relayBody)!!.kind)
         // Bailian's own 400 on a key of one's own: not the relay's shape, the same kind and code
         val bailian = """{"error":{"message":"<400> InternalError.Algo.DataInspectionFailed: Input data may contain inappropriate content.","type":"invalid_request_error","code":"data_inspection_failed"}}"""
@@ -120,6 +125,11 @@ class RelayRefusalTest {
         assertFalse(shouldSplitOnError(LLMError.ProviderError("[400] The model provider's content check declined this request; try different words")))
         assertFalse(shouldSplitOnError(LLMError.ProviderError("[0] The model provider's content check declined this request; try different words")))
         assertFalse(shouldSplitOnError(LLMError.ProviderError("[400] <400> InternalError.Algo.DataInspectionFailed: Input data may contain inappropriate content.")))
+        // Credit/payment and access refusals are ProviderError too, but smaller input cannot fix them.
+        assertFalse(shouldSplitOnError(LLMError.ProviderError("[402] Credit limit")))
+        assertFalse(shouldSplitOnError(LLMError.ProviderError("HTTP 402: Payment Required")))
+        assertFalse(shouldSplitOnError(LLMError.ProviderError("[403] Blocked by policy")))
+        assertFalse(shouldSplitOnError(LLMError.ProviderError("HTTP 403: Forbidden")))
         // an over-length refusal still splits, as upstream's test expects
         assertTrue(shouldSplitOnError(LLMError.ProviderError("[400] Your input exceeds the context window of this model")))
         assertTrue(RelayRefusal.contentCheck("content_rejected"))

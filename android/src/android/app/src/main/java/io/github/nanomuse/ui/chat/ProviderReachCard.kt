@@ -134,12 +134,20 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
             stringResource(if (plan) R.string.nm_reach_quota_title else R.string.nm_reach_quota_key_title, host),
             stringResource(if (plan) R.string.nm_reach_quota_body else R.string.nm_reach_quota_key_body),
         )
-        // The key is fine; the account is not. Saying "invalid key" here sends a person with a
-        // free key to re-paste a key that was never the problem.
         ProviderReach.Kind.NO_CREDIT -> Head(
             Icons.Outlined.AccountBalanceWallet, Color(0xFFE0772C),
             stringResource(R.string.nm_reach_no_credit_title, host),
             stringResource(R.string.nm_reach_no_credit_body),
+        )
+        ProviderReach.Kind.AUTH_REJECTED -> Head(
+            Icons.Outlined.VpnKey, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_auth_title, host),
+            stringResource(R.string.nm_reach_auth_body),
+        )
+        ProviderReach.Kind.ACCESS_DENIED -> Head(
+            Icons.Outlined.Key, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_access_title, host),
+            stringResource(R.string.nm_reach_access_body),
         )
         ProviderReach.Kind.RATE_LIMITED -> Head(
             Icons.Outlined.HourglassEmpty, Color(0xFF7C5CFF),
@@ -191,9 +199,8 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                 )
                 ProviderReach.Kind.QUOTA -> listOf(R.string.nm_reach_help_wait, R.string.nm_reach_help_other)
                 ProviderReach.Kind.RATE_LIMITED -> listOf(R.string.nm_reach_help_moment)
-                ProviderReach.Kind.SIGNED_OUT -> emptyList()
-                // What helps here is money or a cheaper model, not a network setting: the two
-                // tips below say "add credit" and "try a free model", and nothing about a VPN.
+                ProviderReach.Kind.SIGNED_OUT, ProviderReach.Kind.AUTH_REJECTED,
+                ProviderReach.Kind.ACCESS_DENIED -> emptyList()
                 ProviderReach.Kind.NO_CREDIT -> listOf(R.string.nm_reach_help_credit, R.string.nm_reach_help_free_model)
             }
             if (helps.isNotEmpty()) {
@@ -211,14 +218,16 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
             // the actions
             FlowRow(verticalArrangement = Arrangement.Center, modifier = Modifier.padding(top = 10.dp)) {
                 when (reach.kind) {
-                    ProviderReach.Kind.SIGNED_OUT -> {
+                    ProviderReach.Kind.SIGNED_OUT, ProviderReach.Kind.AUTH_REJECTED,
+                    ProviderReach.Kind.ACCESS_DENIED, ProviderReach.Kind.NO_CREDIT -> {
+                        val signIn = reach.kind == ProviderReach.Kind.SIGNED_OUT && plan
                         Button(
-                            onClick = { if (plan) signInAgain(context) else ChatLinkResolver.dispatchDeepLink(context, "minis://settings/providers") },
+                            onClick = { if (signIn) signInAgain(context) else ChatLinkResolver.dispatchDeepLink(context, "minis://settings/providers") },
                             shape = CircleShape,
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = MuseTones.action, contentColor = Color.White),
                         ) {
-                            Text(stringResource(if (plan) R.string.nm_reach_sign_in else R.string.nm_reach_open_provider), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text(stringResource(if (signIn) R.string.nm_reach_sign_in else R.string.nm_reach_open_provider), fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                         Spacer(Modifier.width(6.dp))
                         TextButton(onClick = onRetry) { Text(stringResource(R.string.nm_reach_try_again), fontSize = 13.sp, color = MuseTones.action) }

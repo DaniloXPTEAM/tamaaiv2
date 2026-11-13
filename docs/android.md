@@ -90,6 +90,15 @@ it* switches the ticked rows to this provider, each on the catalogue's default f
 fits when the default is not there; *Not now* changes nothing, and so does an unticked switch.
 The other model choices stay as they are. The page is the place to change it later.
 
+**A provider refusal.** For OpenAI-compatible providers, the chat distinguishes rejected
+authentication (HTTP 401), denied access (403), a reported credit or payment limit, and request
+limits (429). When the provider supplies an error message, the card shows it with the credential
+redacted. A 403 alone does not say whether the key or account balance is the problem. For
+OpenRouter, select an available `:free` model or `openrouter/free` if you want to try a free model;
+availability, request limits and account restrictions still apply. OpenRouter describes these
+limits at [API limits](https://openrouter.ai/docs/api_reference/limits). A model listing is not a
+successful chat request, so send a message to check the selected provider and model.
+
 **When you have not chosen.** Chat is the relay's recommended model when signed in, else the
 first provider of your own. The screen, pictures and clips follow the chat provider when it is
 a provider of your own with that capability (its catalogue default); else the relay's model
@@ -315,12 +324,12 @@ A failed turn whose error is the transport's (OkHttp's *failed to connect to cha
 443)*, *Unable to resolve host*, a TLS or timeout line) or OpenAI's *region not supported* is
 shown as a card instead of the red banner: what happened, what helps (a VPN on this phone, the
 proxy under *Settings → Network*, another provider with a key of your own), *Try again*, and the
-raw line behind *Details*. The 401/403/429 whose bodies upstream's `mapHttpError` drops are
-kept for a few seconds by `ReachSignal` (one `// nanoMuse:` spot in `OpenAIProvider`) and
-written into the message as a canonical `nm_reach:` line, so an expired ChatGPT sign-in reads
-*Sign in again* and a spent plan window reads *The ChatGPT plan has nothing left for now* with
-OpenAI's own sentence and the reset time; a plain *Invalid API key* on a key provider stays
-upstream's. The relay's `daily_cap` 429 is now read like `allowance_exhausted` and the card
+raw line behind *Details*. The 401/403/429 and credit refusals are attached to their own
+`LLMError` in `OpenAIProvider` and written into the message as a canonical `nm_reach:` line.
+An expired ChatGPT sign-in reads *Sign in again*, a spent plan window keeps the provider's
+sentence and reset time, and an own-key provider's 401 is distinguished from a 403 or 429. The
+provider's message is shown when available, with the request credential redacted. The relay's
+`daily_cap` 429 is read like `allowance_exhausted` and the card
 says today's share is spent and comes back with the day. The allowance card also lists a model
 of your own (Ollama, LM Studio, vLLM on a computer you own) and, for a signed-in account, your
 computer: *@* and its name in the chat runs the turn there.
@@ -328,9 +337,8 @@ computer: *@* and its name in the chat runs the turn there.
 **When the relay refuses a turn** (`cloud/RelayRefusal.kt`, `ui/chat/RelayRefusalCard.kt`).
 Every refusal nanoMuse Cloud sends is one plain sentence in the phone's language and the button
 that fits, never a status code, the relay's JSON or upstream's *Rate limited*. The reply is
-read where the body is still whole (`AllowanceSignal.noteHttpError`, through the same
-`// nanoMuse:` spot in `OpenAIProvider`), stored in the message as a canonical `nm_relay:` line
-and drawn by the card: `413 too_large` (also a proxy's plain 413 from the relay's host) → *That
+read where the body is still whole (`AllowanceSignal.fromHttpError` in `OpenAIProvider`),
+attached to that request's exception, stored as a canonical `nm_relay:` line and drawn by the card: `413 too_large` (also a proxy's plain 413 from the relay's host) → *That
 message is too large for the model. Shorten it, leave out some attachments, or start a new
 chat.* with *New chat*; `400 content_rejected` (the provider's content check declined the
 words; also a provider's own `DataInspectionFailed` on a key of one's own) → *The model

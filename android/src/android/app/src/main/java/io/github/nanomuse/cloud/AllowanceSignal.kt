@@ -9,9 +9,9 @@ import org.json.JSONObject
  * left, the pool, the invite link, what an invitation adds to each side, the guide for one's
  * own key and — relay 0.21 — the ways-on card as data (`guidance`); `daily_cap`; and the rest
  * ([RelayRefusal]: 413 `too_large`, `too_many_in_flight`, `provider_busy`, the operator's
- * switches …). The generic client maps every 429 to "rate limited" and every 401/403 to "bad
- * key", so the body would be lost; this keeps the last one for a few seconds so the chat can
- * show the ways on, or one plain sentence, instead of a bare error.
+ * switches …). The generic client maps a 429 to "rate limited", so the body would be lost;
+ * the parsed diagnostic travels on the exception for the particular call. A concurrent call
+ * or a later fallback must not put another request's allowance card on this turn.
  */
 object AllowanceSignal {
     /** What the relay said, in yuan. */
@@ -32,48 +32,29 @@ object AllowanceSignal {
         val at: Long = System.currentTimeMillis(),
     )
 
-    @Volatile private var last: Exhausted? = null
-    @Volatile private var lastRefusal: RelayRefusal.Refusal? = null
-    @Volatile private var lastRefusalAt: Long = 0
+    /** The relay's refusal and, for an allowance refusal, the data needed by its card. */
+    data class HttpError(val refusal: RelayRefusal.Refusal, val exhausted: Exhausted? = null)
 
     /**
-     * Call for every failed HTTP reply of a model request; only the relay's refusals are kept
-     * — the allowance ones as [Exhausted] for the card, every other as a [RelayRefusal.Refusal]
-     * for the sentence. [fromRelay] says the call went to the relay's host.
+     * Parse a failed model response, without keeping any process-wide last-error state.
+     * [fromRelay] says the call went to the relay's host. The caller attaches the result to
+     * the corresponding exception and carries it across any final fallback wrapper.
      */
-    fun noteHttpError(status: Int, body: String?, fromRelay: Boolean = false) {
-        val refusal = RelayRefusal.parse(status, body, fromRelay) ?: return
-        if (refusal.isAllowance) {
-            val err = RelayRefusal.errorObject(body) ?: JSONObject()
-            last = Exhausted(
-                dailyCap = refusal.kind == RelayRefusal.Kind.DAILY_CAP,
-                paused = refusal.kind == RelayRefusal.Kind.ALLOWANCE_PAUSED,
-                leftCny = err.optDouble("left", 0.0),
-                grantCny = err.optDouble("grant", 0.0),
-                inviteUrl = err.optString("invite_url", ""),
-                inviteBonusCny = err.optDouble("invite_bonus_cny", 0.0),
-                inviteeBonusCny = err.optDouble("invitee_bonus_cny", 0.0),
-                ownKeyDocs = err.optString("own_key_docs", ""),
-                guidance = Guidance.parse(err.optJSONObject("guidance")),
-            )
-            return
-        }
-        lastRefusal = refusal
-        lastRefusalAt = System.currentTimeMillis()
-    }
-
-    /** The exhaustion behind the error the chat is about to show, if it was the relay's; consumed. */
-    fun takeFresh(maxAgeMs: Long = 30_000): Exhausted? {
-        val e = last ?: return null
-        last = null
-        return e.takeIf { System.currentTimeMillis() - it.at <= maxAgeMs }
-    }
-
-    /** Any other refusal of the relay's behind the error the chat is about to show; consumed. */
-    fun takeFreshRefusal(maxAgeMs: Long = 30_000): RelayRefusal.Refusal? {
-        val r = lastRefusal ?: return null
-        lastRefusal = null
-        return r.takeIf { System.currentTimeMillis() - lastRefusalAt <= maxAgeMs }
+    fun fromHttpError(status: Int, body: String?, fromRelay: Boolean = false): HttpError? {
+        val refusal = RelayRefusal.parse(status, body, fromRelay) ?: return null
+        if (!refusal.isAllowance) return HttpError(refusal)
+        val err = RelayRefusal.errorObject(body) ?: JSONObject()
+        return HttpError(refusal, Exhausted(
+            dailyCap = refusal.kind == RelayRefusal.Kind.DAILY_CAP,
+            paused = refusal.kind == RelayRefusal.Kind.ALLOWANCE_PAUSED,
+            leftCny = err.optDouble("left", 0.0),
+            grantCny = err.optDouble("grant", 0.0),
+            inviteUrl = err.optString("invite_url", ""),
+            inviteBonusCny = err.optDouble("invite_bonus_cny", 0.0),
+            inviteeBonusCny = err.optDouble("invitee_bonus_cny", 0.0),
+            ownKeyDocs = err.optString("own_key_docs", ""),
+            guidance = Guidance.parse(err.optJSONObject("guidance")),
+        ))
     }
 
     /** The same, from the cached account (the account page shows it whenever the pool is spent). */

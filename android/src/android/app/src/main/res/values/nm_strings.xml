@@ -1060,25 +1060,26 @@
     <string name="nm_reach_key_refused_body">The provider answered that the key is not valid any more. Check it in the provider\'s settings.</string>
     <string name="nm_reach_quota_title">The ChatGPT plan has nothing left for now</string>
     <string name="nm_reach_quota_body">OpenAI counts the plan\'s use in windows of a few hours and of a week; this window is used up.</string>
-    <!-- TAMA: a key that is fine and an account that is not. OpenRouter answers a key with no
-         balance with a 403, which upstream renders as "Invalid API key" - the sentence a free
-         key's owner would chase for an hour. -->
-    <string name="nm_reach_no_credit_title">%1$s refused the request for want of credit</string>
-    <string name="nm_reach_no_credit_body">The key was accepted and the request was still refused: the account has no credit left, or this model is not in the key\'s plan. Add credit, or switch to a free model.</string>
-    <string name="nm_reach_quota_key_title">%1$s has no quota left for this key</string>
-    <string name="nm_reach_quota_key_body">The provider answered that this key\'s quota is used up.</string>
-    <string name="nm_reach_rate_title">Too many requests at once</string>
-    <string name="nm_reach_rate_body">The provider asked to slow down for a moment.</string>
+    <string name="nm_reach_auth_title">%1$s rejected authentication (HTTP 401)</string>
+    <string name="nm_reach_auth_body">Check the key and that this is the intended provider. Read the provider\'s message if available.</string>
+    <string name="nm_reach_access_title">%1$s denied the request (HTTP 403)</string>
+    <string name="nm_reach_access_body">The status alone does not identify the cause. Check the provider\'s message and account or model permissions.</string>
+    <string name="nm_reach_no_credit_title">%1$s reported a credit or payment limit</string>
+    <string name="nm_reach_no_credit_body">Check the provider\'s message, account balance and key spending limits. Free models, where available, also have restrictions.</string>
+    <string name="nm_reach_quota_key_title">%1$s reported a usage limit</string>
+    <string name="nm_reach_quota_key_body">Check the provider\'s message and the limits for the account and model.</string>
+    <string name="nm_reach_rate_title">Request limit reached (HTTP 429)</string>
+    <string name="nm_reach_rate_body">Wait and check the provider\'s request limits or model availability.</string>
     <string name="nm_reach_vendor_said">The provider says: %1$s</string>
-    <string name="nm_reach_resets_in">Resets in %1$s.</string>
+    <string name="nm_reach_resets_in">Try again in %1$s.</string>
     <string name="nm_reach_helps">What helps</string>
     <string name="nm_reach_help_vpn">A VPN on this phone, switched on before you try again</string>
     <string name="nm_reach_help_proxy">A proxy this app uses for providers: Settings → Network</string>
     <string name="nm_reach_help_other">Another provider, with a key of your own</string>
     <string name="nm_reach_help_wait">Waiting for the window to pass</string>
     <string name="nm_reach_help_moment">A moment, then trying again</string>
-    <string name="nm_reach_help_credit">Credit on the provider\'s account, or a plan that includes this model</string>
-    <string name="nm_reach_help_free_model">A free model on the same provider, which needs no credit</string>
+    <string name="nm_reach_help_credit">Check the account balance and key spending limits</string>
+    <string name="nm_reach_help_free_model">Try an available free model, subject to its limits</string>
     <string name="nm_reach_try_again">Try again</string>
     <string name="nm_reach_network">Network settings</string>
     <string name="nm_reach_sign_in">Sign in again</string>

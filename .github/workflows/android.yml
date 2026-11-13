@@ -95,6 +95,37 @@ jobs:
           ./gradlew :app:assembleDebug --console=plain --no-daemon 2>&1 | tee /tmp/gradle.log
           exit "${PIPESTATUS[0]}"
 
+      # TAMA: the installed arm64 artifact was produced by an earlier debug runner. Debug signing
+      # can differ between runners; compare certificates before suggesting an in-place update.
+      # The old artifact expires, so a failed download is explicitly "unknown", not a build failure.
+      - name: Fetch the earlier arm64 APK for a signing comparison
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        continue-on-error: true
+        with:
+          name: nanoMuse-debug-apk
+          run-id: 43447089686
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: /tmp/tama-baseline-apk
+
+      - name: Compare debug APK signatures
+        shell: bash
+        run: |
+          bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          new=android/src/android/app/build/outputs/apk/debug/app-debug.apk
+          old=/tmp/tama-baseline-apk/app-debug.apk
+          echo "::notice title=apk-sha256::$(sha256sum "$new" | cut -d' ' -f1)"
+          if [ ! -f "$old" ]; then
+            echo "::warning title=apk-signature::Earlier artifact unavailable; update compatibility is unverified. Do not uninstall the existing app."
+            exit 0
+          fi
+          old_cert="$("$bt/apksigner" verify --print-certs "$old" 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' || true)"
+          new_cert="$("$bt/apksigner" verify --print-certs "$new" 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' || true)"
+          if [ -n "$old_cert" ] && [ "$old_cert" = "$new_cert" ]; then
+            echo "::notice title=apk-signature::Matches artifact from run 43447089686; confirm that is the installed APK before updating."
+          else
+            echo "::warning title=apk-signature::Different or unreadable signing certificate versus run 43447089686. Do not uninstall the existing app."
+          fi
+
       # Our unit tests (io.github.nanomuse.*: the guards, the hub client, the sandbox paths, the
       # strings' parity), plus the upstream provider and sandbox tests, the two OpenMinis packages
       # our edits touch (#333, #334, #335). Same Gradle invocation as AGENTS.md; the compiled

@@ -93,7 +93,7 @@ object RelayRefusal {
     /** The error type the relay stamps on every refusal (`docs/cloud.md` → Protocol). */
     const val RELAY_TYPE = "nanomuse_cloud"
 
-    /** The codes the relay sends today; a body with one of these is the relay's even without the type. */
+    /** The codes the relay sends today; without its type, the configured relay host is also required. */
     val RELAY_CODES: Set<String> = setOf(
         "allowance_exhausted", "out_of_tokens", "daily_cap", "too_large", "content_rejected", "bad_key",
         "account_deleted", "account_disabled", "not_invited", "signup_closed", "rate_limited",
@@ -155,19 +155,18 @@ object RelayRefusal {
 
     /**
      * The refusal in a failed HTTP reply of a model call, or null when the reply is not the
-     * relay's: the body carries `type: nanomuse_cloud` or one of the relay's codes, or the
-     * status is a 413 (a proxy's plain `Request too large` on the way to the relay).
-     * [fromRelay] says the call went to the relay's host; without it only a body that says
-     * so counts, so another provider's 429 keeps upstream's card. One exception for every
-     * host: a 400 whose body is a content check saying no ([contentCheck]) is
-     * [Kind.CONTENT_REJECTED] whoever sent it, so a key of one's own gets the same sentence
-     * and the same end to retrying.
+     * relay's: the body carries `type: nanomuse_cloud`, or it comes from the relay's host
+     * and has one of the relay's codes or a plain 413 / 401 / 5xx. The same code words, such
+     * as `rate_limited`, are also used by other providers and cannot identify the relay alone.
+     * [fromRelay] says the call went to the relay's host. One exception for every host: a
+     * content check in a 400 or an unnumbered SSE error is [Kind.CONTENT_REJECTED] whoever
+     * sent it, so a key of one's own gets the same sentence and the same end to retrying.
      */
     fun parse(status: Int, body: String?, fromRelay: Boolean = false): Refusal? {
         val err = errorObject(body)
         val code = err?.optString("code")?.takeIf { it.isNotBlank() }
-        val relays = err?.optString("type") == RELAY_TYPE || (code != null && code in RELAY_CODES)
-        val contentCheck = status == 400 && contentCheck(body)
+        val relays = err?.optString("type") == RELAY_TYPE || (fromRelay && code != null && code in RELAY_CODES)
+        val contentCheck = (status == 400 || status == 0) && contentCheck(body)
         if (!relays && !contentCheck && !(fromRelay && (status == 413 || status >= 500 || status == 401))) return null
         val paused = err?.optBoolean("paused", false) == true
         val retry = err?.optDouble("retry_after", 0.0)?.takeIf { it > 0 }?.let { kotlin.math.ceil(it).toInt() }

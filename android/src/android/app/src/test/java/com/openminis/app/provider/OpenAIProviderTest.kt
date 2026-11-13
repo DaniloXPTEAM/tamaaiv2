@@ -328,8 +328,9 @@ class OpenAIProviderTest {
         Unit
     }
 
-    @Test(expected = LLMError.InvalidApiKey::class)
-    fun `sendMessage throws InvalidApiKey on 403`() = runBlocking {
+    // nanoMuse: 403 means access denied, not necessarily an invalid credential.
+    @Test(expected = LLMError.ProviderError::class)
+    fun `sendMessage throws ProviderError on 403`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(403).setBody("Forbidden"))
         provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
         Unit

@@ -166,6 +166,10 @@ class ChatViewModel(
             // `DataInspectionFailed`) is about the words, not the size; halving sends the same
             // words twice, and one long chat was refused two hundred times in an hour that way.
             if (error is LLMError.ProviderError && io.github.nanomuse.cloud.RelayRefusal.contentCheck(error.detail)) return false
+            // nanoMuse: credit/payment and access refusals cannot be fixed by splitting the input.
+            if (error is LLMError.ProviderError &&
+                (error.detail.startsWith("[402]") || error.detail.startsWith("HTTP 402:") ||
+                    error.detail.startsWith("[403]") || error.detail.startsWith("HTTP 403:"))) return false
             if (error is LLMError) {
                 return when (error) {
                     // Never worth a smaller payload:
@@ -5668,7 +5672,7 @@ class ChatViewModel(
                 } catch (e: Exception) {
                     AppLogger.error(TAG_STREAM, "$label runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                     Log.e(TAG, "Agent loop error ($label)", e)
-                    setInlineError(e.message ?: "Unknown error")
+                    setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                     // T298: flag the upcoming setInactive() so the
                     // background completion notifier renders the ❌
                     // variant instead of a clean success.
@@ -6268,7 +6272,7 @@ class ChatViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Agent loop (queued-drain) error", e)
-                setInlineError(e.message ?: "Unknown error")
+                setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                 break
             }
         }
@@ -6513,9 +6517,9 @@ class ChatViewModel(
 
     // ─── nanoMuse: the free allowance is spent ──────────────────────────────
     // The relay's 429 arrives through the model client as "rate limited"; the
-    // structured body was kept aside by AllowanceSignal. When the error is about
-    // to be shown, the card with the two ways on (own key, invite)
-    // is added under it — virtual, never persisted.
+    // structured body belongs to that exception. When the error is shown, the
+    // card with the two ways on (own key, invite) is added under it — virtual,
+    // never persisted.
 
     private val nmAllowanceCardId = "nm_allowance_card"
     private val _nmAllowance = kotlinx.coroutines.flow.MutableStateFlow<io.github.nanomuse.cloud.AllowanceSignal.Exhausted?>(null)
@@ -6525,21 +6529,24 @@ class ChatViewModel(
      * The error text to show for a failed turn — the allowance sentence when the relay said so
      * (with the ways-on card under it), the relay's other refusals as a canonical line the chat
      * renders as one sentence and a button (`RelayRefusal`: 413 → *New chat*, 401 → *Sign in*,
-     * busy → *Try again* …), the reach card's canonical line when a provider's 401/403/429 was
-     * kept aside by `ReachSignal`, [fallback] otherwise.
+     * busy → *Try again* …), or the diagnostic attached to this provider exception, [fallback]
+     * otherwise. Neither diagnostic is taken from another request's last-error slot.
      */
-    private fun nmAllowanceErrorText(fallback: String): String {
-        val info = io.github.nanomuse.cloud.AllowanceSignal.takeFresh()
+    private fun nmAllowanceErrorText(
+        fallback: String,
+        reach: io.github.nanomuse.net.ProviderReach.Reach? = null,
+        relayError: io.github.nanomuse.cloud.AllowanceSignal.HttpError? = null,
+    ): String {
+        if (reach != null) return io.github.nanomuse.net.ProviderReach.canonical(reach)
+        relayError ?: return fallback
+        val info = relayError.exhausted
         if (info == null) {
-            io.github.nanomuse.cloud.AllowanceSignal.takeFreshRefusal()?.let { refusal ->
-                // a key the relay no longer takes: the account's state follows (contract C12)
-                if (refusal.kind == io.github.nanomuse.cloud.RelayRefusal.Kind.SIGNED_OUT) {
-                    viewModelScope.launch { runCatching { io.github.nanomuse.cloud.NanoMuseCloud.refresh(context) } }
-                }
-                return io.github.nanomuse.cloud.RelayRefusal.canonical(refusal)
+            val refusal = relayError.refusal
+            // a key the relay no longer takes: the account's state follows (contract C12)
+            if (refusal.kind == io.github.nanomuse.cloud.RelayRefusal.Kind.SIGNED_OUT) {
+                viewModelScope.launch { runCatching { io.github.nanomuse.cloud.NanoMuseCloud.refresh(context) } }
             }
-            val reach = io.github.nanomuse.net.ReachSignal.takeFresh() ?: return fallback
-            return io.github.nanomuse.net.ProviderReach.canonical(reach)
+            return io.github.nanomuse.cloud.RelayRefusal.canonical(refusal)
         }
         _nmAllowance.value = info
         _messages.value = _messages.value.filterNot { it.id == nmAllowanceCardId } + ChatMessage(
@@ -7095,7 +7102,7 @@ class ChatViewModel(
                         headless?.fail() // nanoMuse: a partial reply cannot turn an error into success.
                         AppLogger.error(TAG_STREAM, "send runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Agent loop error (all fallbacks exhausted)", e)
-                        setInlineError(e.message ?: "Unknown error")
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // T298: completion notifier should show the ❌ variant.
                         SessionActivityTracker.markStreamError(activeSessionId)
                     } finally {
@@ -7150,6 +7157,13 @@ class ChatViewModel(
         }
     }
 
+    // nanoMuse: carry the diagnostic on the exception, including through wrapped Flow errors.
+    private fun setInlineError(error: Throwable) {
+        val actual = unwrapFlowException(error)
+        val llmError = actual as? LLMError
+        setInlineError(actual.message ?: "Unknown error", llmError?.nmProviderReach, llmError?.nmRelayError)
+    }
+
     /** Set error inline on the last assistant message (iOS: message.error).
      *
      *  Also clears [ChatMessage.isAwaitingModelResponse] — without this, an
@@ -7157,7 +7171,11 @@ class ChatViewModel(
      *  true at runAgentLoop ~4015) leaves the "nanoMuse is thinking" indicator
      *  on screen even though streaming is over. The flag is per-message and
      *  is not implicitly cleared by isStreaming=false. */
-    private fun setInlineError(errorText: String) {
+    private fun setInlineError( // nanoMuse: diagnostics belong to this error
+        errorText: String,
+        reach: io.github.nanomuse.net.ProviderReach.Reach? = null,
+        relayError: io.github.nanomuse.cloud.AllowanceSignal.HttpError? = null,
+    ) {
         // [T-error-persist-android] Never let an empty/blank error string reach
         // the banner. The UI gate is `message.error?.let { … }` — a non-null ""
         // would render an EMPTY error banner, and (now that errors persist) it
@@ -7168,6 +7186,7 @@ class ChatViewModel(
         // a Claude sign-in on a build without its identifier gets its sentence in the person's language (#373).
         val safeError = nmAllowanceErrorText(
             io.github.nanomuse.cloud.ClaudeSignIn.userText(context, errorText).ifBlank { context.getString(R.string.error_empty_response_generic) },
+            reach, relayError, // nanoMuse
         )
         // T-streaming-side-channel: before mutating the canonical message,
         // drain any in-flight streaming delta so the error frame carries
@@ -7460,7 +7479,7 @@ class ChatViewModel(
                     } catch (e: Exception) {
                         AppLogger.error(TAG_STREAM, "retryLast runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Agent loop error (retryLast)", e)
-                        setInlineError(e.message ?: "Unknown error")
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // T298: completion notifier should show the ❌ variant.
                         SessionActivityTracker.markStreamError(activeSessionId)
                     } finally {
@@ -8835,7 +8854,11 @@ class ChatViewModel(
                             if (fallbackReasons.isNotEmpty() || skipped.isNotEmpty()) {
                                 val trail = (fallbackReasons + skipped).joinToString("\n")
                                 val finalDesc = actual.message ?: actual.toString()
-                                throw com.openminis.app.data.model.LLMError.ProviderError("$trail\n$finalDesc")
+                                throw com.openminis.app.data.model.LLMError.ProviderError("$trail\n$finalDesc").apply {
+                                    // nanoMuse: carry only the final failing call's diagnostics.
+                                    nmProviderReach = (actual as? LLMError)?.nmProviderReach
+                                    nmRelayError = (actual as? LLMError)?.nmRelayError
+                                }
                             }
                         }
                         throw actual  // re-throw unwrapped, all fallbacks exhausted
@@ -11882,7 +11905,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     } catch (e: Exception) {
                         AppLogger.error(TAG_STREAM, "resumeQueueAfterCancel drain EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Queued drain error (resumeQueueAfterCancel)", e)
-                        setInlineError(e.message ?: "Unknown error")
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // nanoMuse: a failed resumed run is not a new unread answer.
                         SessionActivityTracker.markReplyIncomplete(activeSessionId)
                     } finally {
@@ -12170,7 +12193,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     } catch (e: Exception) {
                         AppLogger.error(TAG_STREAM, "resume runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Agent loop error (resume)", e)
-                        setInlineError(e.message ?: "Unknown error")
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // nanoMuse: a failed resumed run is not a new unread answer.
                         SessionActivityTracker.markReplyIncomplete(activeSessionId)
                     } finally {
