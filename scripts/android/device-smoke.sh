@@ -77,7 +77,8 @@ if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' pet-instrumentation.log || \
   done
   exit 1
 fi
-echo '::notice title=pet instrumentation::Android SharedPreferences and tracker tests passed on the emulator'
+summary="$(grep -E '^OK \([1-9][0-9]* tests?\)' pet-instrumentation.log | tail -1 | tr -d '\r')"
+echo "::notice title=pet instrumentation::$summary; Android SharedPreferences and tracker tests passed on the emulator"
 # The emulator is stopped when the action returns, so publish the activity details here.
 grep -E 'Status:|Error:|Activity:' am.log | while IFS= read -r line; do
   echo "::notice title=am start::${line//$'\r'/}"

@@ -101,6 +101,7 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     checkout, run = smoke
     result, calls = run()
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "::notice title=pet instrumentation::OK (4 tests);" in result.stdout
     assert "Android SharedPreferences and tracker tests passed" in result.stdout
     assert (checkout / "launch.png").is_file()
     assert (checkout / "pet-instrumentation.log").read_text().strip() == "OK (4 tests)"

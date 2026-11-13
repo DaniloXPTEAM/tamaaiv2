@@ -5651,9 +5651,14 @@ class ChatViewModel(
             AppLogger.info(TAG_STREAM, "$label streamJob ENTER sid=$activeSessionId")
             try {
                 val trackedSessionId = activeSessionId
-                SessionConcurrencyManager.acquireSlot(trackedSessionId)
-                AppLogger.debug(TAG_STREAM, "$label streamJob slot acquired")
-                val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                    AppLogger.debug(TAG_STREAM, "$label streamJob slot acquired")
+                    beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                } catch (e: Throwable) {
+                    SessionConcurrencyManager.releaseSlot(trackedSlot)
+                    throw e
+                }
                 try {
                     val activeFallbackStrategy = run {
                         val groupId = _selectedGroupId.value
@@ -5695,7 +5700,7 @@ class ChatViewModel(
                     try {
                         finishTrackedReply(trackedSessionId, trackedTurnId)
                     } finally {
-                        SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
                     }
                     AppLogger.info(TAG_STREAM, "$label streamJob FINALLY exit")
                 }
@@ -7078,9 +7083,14 @@ class ChatViewModel(
                     )
                     // Acquire concurrency slot (suspends if at max)
                     val trackedSessionId = activeSessionId
-                    SessionConcurrencyManager.acquireSlot(trackedSessionId)
-                    AppLogger.debug(TAG_STREAM, "send streamJob slot acquired")
-                    val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "send streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
+                    }
                     try {
 
                         // Resolve the active group's fallback strategy
@@ -7139,7 +7149,7 @@ class ChatViewModel(
                         try {
                             finishTrackedReply(trackedSessionId, trackedTurnId)
                         } finally {
-                            SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
                         }
                         AppLogger.info(TAG_STREAM, "send streamJob FINALLY exit")
                     }
@@ -7477,9 +7487,14 @@ class ChatViewModel(
                 AppLogger.info(TAG_STREAM, "retryLast streamJob ENTER sid=$activeSessionId")
                 try {
                     val trackedSessionId = activeSessionId
-                    SessionConcurrencyManager.acquireSlot(trackedSessionId)
-                    AppLogger.debug(TAG_STREAM, "retryLast streamJob slot acquired")
-                    val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "retryLast streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
+                    }
                     try {
                         val activeFallbackStrategy = run {
                             val groupId = _selectedGroupId.value
@@ -7524,7 +7539,7 @@ class ChatViewModel(
                         try {
                             finishTrackedReply(trackedSessionId, trackedTurnId)
                         } finally {
-                            SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
                         }
                         AppLogger.info(TAG_STREAM, "retryLast streamJob FINALLY exit")
                     }
@@ -11775,7 +11790,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         SessionActivityTracker.publishLastReply(sessionId, text)
     }
     // nanoMuse: bind the run to its actual coroutine, including a Stop racing slot acquisition.
-    private fun beginTrackedReply(id: String, job: Job): String = try {
+    private fun beginTrackedReply(id: String, job: Job): String {
         val binding = nmTrackedLocalRuns.begin(job, { job.isActive }) {
             val turnId = SessionActivityTracker.setActive(id, onStop = {
                 if (streamJob === job) cancelStream()
@@ -11788,11 +11803,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             stopObsoleteTrackedReply(job)
             throw CancellationException("Stopped during tracker start")
         }
-        binding.turnId
-    } catch (e: Throwable) {
-        // Every caller already acquired this slot; no agent-loop finally exists yet.
-        SessionConcurrencyManager.releaseSlot(id)
-        throw e
+        return binding.turnId
     }
 
     // nanoMuse: a callback captured by an older job must never cancel the newer streamJob.
@@ -11953,9 +11964,14 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob ENTER sid=$activeSessionId")
                 try {
                     val trackedSessionId = activeSessionId
-                    SessionConcurrencyManager.acquireSlot(trackedSessionId)
-                    AppLogger.debug(TAG_STREAM, "resumeQueueAfterCancel streamJob slot acquired")
-                    val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "resumeQueueAfterCancel streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
+                    }
                     try {
 
                         val activeFallbackStrategy = run {
@@ -11995,7 +12011,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         try {
                             finishTrackedReply(trackedSessionId, trackedTurnId)
                         } finally {
-                            SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
                         }
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob FINALLY exit")
                     }
@@ -12244,9 +12260,14 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 AppLogger.info(TAG_STREAM, "resume streamJob ENTER sid=$activeSessionId")
                 try {
                     val trackedSessionId = activeSessionId
-                    SessionConcurrencyManager.acquireSlot(trackedSessionId)
-                    AppLogger.debug(TAG_STREAM, "resume streamJob slot acquired")
-                    val trackedTurnId = beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "resume streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
+                    }
                     try {
                         val activeFallbackStrategy = run {
                             val groupId = _selectedGroupId.value
@@ -12291,7 +12312,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         try {
                             finishTrackedReply(trackedSessionId, trackedTurnId)
                         } finally {
-                            SessionConcurrencyManager.releaseSlot(trackedSessionId)
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
                         }
                         AppLogger.info(TAG_STREAM, "resume streamJob FINALLY exit")
                     }

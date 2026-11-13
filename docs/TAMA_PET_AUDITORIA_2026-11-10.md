@@ -49,8 +49,11 @@ de `Long.MAX_VALUE` zerava o total por overflow.
   da gravação pode perder a edição inteira; e repetição após a janela de 256 não é deduplicada.
   A contabilização continua por ciclo do tracker, não por cada prompt da fila. Se outro ciclo for
   iniciado simultaneamente na mesma sessão, o anterior é substituído e sua conclusão tardia é
-  ignorada, não há garantia de pagamento para os dois. O gerenciador de slots ainda usa o ID da
-  sessão, não o do ciclo; concorrência entre duas VMs da mesma sessão exige validação adicional.
+  ignorada, não há garantia de pagamento para os dois. Reproduziu-se também uma fuga de vaga de
+  chat ao cancelar uma espera logo após ela receber a vaga, e a liberação incorreta de vaga ao
+  sobrepor trabalhos na mesma sessão. O gerenciador agora usa permissões canceláveis e uma posse
+  própria por trabalho. As mudanças no ViewModel ainda precisam do novo build e smoke do CI; a
+  atomicidade de todos os efeitos globais e a promoção de draft não foram comprovadas.
 - A tela observa sessões ativas e reações reais de sucesso/falha/cancelamento. Texto e face usam
   o mesmo humor ao vivo. A escolha de roupa bloqueada pode ser tocada e fica guardada para quando
   o nível for alcançado. Falhas em retomadas, respostas vazias ou interrompidas e na ponte remota
@@ -68,24 +71,31 @@ de `Long.MAX_VALUE` zerava o total por overflow.
   com dependências simuladas; isso não compila o ViewModel inteiro. Sete testes da ponte remota da
   árvore passaram com stubs e `kotlinx-coroutines-test` 1.6.4 compilado para o harness, com um
   shim de operações atômicas; o projeto usa a versão 1.9.0 no Gradle.
-- **Android:** o run `43468577523`, commit `b657255`, compilou o aplicativo arm64, incluindo
+- **Android:** o run `43489566497`, commit `7456eee`, compilou o aplicativo arm64, incluindo
   Compose e `ChatViewModel`, passou os testes unitários do Gradle e compilou o APK de testes.
-  Também compilou o APK x86 e confirmou seu ABI. A suíte instrumentada usa um arquivo de
-  preferências exclusivo por teste e verifica `SharedPreferences`, XP, recarga da store e a
-  integração do tracker. A recarga é no mesmo processo e não simula morte real do processo.
-- **Emulador:** esse run não publicou evidência de instalação nem de início do app; a anotação
-  registra apenas `/usr/bin/sh` com código 2, e os logs completos não estavam acessíveis. Uma falha
-  independente foi confirmada no script: a action executa cada linha com `sh -c`, e a primeira,
-  `set -o pipefail`, não é aceita pelo `sh` do runner. Não se comprovou se o run chegou a essa
-  linha ou também falhou antes dela. O script foi extraído para um arquivo Bash e sua chamada
-  passou por 13 testes com `adb` simulado; o workflow passou pelo `actionlint`. A correção ainda
-  depende de novo run.
+  Também compilou o APK x86 e confirmou seu ABI. As alterações posteriores no gerenciador de vagas
+  e no ViewModel não estão nesse run. A suíte instrumentada usa um arquivo de preferências exclusivo
+  por teste e verifica `SharedPreferences`, XP, recarga da store e a integração do tracker. A
+  recarga é no mesmo processo e não simula morte real do processo.
+- **Emulador:** no run `43489566497` o aplicativo x86 foi instalado e a activity iniciou com
+  `Status: ok`; o processo continuava ativo após 20 segundos e a instrumentação do Pet passou.
+  O APK x86 é uma variante de teste, sem os binários arm64 de sandbox, rclone e VAD; não testa
+  esses recursos nem substitui o APK do telefone. O screenshot e os logs de teste são o artefato
+  `tama-device-smoke` desse run. O script foi testado também em 13 cenários com `adb` simulado,
+  e o workflow passou pelo `actionlint`.
+- **Vagas de chat:** seis testes JVM do gerenciador e do pool passaram com stubs Android e a
+  versão de corrotinas do harness; três testes adicionais exercitaram os métodos de vínculo
+  extraídos do ViewModel com o gerenciador real e serviços simulados. Eles não substituem
+  testes de concorrência no ViewModel completo ou em aparelho Android.
 - **UI/telefone:** nenhuma navegação, aparência, chat com provedor real, morte real de processo ou
   atualização sobre o aplicativo instalado foi testada fisicamente.
 - O run anterior `43457569011` falhou **ao compilar o APK x86 do emulador**, antes de instalá-lo;
   a causa específica do erro não foi obtida. O job x86 não recebia o `rclone.aar` gerado pelo job
   arm64, e a variável `nm_abi` não correspondia à propriedade `nm.abi` lida pelo Gradle. No run
-  `43468577523`, a transferência do AAR, `-Pnm.abi=x86_64` e a verificação do ABI passaram.
+  `43468577523`, a transferência do AAR, `-Pnm.abi=x86_64` e a verificação do ABI passaram, mas o
+  job de emulador falhou com `/usr/bin/sh` código 2, sem logs completos acessíveis. A action não
+  aceita o script Bash em várias linhas como uma única sessão; a extração para um arquivo Bash foi
+  validada pelo run `43489566497`.
 
 ## Proteção de dados e assinatura
 

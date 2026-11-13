@@ -120,10 +120,14 @@ jobs:
           fi
           old_cert="$("$bt/apksigner" verify --print-certs "$old" 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' || true)"
           new_cert="$("$bt/apksigner" verify --print-certs "$new" 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' || true)"
-          if [ -n "$old_cert" ] && [ "$old_cert" = "$new_cert" ]; then
+          [ -z "$old_cert" ] || echo "::notice title=old-apk-cert-sha256::$old_cert"
+          [ -z "$new_cert" ] || echo "::notice title=new-apk-cert-sha256::$new_cert"
+          if [ -z "$old_cert" ] || [ -z "$new_cert" ]; then
+            echo "::warning title=apk-signature::A signing certificate could not be read. Update compatibility is unverified; do not uninstall the existing app."
+          elif [ "$old_cert" = "$new_cert" ]; then
             echo "::notice title=apk-signature::Matches artifact from run 43447089686; confirm that is the installed APK before updating."
           else
-            echo "::warning title=apk-signature::Different or unreadable signing certificate versus run 43447089686. Do not uninstall the existing app."
+            echo "::warning title=apk-signature::Certificate differs from run 43447089686. Do not uninstall the existing app."
           fi
 
       # Our unit tests (io.github.nanomuse.*: the guards, the hub client, the sandbox paths, the
