@@ -207,9 +207,18 @@ jobs:
             fi
             echo "::notice title=apk::${APK}"
             echo "installing $APK"
-            adb install -r -t "$APK"
+            # Capture adb's own words: a failed install prints one line and exits non-zero, and
+            # under `set -e` that line is all anyone would ever see.
+            if ! adb install -r -t "$APK" > install.log 2>&1; then
+              tr '\n' ' ' < install.log | cut -c1-900 | sed 's/^/::error title=install::/'
+              exit 1
+            fi
+            cat install.log
             adb shell pm list packages | grep -c 'ai.tama.assistant' | sed 's/^/::notice title=installed::packages matched: /'
-            adb shell am start -W -n ai.tama.assistant/com.openminis.app.MainActivity | tee am.log
+            if ! adb shell am start -W -n ai.tama.assistant/com.openminis.app.MainActivity 2>&1 | tee am.log; then
+              tr '\n' ' ' < am.log | cut -c1-900 | sed 's/^/::error title=am start::/'
+              exit 1
+            fi
             sleep 20
             PID="$(adb shell pidof ai.tama.assistant | tr -d '\r')"
             if [ -z "$PID" ]; then
@@ -240,5 +249,6 @@ jobs:
           path: |
             launch.png
             am.log
+            install.log
           retention-days: 14
           if-no-files-found: warn
