@@ -1091,6 +1091,8 @@
     <string name="nm_reach_help_other">別のプロバイダーを自分のキーで使う</string>
     <string name="nm_reach_help_wait">枠が過ぎるのを待つ</string>
     <string name="nm_reach_help_moment">少し待ってから再試行する</string>
+    <string name="nm_reach_help_credit">プロバイダーのアカウントへのチャージ、またはこのモデルを含むプラン</string>
+    <string name="nm_reach_help_free_model">同じプロバイダーの無料モデル（残高不要）</string>
     <string name="nm_reach_try_again">再試行</string>
     <string name="nm_reach_network">ネットワーク設定</string>
     <string name="nm_reach_sign_in">もう一度サインイン</string>

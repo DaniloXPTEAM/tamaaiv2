@@ -1091,6 +1091,8 @@
     <string name="nm_reach_help_other">내 키로 다른 제공자 사용</string>
     <string name="nm_reach_help_wait">창이 지나가기를 기다리기</string>
     <string name="nm_reach_help_moment">잠시 후 다시 시도</string>
+    <string name="nm_reach_help_credit">공급자 계정에 크레딧 충전, 또는 이 모델이 포함된 플랜</string>
+    <string name="nm_reach_help_free_model">같은 공급자의 무료 모델(잔액 불필요)</string>
     <string name="nm_reach_try_again">다시 시도</string>
     <string name="nm_reach_network">네트워크 설정</string>
     <string name="nm_reach_sign_in">다시 로그인</string>

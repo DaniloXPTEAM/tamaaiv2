@@ -1068,6 +1068,8 @@
     <string name="nm_reach_help_other">换一个服务商，用自己的 key</string>
     <string name="nm_reach_help_wait">等这个窗口过去</string>
     <string name="nm_reach_help_moment">稍等片刻再试</string>
+    <string name="nm_reach_help_credit">在提供商账户中充值，或选择包含此模型的方案</string>
+    <string name="nm_reach_help_free_model">同一提供商的免费模型，无需余额</string>
     <string name="nm_reach_try_again">重试</string>
     <string name="nm_reach_network">网络设置</string>
     <string name="nm_reach_sign_in">重新登录</string>

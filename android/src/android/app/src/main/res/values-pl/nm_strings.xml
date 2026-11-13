@@ -1103,6 +1103,8 @@
     <string name="nm_reach_help_other">Inny dostawca, z własnym kluczem</string>
     <string name="nm_reach_help_wait">Poczekać, aż okno minie</string>
     <string name="nm_reach_help_moment">Chwila, potem ponowna próba</string>
+    <string name="nm_reach_help_credit">Środki na koncie dostawcy lub plan obejmujący ten model</string>
+    <string name="nm_reach_help_free_model">Darmowy model u tego samego dostawcy, bez środków</string>
     <string name="nm_reach_try_again">Spróbuj ponownie</string>
     <string name="nm_reach_network">Ustawienia sieci</string>
     <string name="nm_reach_sign_in">Zaloguj się ponownie</string>

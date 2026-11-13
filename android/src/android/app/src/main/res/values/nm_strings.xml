@@ -1077,6 +1077,8 @@
     <string name="nm_reach_help_other">Another provider, with a key of your own</string>
     <string name="nm_reach_help_wait">Waiting for the window to pass</string>
     <string name="nm_reach_help_moment">A moment, then trying again</string>
+    <string name="nm_reach_help_credit">Credit on the provider\'s account, or a plan that includes this model</string>
+    <string name="nm_reach_help_free_model">A free model on the same provider, which needs no credit</string>
     <string name="nm_reach_try_again">Try again</string>
     <string name="nm_reach_network">Network settings</string>
     <string name="nm_reach_sign_in">Sign in again</string>

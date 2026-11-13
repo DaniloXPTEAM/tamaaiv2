@@ -1095,6 +1095,8 @@
     <string name="nm_reach_help_other">Otro proveedor, con una clave propia</string>
     <string name="nm_reach_help_wait">Esperar a que pase la ventana</string>
     <string name="nm_reach_help_moment">Un momento, y volver a intentarlo</string>
+    <string name="nm_reach_help_credit">Crédito en la cuenta del proveedor, o un plan que incluya este modelo</string>
+    <string name="nm_reach_help_free_model">Un modelo gratuito en el mismo proveedor, que no necesita crédito</string>
     <string name="nm_reach_try_again">Reintentar</string>
     <string name="nm_reach_network">Ajustes de red</string>
     <string name="nm_reach_sign_in">Iniciar sesión de nuevo</string>

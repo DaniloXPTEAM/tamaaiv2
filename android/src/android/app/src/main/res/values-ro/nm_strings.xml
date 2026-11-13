@@ -1099,6 +1099,8 @@
     <string name="nm_reach_help_other">Alt furnizor, cu o cheie proprie</string>
     <string name="nm_reach_help_wait">Așteptarea trecerii ferestrei</string>
     <string name="nm_reach_help_moment">O clipă, apoi o nouă încercare</string>
+    <string name="nm_reach_help_credit">Credit în contul furnizorului sau un plan care include acest model</string>
+    <string name="nm_reach_help_free_model">Un model gratuit la același furnizor, care nu cere credit</string>
     <string name="nm_reach_try_again">Reîncearcă</string>
     <string name="nm_reach_network">Setări de rețea</string>
     <string name="nm_reach_sign_in">Autentifică-te din nou</string>

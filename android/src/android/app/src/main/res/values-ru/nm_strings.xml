@@ -1103,6 +1103,8 @@
     <string name="nm_reach_help_other">Другой провайдер с вашим собственным ключом</string>
     <string name="nm_reach_help_wait">Подождать, пока окно пройдёт</string>
     <string name="nm_reach_help_moment">Немного подождать и попробовать снова</string>
+    <string name="nm_reach_help_credit">Средства на счёте провайдера или тариф, включающий эту модель</string>
+    <string name="nm_reach_help_free_model">Бесплатная модель у того же провайдера, без средств на счёте</string>
     <string name="nm_reach_try_again">Повторить</string>
     <string name="nm_reach_network">Настройки сети</string>
     <string name="nm_reach_sign_in">Войти снова</string>

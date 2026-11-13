@@ -1095,6 +1095,8 @@
     <string name="nm_reach_help_other">Kendi anahtarınızla başka bir sağlayıcı</string>
     <string name="nm_reach_help_wait">Pencerenin geçmesini beklemek</string>
     <string name="nm_reach_help_moment">Kısa bir süre, sonra yeniden denemek</string>
+    <string name="nm_reach_help_credit">Sağlayıcı hesabında kredi veya bu modeli içeren bir plan</string>
+    <string name="nm_reach_help_free_model">Aynı sağlayıcıda kredi gerektirmeyen ücretsiz bir model</string>
     <string name="nm_reach_try_again">Yeniden dene</string>
     <string name="nm_reach_network">Ağ ayarları</string>
     <string name="nm_reach_sign_in">Yeniden oturum aç</string>

@@ -1061,6 +1061,8 @@
     <string name="nm_reach_help_other">換一個服務商，用自己的 key</string>
     <string name="nm_reach_help_wait">等這個視窗過去</string>
     <string name="nm_reach_help_moment">稍等片刻再試</string>
+    <string name="nm_reach_help_credit">在供應商帳戶中儲值，或選擇包含此模型的方案</string>
+    <string name="nm_reach_help_free_model">同一供應商的免費模型，無需餘額</string>
     <string name="nm_reach_try_again">重試</string>
     <string name="nm_reach_network">網路設定</string>
     <string name="nm_reach_sign_in">重新登入</string>

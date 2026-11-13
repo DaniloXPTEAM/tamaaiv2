@@ -1091,6 +1091,8 @@
     <string name="nm_reach_help_other">ผู้ให้บริการรายอื่น ด้วยคีย์ของคุณเอง</string>
     <string name="nm_reach_help_wait">รอให้ช่วงเวลานี้ผ่านไป</string>
     <string name="nm_reach_help_moment">รอสักครู่แล้วลองอีกครั้ง</string>
+    <string name="nm_reach_help_credit">เครดิตในบัญชีผู้ให้บริการ หรือแพ็กเกจที่รวมโมเดลนี้</string>
+    <string name="nm_reach_help_free_model">โมเดลฟรีจากผู้ให้บริการเดียวกัน ซึ่งไม่ต้องใช้เครดิต</string>
     <string name="nm_reach_try_again">ลองอีกครั้ง</string>
     <string name="nm_reach_network">การตั้งค่าเครือข่าย</string>
     <string name="nm_reach_sign_in">ลงชื่อเข้าใช้อีกครั้ง</string>

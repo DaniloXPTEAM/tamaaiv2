@@ -192,6 +192,9 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                 ProviderReach.Kind.QUOTA -> listOf(R.string.nm_reach_help_wait, R.string.nm_reach_help_other)
                 ProviderReach.Kind.RATE_LIMITED -> listOf(R.string.nm_reach_help_moment)
                 ProviderReach.Kind.SIGNED_OUT -> emptyList()
+                // What helps here is money or a cheaper model, not a network setting: the two
+                // tips below say "add credit" and "try a free model", and nothing about a VPN.
+                ProviderReach.Kind.NO_CREDIT -> listOf(R.string.nm_reach_help_credit, R.string.nm_reach_help_free_model)
             }
             if (helps.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))

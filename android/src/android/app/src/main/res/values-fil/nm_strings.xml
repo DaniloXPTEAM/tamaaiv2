@@ -1095,6 +1095,8 @@
     <string name="nm_reach_help_other">Ibang provider, gamit ang sarili mong key</string>
     <string name="nm_reach_help_wait">Paghihintay na lumipas ang window</string>
     <string name="nm_reach_help_moment">Sandali, saka subukan muli</string>
+    <string name="nm_reach_help_credit">Credit sa account ng provider, o plan na kasama ang model na ito</string>
+    <string name="nm_reach_help_free_model">Isang libreng model sa parehong provider, na hindi kailangan ng credit</string>
     <string name="nm_reach_try_again">Subukan muli</string>
     <string name="nm_reach_network">Mga setting ng network</string>
     <string name="nm_reach_sign_in">Mag-sign in muli</string>

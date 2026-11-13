@@ -1091,6 +1091,8 @@
     <string name="nm_reach_help_other">Penyedia lain, dengan kunci sendiri</string>
     <string name="nm_reach_help_wait">Menunggu jendela berlalu</string>
     <string name="nm_reach_help_moment">Sebentar, lalu coba lagi</string>
+    <string name="nm_reach_help_credit">Kredit di akun penyedia, atau paket yang menyertakan model ini</string>
+    <string name="nm_reach_help_free_model">Model gratis di penyedia yang sama, tanpa perlu kredit</string>
     <string name="nm_reach_try_again">Coba lagi</string>
     <string name="nm_reach_network">Pengaturan jaringan</string>
     <string name="nm_reach_sign_in">Masuk lagi</string>

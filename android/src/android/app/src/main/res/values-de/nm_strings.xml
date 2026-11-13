@@ -1095,6 +1095,8 @@
     <string name="nm_reach_help_other">Ein anderer Anbieter mit einem eigenen Schlüssel</string>
     <string name="nm_reach_help_wait">Warten, bis das Fenster vorbei ist</string>
     <string name="nm_reach_help_moment">Einen Moment, dann erneut versuchen</string>
+    <string name="nm_reach_help_credit">Guthaben auf dem Konto des Anbieters oder ein Tarif, der dieses Modell enthält</string>
+    <string name="nm_reach_help_free_model">Ein kostenloses Modell beim selben Anbieter, das kein Guthaben braucht</string>
     <string name="nm_reach_try_again">Erneut versuchen</string>
     <string name="nm_reach_network">Netzwerkeinstellungen</string>
     <string name="nm_reach_sign_in">Erneut anmelden</string>
