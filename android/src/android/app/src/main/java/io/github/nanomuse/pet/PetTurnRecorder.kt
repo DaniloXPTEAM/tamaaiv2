@@ -22,9 +22,10 @@ object PetTurnRecorder {
         turnId: String,
         outcome: PetTurnOutcome,
         nowMillis: Long = System.currentTimeMillis(),
+        expectedGeneration: Long? = null,
     ): PetState {
         if (sessionId.isBlank()) return PetStore.state.value
-        val result = PetStore.recordTurn(context, turnId, outcome, nowMillis)
+        val result = PetStore.recordTurn(context, turnId, outcome, nowMillis, expectedGeneration)
         if (result.recorded) _reactions.tryEmit(outcome)
         return result.state
     }

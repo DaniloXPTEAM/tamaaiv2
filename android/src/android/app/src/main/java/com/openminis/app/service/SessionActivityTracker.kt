@@ -35,11 +35,14 @@ object SessionActivityTracker {
     // Protect the active edge, outcome flags and run identity together. A tracker run can contain
     // several queued prompts; these identities are not per-message ids.
     private val petTurnIds = io.github.nanomuse.pet.PetRunIds()
+    // nanoMuse: bind each run to the Pet generation that was alive when it started.
+    private val petGenerations = mutableMapOf<String, Long>()
     private data class FinishedRun(
         val wasActive: Boolean,
         val petTurnId: String?,
         val wasError: Boolean,
         val cancelled: Boolean,
+        val petGeneration: Long?, // nanoMuse: late completions cannot pay a new generation.
     )
 
     fun markReplyIncomplete(sessionId: String, expectedTurnId: String? = null) {
@@ -52,6 +55,11 @@ object SessionActivityTracker {
 
     fun isCurrentRun(sessionId: String, turnId: String): Boolean =
         synchronized(petTurnIds) { petTurnIds.isCurrent(sessionId, turnId) }
+
+    // nanoMuse: a stale job must not borrow the Pet generation of its replacement.
+    fun petGenerationForRun(sessionId: String, turnId: String): Long = synchronized(petTurnIds) {
+        if (petTurnIds.isCurrent(sessionId, turnId)) petGenerations[sessionId] ?: -1L else -1L
+    }
 
     /**
      * T166: sessions the user is currently *present in* (composing /
@@ -321,12 +329,17 @@ object SessionActivityTracker {
      */
     fun setActive(sessionId: String, onStop: (() -> Unit)? = null): String {
         val wasIdle = !shouldRunService()
+        // nanoMuse: reconcile before binding the run, including a Pet already in mourning.
+        val petGeneration = appContext?.let { ctx ->
+            runCatching { io.github.nanomuse.pet.PetStore.generationForRun(ctx) }.getOrDefault(-1L)
+        } ?: -1L // nanoMuse: a Pet read failure must not prevent the agent from starting.
         // nanoMuse: a new start replaces an older run in this session, even if its cleanup is late.
         val (wasRunIdle, petTurnId) = synchronized(petTurnIds) {
             val idle = _activeSessions.value.isEmpty()
             cancelledReplies.remove(sessionId)
             synchronized(pendingErrorFlag) { pendingErrorFlag.remove(sessionId) }
             val turnId = petTurnIds.begin(sessionId)
+            petGenerations[sessionId] = petGeneration // nanoMuse: the id and generation move together.
             _activeSessions.value = _activeSessions.value + sessionId
             SessionBadgeStore.replies.started(sessionId)
             synchronized(streamCancellers) {
@@ -380,6 +393,7 @@ object SessionActivityTracker {
                 petTurnId = if (active) petTurnIds.finish(sessionId, expectedTurnId) else null,
                 wasError = synchronized(pendingErrorFlag) { pendingErrorFlag.remove(sessionId) },
                 cancelled = cancelledReplies.remove(sessionId),
+                petGeneration = petGenerations.remove(sessionId), // nanoMuse: consume only this run's generation.
             )
             // nanoMuse: finish the badge before another run can start in the same session.
             SessionBadgeStore.replies.finished(
@@ -388,7 +402,7 @@ object SessionActivityTracker {
             )
             result
         }
-        val (wasActive, petTurnId, wasError, cancelled) = finished
+        val (wasActive, petTurnId, wasError, cancelled, petGeneration) = finished // nanoMuse: generation follows the completed run.
         Log.d(TAG, "Session deactivated: $sessionId (total: ${_activeSessions.value.size})")
 
         if (_activeSessions.value.isEmpty()) {
@@ -443,6 +457,7 @@ object SessionActivityTracker {
                         wasError -> io.github.nanomuse.pet.PetTurnOutcome.FAILURE
                         else -> io.github.nanomuse.pet.PetTurnOutcome.SUCCESS
                     },
+                    expectedGeneration = petGeneration ?: -1L, // nanoMuse: do not pay a later Pet.
                 )
             }
         }

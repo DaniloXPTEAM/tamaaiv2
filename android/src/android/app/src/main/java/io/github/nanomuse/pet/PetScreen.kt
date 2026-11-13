@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -39,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -51,7 +53,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.openminis.app.R
 import com.openminis.app.service.SessionActivityTracker
-import io.github.nanomuse.ui.avatar.AgentAvatar
 import io.github.nanomuse.ui.avatar.AgentMood
 import io.github.nanomuse.ui.home.MuseRoundButton
 import io.github.nanomuse.ui.home.MuseTones
@@ -64,11 +65,9 @@ const val ROUTE_PET = "tama/pet"
 /**
  * The Pet screen.
  *
- * Every number shown here comes from [PetState], which is pure and pinned by tests; the face is
- * the app's existing [AgentAvatar] rather than a second character renderer, so the Pet and the
- * chat header can never disagree about what the agent looks like. There is no second scheduler
- * here either — the needs decay is recovered from two timestamps on read, so nothing runs while
- * the app is closed.
+ * Needs, rewards and life are reconciled from local state. The built-in face has stage artwork;
+ * a person's own face stays theirs and receives a stage silhouette without any image upload.
+ * There is no background scheduler: elapsed time is reconciled when the app is next used.
  */
 @Composable
 fun PetScreen(onBack: () -> Unit) {
@@ -88,22 +87,18 @@ fun PetScreen(onBack: () -> Unit) {
             PetStore.setVisible(context, false)
         }
     }
-    var today by remember { mutableLongStateOf(PetStreak.dayOf(System.currentTimeMillis())) }
-    // Refresh a screen left open over midnight; the loop is suspended in the background and only
-    // writes when the local date actually changes.
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    // A screen left open must reach the feeding and grief boundaries as well as local midnight.
     LaunchedEffect(lifecycle, context) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (isActive) {
-                val now = System.currentTimeMillis()
-                val day = PetStreak.dayOf(now)
-                if (today != day) {
-                    today = day
-                    PetStore.load(context, now)
-                }
+                now = System.currentTimeMillis()
+                PetStore.load(context, now)
                 delay(60_000L)
             }
         }
     }
+    val today = PetStreak.dayOf(now)
     val state by PetStore.state.collectAsState()
     val activeSessions by SessionActivityTracker.activeSessions.collectAsState()
     val presence = rememberPetPresence(streaming = activeSessions.isNotEmpty())
@@ -127,63 +122,59 @@ fun PetScreen(onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(8.dp))
-            PetFace(mood = mood, outfit = state.outfit)
-            Spacer(Modifier.height(14.dp))
-
-            // What the Pet is feeling, in words, so the face is not the only carrier.
-            Text(
-                text = stringResource(mood.labelRes()),
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(6.dp))
-            // What it remembers: the run of days, and how long the two of them have known each
-            // other. A streak of zero is simply not shown rather than shown as a failure.
-            val streakDays = PetStreak.shownOn(state.streak, today)
-            Text(
-                text = buildString {
-                    if (streakDays > 0) {
-                        append(
-                            pluralStringResource(
-                                R.plurals.tama_pet_streak,
-                                streakDays,
-                                streakDays,
-                            ),
-                        )
-                        append("  \u00b7  ")
-                    }
-                    append(stringResource(R.string.tama_pet_days_known, state.memory.daysKnown(today)))
-                },
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(16.dp))
-
-            NeedsCard(state.needs)
-
-            Spacer(Modifier.height(14.dp))
-            CareRow(onCare = { action ->
-                PetStore.care(context, action)
-            })
-
-            Spacer(Modifier.height(14.dp))
-            WardrobeRow(
-                state = state,
-                onPick = { outfit -> PetStore.wear(context, outfit) },
-            )
-
-            Spacer(Modifier.height(14.dp))
-            LevelCard(state.progress)
-
-            Spacer(Modifier.height(26.dp))
-            Text(
-                text = stringResource(R.string.tama_pet_how_xp),
-                fontSize = 13.sp,
-                lineHeight = 19.sp,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 40.dp),
-            )
+            if (state.life.grieving) {
+                // The memorial is read-only: no care, wardrobe, activities, games or missions.
+                PetMemorial(state.life, now)
+            } else {
+                PetFace(mood = mood, outfit = state.outfit, stage = state.progress.stage)
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = stringResource(mood.labelRes()),
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                val streakDays = PetStreak.shownOn(state.streak, today)
+                Text(
+                    text = buildString {
+                        if (streakDays > 0) {
+                            append(pluralStringResource(R.plurals.tama_pet_streak, streakDays, streakDays))
+                            append("  \u00b7  ")
+                        }
+                        append(stringResource(R.string.tama_pet_days_known, state.memory.daysKnown(today)))
+                    },
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(16.dp))
+                PetFeedingNotice(state.life, now)
+                Spacer(Modifier.height(14.dp))
+                NeedsCard(state.needs)
+                Spacer(Modifier.height(14.dp))
+                CareRow(onCare = { action -> PetStore.care(context, action, expectedGeneration = state.life.generation) })
+                Spacer(Modifier.height(14.dp))
+                WardrobeRow(state = state, onPick = { outfit ->
+                    PetStore.wear(context, outfit, expectedGeneration = state.life.generation)
+                })
+                Spacer(Modifier.height(14.dp))
+                LevelCard(state.progress)
+                Spacer(Modifier.height(14.dp))
+                PetMissionsCard(state.daily)
+                Spacer(Modifier.height(14.dp))
+                PetActivitiesCard(state)
+                Spacer(Modifier.height(14.dp))
+                PetGamesCard(state.life.generation)
+                PetArchiveCard(state.archives)
+                Spacer(Modifier.height(26.dp))
+                Text(
+                    text = stringResource(R.string.nm_pet_xp_rules),
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 40.dp),
+                )
+            }
             Spacer(Modifier.height(30.dp))
         }
     }
@@ -207,15 +198,9 @@ private fun PetMood.agentMood(): AgentMood = when (asset) {
     PetMoodAsset.ERROR -> AgentMood.ERROR
 }
 
-/**
- * The face in its scene (SL-001).
- *
- * The outfit is a backdrop behind the disc and one emoji at its corner — never a second character
- * renderer, so whatever face the person chose for the agent (the dragon, a preset, an emoji) is
- * still the face inside the costume.
- */
+/** The stage look and the chosen outfit share one scene. */
 @Composable
-private fun PetFace(mood: PetMood, outfit: PetOutfit) {
+private fun PetFace(mood: PetMood, outfit: PetOutfit, stage: PetStage) {
     Box(
         modifier = Modifier
             .size(132.dp)
@@ -223,11 +208,7 @@ private fun PetFace(mood: PetMood, outfit: PetOutfit) {
             .background(if (outfit.backdrop.paints) outfit.backdrop.color() else MuseTones.disc),
         contentAlignment = Alignment.Center,
     ) {
-        AgentAvatar(
-            mood = mood.agentMood(),
-            size = 104.dp,
-            contentDescription = stringResource(R.string.tama_pet_face_description),
-        )
+        PetStageLook(stage = stage, mood = mood.agentMood())
         outfit.accessory?.let { accessory ->
             Box(
                 modifier = Modifier
@@ -338,13 +319,14 @@ private fun CareButton(label: String, modifier: Modifier, onClick: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = MuseTones.surface,
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = onClick),
     ) {
-        Box(Modifier.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.padding(vertical = 12.dp, horizontal = 4.dp), contentAlignment = Alignment.Center) {
             Text(
                 text = label,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
@@ -385,7 +367,7 @@ private fun WardrobeRow(state: PetState, onPick: (PetOutfit) -> Unit) {
                     color = if (worn) MuseTones.action else MuseTones.surface,
                     modifier = Modifier
                         .size(width = 74.dp, height = 64.dp)
-                        .clickable { onPick(outfit) },
+                        .clickable(role = Role.Button) { onPick(outfit) },
                 ) {
                     Column(
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -473,7 +455,10 @@ private fun LevelCard(pet: PetProgress) {
                 )
             }
             Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 for (stage in PetStage.entries) {
                     val reached = pet.stage.ordinal >= stage.ordinal
                     Box(
@@ -484,7 +469,7 @@ private fun LevelCard(pet: PetProgress) {
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = stage.label,
+                        text = stringResource(stage.labelRes()),
                         fontSize = 11.sp,
                         fontWeight = if (reached) FontWeight.Medium else FontWeight.Normal,
                         color = if (reached) {

@@ -6,9 +6,9 @@ import kotlin.math.abs
  * What the Pet needs, as four numbers 0..100 that fall as time passes.
  *
  * This is the part that makes TAMA a tamagotchi rather than a progress bar: the Pet has state of
- * its own that changes when the person is *away*, and comes back with an opinion about it. XP
- * ([PetProgress]) never falls; a need always does. That asymmetry is the whole design — effort is
- * remembered, attention is not.
+ * its own that changes when the person is *away*, and comes back with an opinion about it. Within
+ * one generation XP ([PetProgress]) does not fall, while a need can decay. After the Pet's life
+ * ends, its previous progress is retained in a local archive.
  *
  * Pure: no Android, no clock of its own. Every function takes the elapsed time, so the decay can
  * be reasoned about and tested without waiting hours.
@@ -69,10 +69,8 @@ enum class PetNeed { SATIETY, ENERGY, MOOD, BOND }
 /**
  * How fast each need falls, and what tops it up.
  *
- * Per-hour rates, deliberately slow enough that a person who opens the app daily never sees a
- * crisis, and fast enough that leaving for a week is visible. The Pet must never be lost or die:
- * this app's agent works for people who are away, so punishing absence would be backwards. Every
- * number floors at zero and nothing here can delete anything.
+ * Per-hour rates for absence. Each number floors at zero. Feeding and the separate 72-hour
+ * lifecycle are reconciled by PetStore; a low need alone does not decide when a Pet dies.
  */
 object PetDecay {
     /** Points lost per hour, per need. */

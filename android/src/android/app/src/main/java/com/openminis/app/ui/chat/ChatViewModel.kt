@@ -3314,6 +3314,7 @@ class ChatViewModel(
      * up. Mirrors iOS `pendingSendText` / `pendingSendAttachments`.
      */
     private var pendingSendText: String? = null
+    private var pendingSendPetPersonMessage = true // nanoMuse: a compacted routine is still a routine.
 
     private val _showCompactBeforeSendPrompt = MutableStateFlow(false)
     val showCompactBeforeSendPrompt: StateFlow<Boolean> = _showCompactBeforeSendPrompt.asStateFlow()
@@ -3328,9 +3329,11 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         val text = pendingSendText ?: return
         pendingSendText = null
+        val petPersonMessage = pendingSendPetPersonMessage // nanoMuse: retain origin across compaction.
+        pendingSendPetPersonMessage = true // nanoMuse
         // nanoMuse: the outgoing-request guard performs one bounded attempt after the new
         // message is saved. A pre-send failure must not start the same attempt again (#719).
-        sendMessage(text, skipContextCheck = true)
+        sendMessage(text, skipContextCheck = true, petPersonMessage = petPersonMessage)
     }
 
     /** Dialog action: send without compacting. */
@@ -3338,7 +3341,9 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         val text = pendingSendText ?: return
         pendingSendText = null
-        sendMessage(text, skipContextCheck = true)
+        val petPersonMessage = pendingSendPetPersonMessage // nanoMuse
+        pendingSendPetPersonMessage = true // nanoMuse
+        sendMessage(text, skipContextCheck = true, petPersonMessage = petPersonMessage)
     }
 
     /** Dialog dismissed — restore the text to the composer so it isn't lost. */
@@ -3346,6 +3351,7 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         pendingSendText?.let { _inputText.value = it }
         pendingSendText = null
+        pendingSendPetPersonMessage = true // nanoMuse
     }
 
     // nanoMuse: local trims precede summaries, and an early failure can still leave room.
@@ -5949,7 +5955,7 @@ class ChatViewModel(
      * current agent loop finishes, drainQueuedPrompts() consumes the queue.
      * Mirrors iOS AIChatViewModel.enqueuePrompt().
      */
-    fun enqueuePrompt(text: String) {
+    fun enqueuePrompt(text: String, petPersonMessage: Boolean = true) { // nanoMuse: keep routine provenance with a queued prompt.
         val trimmed = text.trim()
         val pendingAttachments = _attachments.value
         if ((trimmed.isBlank() && pendingAttachments.isEmpty()) || !_isStreaming.value) return
@@ -5958,6 +5964,7 @@ class ChatViewModel(
             id = "queued_${System.currentTimeMillis()}_${(Math.random() * 1_000_000).toInt()}",
             text = trimmed,
             attachments = pendingAttachments,
+            petGeneration = if (petPersonMessage) io.github.nanomuse.pet.PetEvents.generation(context) else null, // nanoMuse: bind at enqueue.
         )
         _promptQueue.value = _promptQueue.value + prompt
 
@@ -6110,6 +6117,10 @@ class ChatViewModel(
             bodyPartsJson = queuedPaste?.partsJson,
         )
         val userEntity = chatRepository.appendMessage(sid, "user", userPartsJson)
+        // nanoMuse: one saved row can contain several queued person messages and routine prompts.
+        io.github.nanomuse.pet.PetEvents.queuedChats(context, userEntity.id, queued.map {
+            io.github.nanomuse.pet.PetQueuedOrigin(it.id, it.petGeneration)
+        })
         io.github.nanomuse.sync.ConversationSync.sent(sid) // nanoMuse: pushed at send (C8), then "working" (C9)
         agentHistory.add(
             LLMMessage(
@@ -6257,7 +6268,11 @@ class ChatViewModel(
                 prepared.attachedFilesXml,
                 bodyPartsJson = drainPaste?.partsJson,
             )
-            chatRepository.appendMessage(sid, "user", userPartsJson)
+            val queuedRow = chatRepository.appendMessage(sid, "user", userPartsJson) // nanoMuse: identify the saved batch.
+            // nanoMuse: count only queued person messages, after persistence, without their text.
+            io.github.nanomuse.pet.PetEvents.queuedChats(context, queuedRow.id, queued.map {
+                io.github.nanomuse.pet.PetQueuedOrigin(it.id, it.petGeneration)
+            })
             io.github.nanomuse.sync.ConversationSync.sent(sid) // nanoMuse: pushed at send (C8), then "working" (C9)
 
             agentHistory.add(LLMMessage(
@@ -6333,13 +6348,17 @@ class ChatViewModel(
     internal fun nmCancelHeadless(turnId: String): Boolean =
         io.github.nanomuse.hub.HeadlessTurn.stop(nmHeadlessReceipt, turnId) { cancelStream() }
 
-    fun sendMessage(text: String) {
+    fun sendMessage(text: String) = nmSendMessage(text, petPersonMessage = true) // nanoMuse: normal person-origin send.
+
+    internal fun nmSendAutomatedMessage(text: String) = nmSendMessage(text, petPersonMessage = false) // nanoMuse: headless work is not human chat.
+
+    private fun nmSendMessage(text: String, petPersonMessage: Boolean) { // nanoMuse: preserve origin when a prompt is queued.
         // nanoMuse: explicit device work is routed before any local model or avatar action.
         if (nmRemoteBridge.send(text, io.github.nanomuse.hub.Hub.others(context),
                 _attachments.value.isNotEmpty() || _pastedTexts.value.isNotEmpty(), _isCompacting.value)) return
-        if (_isStreaming.value) { enqueuePrompt(text); return }
+        if (_isStreaming.value) { enqueuePrompt(text, petPersonMessage); return }
         if (nmInterceptAvatar(text)) { nmCountableTurn = false; return }
-        sendMessage(text, skipContextCheck = false)
+        sendMessage(text, skipContextCheck = false, petPersonMessage = petPersonMessage) // nanoMuse: carry origin across the send guard.
     }
 
     // nanoMuse: only the adapter touches upstream state; the lifecycle lives in RemoteChatBridge.
@@ -6769,7 +6788,9 @@ class ChatViewModel(
         sendMessage(name, skipContextCheck = false)
     }
 
-    private fun nmAfterTurn() {
+    // nanoMuse: the result's goal event belongs to this exact tracker job, not a replacement.
+    private suspend fun nmAfterTurn() {
+        val petGeneration = nmPetGenerationForJob(kotlin.coroutines.coroutineContext[Job])
         val sid = realSessionId.ifEmpty { sessionId }
         // Goal blocks in the reply just finished, and the turn budget of any
         // prompt addendum, are settled first — they apply to every session.
@@ -6782,7 +6803,7 @@ class ChatViewModel(
         // no error.
         val reply = nmReplyOfThisTurn()
         reply?.let { text ->
-            io.github.nanomuse.goals.GoalFlow.afterTurn(context, sid, text)
+            io.github.nanomuse.goals.GoalFlow.afterTurn(context, sid, text, petGeneration) // nanoMuse: bind the completed goal to this run.
             io.github.nanomuse.feed.FeedFlow.afterTurn(context, sid, text)
         }
         val fc = nmFirstConversation
@@ -6819,7 +6840,12 @@ class ChatViewModel(
      *   re-entry with `skipCompactCheck`.
      */
     // nanoMuse: the optional receipt identifies the exact headless invocation's user row.
-    private fun sendMessage(text: String, skipContextCheck: Boolean, headless: io.github.nanomuse.hub.HeadlessTurn.Receipt? = null) {
+    private fun sendMessage(
+        text: String,
+        skipContextCheck: Boolean,
+        headless: io.github.nanomuse.hub.HeadlessTurn.Receipt? = null,
+        petPersonMessage: Boolean = true, // nanoMuse: scheduled work stays non-human if it is queued.
+    ) {
         // [T-android-paste-mediaref] `[Pasted#N]` markers are NOT expanded here
         // any more.
         //
@@ -6839,7 +6865,7 @@ class ChatViewModel(
         val trimmed = text.trim()
         // While streaming, enqueue instead of silently dropping (iOS: send vs enqueuePrompt).
         if (_isStreaming.value) {
-            enqueuePrompt(text)
+            enqueuePrompt(text, petPersonMessage) // nanoMuse: retain scheduled/user origin.
             return
         }
         // T180: allow attachments-only sends (no caption). Mirrors iOS, where
@@ -6862,6 +6888,7 @@ class ChatViewModel(
                 PreSendContextAction.PROCEED -> {}
                 PreSendContextAction.COMPACT_THEN_SEND -> {
                     pendingSendText = text
+                    pendingSendPetPersonMessage = petPersonMessage // nanoMuse
                     _inputText.value = ""
                     compactAndSendPending()
                     return
@@ -6870,6 +6897,7 @@ class ChatViewModel(
                     // Park the text on the VM (not the composer) so the dialog
                     // owns it; cancelCompactBeforeSend puts it back.
                     pendingSendText = text
+                    pendingSendPetPersonMessage = petPersonMessage // nanoMuse
                     _inputText.value = ""
                     _showCompactBeforeSendPrompt.value = true
                     return
@@ -6932,6 +6960,8 @@ class ChatViewModel(
         val editingId = _editingMessageId.value
         if (editingId != null) _editingMessageId.value = null
 
+        // nanoMuse: do not credit a later generation for a row saved after this send began.
+        val petChatGeneration = if (petPersonMessage && headless == null) io.github.nanomuse.pet.PetEvents.generation(context) else null
         val headlessJob = viewModelScope.launch { // nanoMuse: retain the parent job that owns setup and streaming.
             streamJob = coroutineContext[Job] // nanoMuse: Stop during the setup (session, attachments, the user row) cancels it too, not only the agent loop launched below (#340)
             var streamLaunched = false
@@ -6969,6 +6999,10 @@ class ChatViewModel(
             headless?.saved(persistedUser.id) // nanoMuse: publish identity only after persistence.
             io.github.nanomuse.sync.ConversationSync.sent(activeSessionId) // nanoMuse: the person's line reaches the other devices at send (C8), then "working" (C9)
             io.github.nanomuse.chat.RoutineWakes.claim(activeSessionId, persistedUser.id) // nanoMuse: a routine's prompt is marked as such on its row
+            // nanoMuse: only a person's saved line counts, not a scheduled or headless prompt.
+            petChatGeneration?.let { generation ->
+                io.github.nanomuse.pet.PetEvents.chat(context, persistedUser.id, generation)
+            }
 
             val userMsg = ChatMessage(
                 id = persistedUser.id,
@@ -7700,6 +7734,8 @@ class ChatViewModel(
         fallbackStrategy: com.openminis.app.data.model.FallbackStrategy = com.openminis.app.data.model.FallbackStrategy.default,
         onTerminalFailure: () -> Unit,
     ) {
+        // nanoMuse: every write in this loop belongs to the Pet present when its tracker run began.
+        val petRunGeneration = nmPetGenerationForJob(kotlin.coroutines.coroutineContext[Job])
         AppLogger.info(TAG_STREAM, "runAgentLoop ENTER provider=${provider.javaClass.simpleName} historySize=${agentHistory.size}")
         // [T-android-mem-probe-trust] Send-path context shape. The existing
         // `messages-shape` probe only runs on session LOAD, so the 2026-08-15
@@ -9295,6 +9331,10 @@ class ChatViewModel(
 
                 android.util.Log.d("ToolChain[VM]", "[turn=$turn] executeTool START name=$name args=${argsStr.take(200)}")
                 val result = executeTool(name, argsStr, id, allToolBlocks, assistantId, accumulatedText)
+                // nanoMuse: only confirmed, intact writes advance the Pet bound to this tracker run.
+                if (result.success && truncationRepairTag == null) {
+                    io.github.nanomuse.pet.PetEvents.tool(context, realSessionId.ifEmpty { sessionId }, id, name, petRunGeneration)
+                }
                 android.util.Log.d("ToolChain[VM]", "[turn=$turn] executeTool END name=$name success=${result.success} title=${result.toolTitle} outputLen=${result.output.length} output=${result.output.take(200)}")
 
                 // Record post-execution. WARNING text is appended to the tool
@@ -11789,6 +11829,12 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         }?.content
         SessionActivityTracker.publishLastReply(sessionId, text)
     }
+    // nanoMuse: read only this job's still-current tracker run; -1 cannot pay any generation.
+    private fun nmPetGenerationForJob(job: Job?): Long {
+        val binding = job?.let { nmTrackedLocalRuns.current(it) } ?: return -1L
+        return SessionActivityTracker.petGenerationForRun(binding.sessionId, binding.turnId)
+    }
+
     // nanoMuse: bind the run to its actual coroutine, including a Stop racing slot acquisition.
     private fun beginTrackedReply(id: String, job: Job): String {
         val binding = nmTrackedLocalRuns.begin(job, { job.isActive }) {

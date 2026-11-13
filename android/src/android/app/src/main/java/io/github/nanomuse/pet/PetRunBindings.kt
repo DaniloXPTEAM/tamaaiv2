@@ -23,5 +23,8 @@ class PetRunBindings<K : Any> {
         return run
     }
 
+    /** Read the binding of this exact job, never a newer job in the same session. */
+    @Synchronized fun current(key: K): PetRunBinding? = runs[key]
+
     @Synchronized fun finish(key: K): PetRunBinding? = runs.remove(key)
 }

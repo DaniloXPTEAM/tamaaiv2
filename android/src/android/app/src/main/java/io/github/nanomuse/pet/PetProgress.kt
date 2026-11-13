@@ -9,12 +9,12 @@ package io.github.nanomuse.pet
  * regress silently — a wrong threshold would either freeze a user at a level or jump them
  * several at once, and neither shows up as a crash.
  *
- * Progression is monotonic during normal use: XP only grows, and [levelFor] is a pure function
- * of the total. Pet backup/restore is not wired into the app yet, so reinstalling can still lose
- * that total; the progression rule alone does not protect it.
+ * Within one generation XP only grows, and [levelFor] is a pure function of the total. A new
+ * generation starts at zero after the old Pet is archived. Pet backup/restore is not wired into
+ * the app yet, so reinstalling can still lose the local history.
  */
 data class PetProgress(
-    /** Lifetime XP. Never decreases; a clamp at 0 is the only guard needed. */
+    /** This generation's XP. Normal rewards never decrease it. */
     val xp: Long,
     val level: Int,
     val stage: PetStage,
@@ -36,16 +36,18 @@ data class PetProgress(
 /**
  * The confirmed TAMA stage names live in one enum. Level bands are inclusive.
  */
-enum class PetStage(val fromLevel: Int, val label: String) {
-    HATCHLING(1, "Filhote"),
-    COMPANION(3, "Companheiro"),
-    GUARDIAN(6, "Guardião"),
-    LEGEND(10, "Lenda"),
+enum class PetStage(val fromLevel: Int) {
+    AWAKENING(1),
+    DISCOVERY(5),
+    LEARNING(10),
+    COMPANION(20),
+    EXPLORER(35),
+    EVOLVED(50),
     ;
 
     companion object {
         fun forLevel(level: Int): PetStage =
-            entries.lastOrNull { level >= it.fromLevel } ?: HATCHLING
+            entries.lastOrNull { level >= it.fromLevel } ?: AWAKENING
     }
 }
 

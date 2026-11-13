@@ -143,10 +143,15 @@ class SkillRepository(private val context: Context) {
 
     // -- CRUD --
 
-    fun add(name: String, description: String, body: String, version: String = "1.0.0", source: ImportSource = ImportSource.FILE, sourceURL: String? = null): Skill? {
+    fun add(name: String, description: String, body: String, version: String = "1.0.0", source: ImportSource = ImportSource.FILE, sourceURL: String? = null,
+            petGeneration: Long? = null): Skill? { // nanoMuse: carry the generation from a long import.
         val id = slugify(name)
         if (id.isBlank()) return null
         if (_skills.value.any { it.id == id }) return null
+        // nanoMuse: packaged setup never advances a Pet, and a late import cannot pay its successor.
+        val petAtStart = if (source == ImportSource.FILE || source == ImportSource.URL) {
+            petGeneration ?: io.github.nanomuse.pet.PetEvents.generation(context)
+        } else null
 
         val skill = Skill(
             id = id,
@@ -161,6 +166,8 @@ class SkillRepository(private val context: Context) {
         insertDb(skill)
         writeSkillMd(skill)
         _skills.value = _skills.value + skill
+        // nanoMuse: a newly imported user skill, not bundled setup or disk discovery, advances its Pet.
+        petAtStart?.let { io.github.nanomuse.pet.PetEvents.skill(context, skill.id, it) }
         Log.i(TAG, "Added skill: ${skill.id}")
         return skill
     }
@@ -394,7 +401,11 @@ class SkillRepository(private val context: Context) {
      * Parse SKILL.md content (YAML frontmatter + markdown body) and import.
      * Returns the created Skill or null on failure.
      */
-    fun importFromContent(content: String, source: ImportSource = ImportSource.FILE, sourceURL: String? = null): Skill? {
+    fun importFromContent(content: String, source: ImportSource = ImportSource.FILE, sourceURL: String? = null,
+                          petGeneration: Long? = null): Skill? { // nanoMuse: retain a long-running import's Pet.
+        val petAtStart = if (source == ImportSource.FILE || source == ImportSource.URL) {
+            petGeneration ?: io.github.nanomuse.pet.PetEvents.generation(context)
+        } else null // nanoMuse: no signal for packaged skills.
         val parsed = parseSkillMd(content) ?: return null
         val id = slugify(parsed.name)
         if (id.isNotBlank() && _skills.value.any { it.id == id }) {
@@ -429,6 +440,7 @@ class SkillRepository(private val context: Context) {
             version = parsed.version,
             source = source,
             sourceURL = sourceURL,
+            petGeneration = petAtStart, // nanoMuse: one identity from import start to completed write.
         )
     }
 
@@ -446,6 +458,7 @@ class SkillRepository(private val context: Context) {
      * alongside it into `skillsDir/<id>/`.
      */
     fun importFromArchive(input: InputStream): Skill? {
+        val petAtStart = io.github.nanomuse.pet.PetEvents.generation(context) // nanoMuse: bind before reading the archive.
         val entries = try { readZipEntries(input) } catch (e: Exception) {
             Log.w(TAG, "Failed to read zip archive: ${e.message}")
             return null
@@ -461,7 +474,7 @@ class SkillRepository(private val context: Context) {
         val skillContent = try { String(skillMdEntry.data, Charsets.UTF_8) } catch (_: Exception) { return null }
         if (skillContent.isBlank()) return null
 
-        val skill = importFromContent(skillContent, ImportSource.FILE) ?: return null
+        val skill = importFromContent(skillContent, ImportSource.FILE, petGeneration = petAtStart) ?: return null // nanoMuse
 
         val prefix = if (skillMdEntry.name == "SKILL.md") "" else skillMdEntry.name.dropLast("SKILL.md".length)
         val skillDir = File(skillsDir, skill.id)
@@ -527,9 +540,10 @@ class SkillRepository(private val context: Context) {
      * from the same directory. Mirrors iOS SkillStore.importFromGitHub.
      */
     suspend fun importFromGitHub(urlString: String): Skill? = withContext(Dispatchers.IO) {
+        val petAtStart = io.github.nanomuse.pet.PetEvents.generation(context) // nanoMuse: bind before the download.
         val rawURL = githubToRawURL(urlString) ?: return@withContext null
         val content = httpGetString(rawURL) ?: return@withContext null
-        val skill = importFromContent(content, ImportSource.URL, sourceURL = urlString) ?: return@withContext null
+        val skill = importFromContent(content, ImportSource.URL, sourceURL = urlString, petGeneration = petAtStart) ?: return@withContext null // nanoMuse
 
         val ghInfo = parseGitHubURL(urlString) ?: return@withContext skill
         val skillDir = File(skillsDir, skill.id)

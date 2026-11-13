@@ -79,7 +79,7 @@ class PetPersistenceInstrumentedTest {
         PetStore.forgetForTests()
         PetStore.load(context, now)
         assertEquals(PetCareAction.PLAY, PetStore.state.value.memory.lastCare)
-        assertEquals(450L, PetStore.state.value.progress.xp)
+        assertEquals(455L, PetStore.state.value.progress.xp)
         assertEquals("untouched", p.getString("other.setting", null))
     }
 
@@ -93,7 +93,7 @@ class PetPersistenceInstrumentedTest {
         PetTurnRecorder.onTurnFinished(context, sessionId, c, PetTurnOutcome.CANCELLED, now)
         PetStore.forgetForTests()
         val after = PetTurnRecorder.onTurnFinished(context, sessionId, a, PetTurnOutcome.SUCCESS, now + 1)
-        assertEquals(13L, after.progress.xp)
+        assertEquals(28L, after.progress.xp)
         assertEquals(2, after.memory.turnsTogether)
     }
 
@@ -107,14 +107,16 @@ class PetPersistenceInstrumentedTest {
         assertFalse(old == current)
         SessionActivityTracker.setInactive(sessionId, old)
         assertTrue(SessionActivityTracker.isCurrentRun(sessionId, current))
+        assertEquals(-1L, SessionActivityTracker.petGenerationForRun(sessionId, old))
+        assertEquals(1L, SessionActivityTracker.petGenerationForRun(sessionId, current))
         SessionActivityTracker.setInactive(sessionId, current)
-        assertEquals(10L, PetStore.state.value.progress.xp)
+        assertEquals(25L, PetStore.state.value.progress.xp)
 
         val stopped = SessionActivityTracker.setActive(sessionId)
         SessionActivityTracker.markStreamError(sessionId, stopped)
         SessionActivityTracker.markReplyIncomplete(sessionId, stopped)
         SessionActivityTracker.setInactive(sessionId, stopped)
-        assertEquals(10L, PetStore.state.value.progress.xp)
+        assertEquals(25L, PetStore.state.value.progress.xp)
     }
 
     @Test fun lateTrackerCompletionDoesNotEndANewerRun() {
@@ -132,12 +134,80 @@ class PetPersistenceInstrumentedTest {
         SessionActivityTracker.setInactive(sessionId, old)
         assertTrue(SessionActivityTracker.isCurrentRun(sessionId, current))
         SessionActivityTracker.setInactive(sessionId, current)
-        assertEquals(10L, PetStore.state.value.progress.xp)
+        assertEquals(25L, PetStore.state.value.progress.xp)
         assertFalse(SessionActivityTracker.isActive(sessionId))
 
         val failed = SessionActivityTracker.setActive(sessionId)
         SessionActivityTracker.markStreamError(sessionId, failed)
         SessionActivityTracker.setInactive(sessionId, failed)
-        assertEquals(13L, PetStore.state.value.progress.xp)
+        assertEquals(28L, PetStore.state.value.progress.xp)
+    }
+
+    @Test fun realPreferencesKeepLegacyXpThroughGriefAndArchiveTheGeneration() {
+        val now = System.currentTimeMillis()
+        val p = context.getSharedPreferences("minis_settings", Context.MODE_PRIVATE)
+        p.edit().putLong("tama.pet.xp", 450L)
+            .putLong("tama.pet.last_seen", now - 30 * PetStreak.DAY_MS).commit()
+        PetStore.load(context, now)
+        assertEquals(450L, PetStore.state.value.progress.xp)
+        assertFalse(PetStore.state.value.life.grieving)
+        val death = now + PetLifeRules.DEATH_AFTER_MS
+        val grieving = PetStore.care(context, PetCareAction.FEED, death)
+        assertTrue(grieving.life.grieving)
+        assertEquals(450L, grieving.progress.xp)
+        PetStore.forgetForTests()
+        PetStore.load(context, death + PetLifeRules.GRIEF_MS - 1)
+        assertTrue(PetStore.state.value.life.grieving)
+        PetStore.load(context, death + PetLifeRules.GRIEF_MS)
+        val next = PetStore.state.value
+        assertFalse(next.life.grieving)
+        assertEquals(2L, next.life.generation)
+        assertEquals(0L, next.progress.xp)
+        assertEquals(450L, next.archives.single().progress.xp)
+        PetStore.forgetForTests()
+        PetStore.load(context, death + PetLifeRules.GRIEF_MS + 1)
+        assertEquals(450L, PetStore.state.value.archives.single().progress.xp)
+        assertEquals(0L, PetStore.state.value.progress.xp)
+    }
+
+    @Test fun trackerRunAndQueuedSignalsCannotCreditTheirSuccessor() {
+        val now = System.currentTimeMillis()
+        trackerInitialized = true
+        SessionActivityTracker.init(context)
+        SessionActivityTracker.setCompletionListener(null)
+        PetStore.load(context, now)
+        val run = SessionActivityTracker.setActive(sessionId)
+        val oldGeneration = SessionActivityTracker.petGenerationForRun(sessionId, run)
+        val prompts = listOf(PetQueuedOrigin("person", oldGeneration), PetQueuedOrigin("routine", null))
+        PetEvents.queuedChats(context, "saved-row", prompts)
+        assertEquals(5L, PetStore.state.value.progress.xp)
+        PetEvents.queuedChats(context, "saved-row", prompts)
+        assertEquals(5L, PetStore.state.value.progress.xp)
+
+        PetStore.load(context, now + PetLifeRules.DEATH_AFTER_MS + PetLifeRules.GRIEF_MS)
+        assertEquals(2L, PetStore.state.value.life.generation)
+        SessionActivityTracker.setInactive(sessionId, run)
+        PetEvents.queuedChats(context, "another-row", prompts)
+        PetEvents.goal(context, "old-goal", oldGeneration)
+        PetEvents.skill(context, "old-skill", oldGeneration)
+        PetEvents.tool(context, sessionId, "old-tool", "file_write", oldGeneration)
+        assertEquals(0L, PetStore.state.value.progress.xp)
+        assertEquals(5L, PetStore.state.value.archives.single().progress.xp)
+    }
+
+    @Test fun realPreferencesKeepTheSharedCapAndEventDeduplication() {
+        val now = System.currentTimeMillis()
+        PetStore.load(context, now)
+        repeat(9) { i ->
+            PetTurnRecorder.onTurnFinished(context, sessionId, "run-$i", PetTurnOutcome.SUCCESS, now)
+        }
+        assertEquals(100L, PetStore.state.value.progress.xp)
+        PetStore.recordEvent(context, PetEvent.GOAL, "goal-id", now)
+        assertEquals(100L, PetStore.state.value.progress.xp)
+        assertTrue(PetStore.state.value.daily.completed(PetMission.GOAL))
+        PetStore.forgetForTests()
+        PetStore.recordEvent(context, PetEvent.GOAL, "goal-id", now)
+        assertEquals(100, PetStore.state.value.daily.earned)
+        assertEquals(100L, PetStore.state.value.progress.xp)
     }
 }

@@ -1,5 +1,31 @@
 # Auditoria do Pet nesta branch — 10/11/2026
 
+## Atualização: evolução nesta branch
+
+A implementação atual usa seis estágios nos níveis 1, 5, 10, 20, 35 e 50, mantendo a fórmula
+de XP desta branch. Os cinco novos desenhos e o fantasma são ilustrações provisórias, não arquivos
+originais T1. O avatar personalizado continua sendo usado, com uma silhueta de estágio. As novas
+ilustrações são estáticas com movimento local; não são novas animações de humor geradas por modelo.
+
+A store conserva o XP antigo na migração e inicia o relógio de alimentação ao observar o Pet, sem
+presumir que uma visita antiga foi uma alimentação. Somente alimentar reinicia esse relógio. Após
+72 horas vem a morte, com 72 horas de memorial sem interação. Na próxima reconciliação ao fim do
+luto, a geração anterior é arquivada e uma nova começa no nível 1 e zero XP. Uma ausência longa
+cria uma única geração nova, não uma sequência de Pets não vistos. O arquivo conserva os dados do
+Pet anterior; avatares continuam fora dessa redefinição.
+
+Os ciclos e as nove missões dividem o teto de 100 XP por dia local. Uma recompensa pode ser
+parcial. Conversa considera mensagens da pessoa salvas, inclusive as recebidas em fila, mas não
+prompts automáticos. Metas, habilidades e operações de arquivo ou memória são projetadas sem
+armazenar texto ou caminhos. Eventos antigos e botões de uma tela anterior são vinculados à sua
+geração. Sonhar, descobrir, experimentar, diário e os dois jogos funcionam localmente e não
+iniciam chamadas de modelo. O ledger continua limitado a 256 identificadores por tipo de registro.
+
+Os testes JVM atuais usam stubs Android e preferências em memória. Os resultados Android e de
+emulador abaixo são anteriores a esta evolução e não comprovam sua compilação ou aparência. A UI,
+o APK atual, a persistência após morte real de processo e a atualização sobre o telefone precisam
+ser validados separadamente. Nenhuma reinstalação ou limpeza de dados foi autorizada.
+
 ## Escopo e identidade
 
 Esta auditoria trata do Pet em `io.github.nanomuse.pet` no aplicativo Android
@@ -10,16 +36,17 @@ nos arquivos do Drive.
 
 | Área | O que existe nesta branch |
 |---|---|
-| Evolução | XP e níveis 1–99; quatro faixas: Filhote, Companheiro, Guardião e Lenda. A face continua usando o avatar do agente; não são seis formas T1. |
+| Evolução | XP e níveis 1–99; seis estágios nesta branch, com fórmula antiga preservada. As ilustrações novas não são mídia original T1. |
 | Necessidades e cuidado | Comida, energia, humor e vínculo; alimentar, descansar e brincar; decaimento calculado na leitura, sem serviço periódico de fundo. |
 | Roupa | Fundo e acessório sobre o avatar existente; escolha salva mesmo se ainda bloqueada pelo nível. |
 | Memória | Sequência de visitas, melhor sequência, primeiro dia, contadores de cuidado e trabalho e último tipo de cuidado. São fatos locais simples, não a memória SQLite do B3. |
-| Chat | XP e reação por **ciclo de atividade do tracker**, que pode agregar vários prompts em fila. Sucesso vale 10 XP, falha 3, cancelamento e estado desconhecido não pagam. Não é contabilização comprovada por mensagem. |
+| Chat | XP básico e reação por **ciclo de atividade do tracker**, que pode agregar vários prompts em fila. Sucesso vale 10 XP, falha 3, cancelamento e estado desconhecido não pagam. Missões de conversa usam prompts da pessoa após a gravação da linha. |
 | Armazenamento | Chaves `tama.pet.*` nas `SharedPreferences` existentes `minis_settings`. |
 
-Não se verificou nesta branch implementação equivalente das seis etapas B3, minijogos/missões,
-SQLite do Pet B3, seu contrato de consentimento para sinais do agente, replay durável completo ou
-sincronização entre aparelhos. Os relatos e testes de outro pacote não homologam este APK.
+A presença de seis etapas, missões e jogos nesta branch não demonstra equivalência com B3/T1.
+Continuam não verificados o SQLite do Pet B3, seu contrato de consentimento para sinais do agente,
+replay durável completo e sincronização entre aparelhos. Os relatos e testes de outro pacote não
+homologam este APK.
 
 ## Defeitos reproduzidos e correções
 
@@ -61,7 +88,9 @@ de `Long.MAX_VALUE` zerava o total por overflow.
   atualização deixava a tarefa rodando antes de existir uma referência ao job. O Stop foi ligado
   ao job assim que ele é atribuído, e é tratado uma única vez.
 
-## Testes e limites
+## Testes e limites da rodada anterior
+
+Os resultados abaixo pertencem às correções anteriores, não à evolução descrita na atualização.
 
 - **JVM local:** 80 testes das regras, calendário, ledger, store, recorder e vínculo de jobs
   passaram com Kotlin 2.1, JUnit 4.10, stubs Android e preferências em mapa. O teste de store usa

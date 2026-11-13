@@ -232,7 +232,7 @@ internal object HeadlessChatRunner {
                 is io.github.nanomuse.hub.HeadlessTurn.Outcome.Completed -> PromptResult("Completed", outcome.text, false)
             }
         }
-        vm.sendMessage(text)
+        vm.nmSendAutomatedMessage(text) // nanoMuse: a routine or RPC prompt is not a person typing in chat.
         if (!wait) return@withContext PromptResult(status = "Running", responseText = null, timedOut = false)
 
         // Wait for isStreaming to be false (sendMessage flips it true synchronously

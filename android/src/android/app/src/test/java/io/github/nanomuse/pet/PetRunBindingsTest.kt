@@ -17,8 +17,13 @@ class PetRunBindingsTest {
         val current = PetRunBinding("same-session", "current")
         bindings.begin("old-job", { true }) { old }
         bindings.begin("current-job", { true }) { current }
+        assertEquals(old, bindings.current("old-job"))
+        assertEquals(current, bindings.current("current-job"))
         assertEquals(old, bindings.stop("old-job") {})
+        assertNull(bindings.current("old-job"))
+        assertEquals(current, bindings.current("current-job"))
         assertEquals(current, bindings.finish("current-job"))
+        assertNull(bindings.current("current-job"))
         assertNull(bindings.finish("old-job"))
     }
 

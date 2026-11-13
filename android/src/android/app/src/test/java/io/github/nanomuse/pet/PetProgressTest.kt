@@ -90,15 +90,17 @@ class PetProgressTest {
 
     @Test
     fun `stages follow the bands and never go backwards`() {
-        assertEquals(PetStage.HATCHLING, PetStage.forLevel(1))
-        assertEquals(PetStage.HATCHLING, PetStage.forLevel(2))
-        assertEquals(PetStage.COMPANION, PetStage.forLevel(3))
-        assertEquals(PetStage.GUARDIAN, PetStage.forLevel(6))
-        assertEquals(PetStage.LEGEND, PetStage.forLevel(10))
-        assertEquals(PetStage.LEGEND, PetStage.forLevel(PetLadder.MAX_LEVEL))
+        assertEquals(PetStage.AWAKENING, PetStage.forLevel(1))
+        assertEquals(PetStage.AWAKENING, PetStage.forLevel(4))
+        assertEquals(PetStage.DISCOVERY, PetStage.forLevel(5))
+        assertEquals(PetStage.LEARNING, PetStage.forLevel(10))
+        assertEquals(PetStage.COMPANION, PetStage.forLevel(20))
+        assertEquals(PetStage.EXPLORER, PetStage.forLevel(35))
+        assertEquals(PetStage.EVOLVED, PetStage.forLevel(50))
+        assertEquals(PetStage.EVOLVED, PetStage.forLevel(PetLadder.MAX_LEVEL))
 
         // Stage is a function of level, so increasing XP can never lower it.
-        var last = PetStage.HATCHLING
+        var last = PetStage.AWAKENING
         var xp = 0L
         while (xp < 40_000) {
             val stage = PetLadder.progressFor(xp).stage

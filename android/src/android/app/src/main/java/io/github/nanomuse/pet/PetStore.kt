@@ -3,6 +3,7 @@ package io.github.nanomuse.pet
 import android.content.Context
 import android.content.SharedPreferences
 import com.openminis.app.logging.AppLogger
+import io.github.nanomuse.identity.NanoMuseIdentity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -14,19 +15,22 @@ data class PetState(
     val wardrobe: PetWardrobe = PetWardrobe(),
     val streak: PetStreak = PetStreak(),
     val memory: PetMemory = PetMemory(),
+    val life: PetLife = PetLife(),
+    val daily: PetDaily = PetDaily(),
+    val curiosity: Int = 50,
+    val diary: PetDiaryEntry? = null,
+    val archives: List<PetArchive> = emptyList(),
 ) {
     val mood: PetMood get() = PetMood.of(needs, aloneHours = aloneHours)
     val outfit: PetOutfit get() = wardrobe.wornAt(progress.level)
 }
 
 /**
- * Pet state in the existing `minis_settings` preferences. No scheduler or second database is
- * required: elapsed time is reconciled on each visit or action, including a return while the
- * process remains alive. Partial hours are retained across visits and process restarts.
- *
- * All mutations use the same lock. A completed run's identifier, XP, needs and daily count are
- * written in one preferences edit; Android applies that edit atomically in memory and schedules
- * one disk write. A process killed before that asynchronous write can still lose the whole edit.
+ * Pet state stays in the existing `minis_settings` preferences. All changes share one lock;
+ * XP, the local-day allowance and the bounded deduplication ledger are written in one edit.
+ * A legacy Pet has no reliable feeding instant, so its 72-hour clock starts on first migration,
+ * never retroactively from an old visit. Normal edits use apply(); death and archival use commit()
+ * so an irreversible transition is not deliberately left waiting for a later disk write.
  */
 object PetStore {
     private const val PREFS = "minis_settings"
@@ -50,6 +54,18 @@ object PetStore {
     private const val KEY_DAY = "tama.pet.day"
     private const val KEY_TURNS_TODAY = "tama.pet.turns_today"
     private const val KEY_RECENT_TURNS = "tama.pet.recent_turns_v1"
+    private const val KEY_RECENT_EVENTS = "tama.pet.recent_events_v1"
+    private const val KEY_DAILY_DAY = "tama.pet.rewards_day_v1"
+    private const val KEY_DAILY_XP = "tama.pet.rewards_xp_v1"
+    private const val KEY_MISSION = "tama.pet.mission_v1."
+    private const val KEY_GENERATION = "tama.pet.generation_v1"
+    private const val KEY_BORN = "tama.pet.born_at_v1"
+    private const val KEY_LAST_FED = "tama.pet.last_fed_v1"
+    private const val KEY_DEATH = "tama.pet.death_at_v1"
+    private const val KEY_NAME = "tama.pet.name_v1"
+    private const val KEY_ARCHIVES = "tama.pet.archives_v1"
+    private const val KEY_CURIOSITY = "tama.pet.curiosity_v1"
+    private const val KEY_DIARY = "tama.pet.diary_v1"
     private const val TAG = "PetStore"
 
     private val _state = MutableStateFlow(PetState(PetLadder.progressFor(0), PetNeeds(), 0))
@@ -61,25 +77,29 @@ object PetStore {
     private var loaded = false
     private var lastSeenMillis = 0L
     private var decayRemainderMillis = 0L
-    // Set only while the Pet screen's lifecycle is resumed, not merely while it is composed.
     private var screenVisible = false
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    private fun identity(context: Context, fallback: String = "TAMA AI"): String =
+        runCatching { NanoMuseIdentity.name(context).trim().take(120) }
+            .getOrNull()?.takeIf { it.isNotEmpty() } ?: fallback
+
     /**
-     * Reconcile elapsed time and the visit on every call. An older UTC day is approximated using
-     * the last-seen timestamp only when both share that UTC date. It is not proof of the local
-     * date of every older event; first-day history is retained because its instant is unavailable.
+     * Reconciles life on every access, including while the screen is resumed. A death is dated
+     * from the last actual FEED, not the time the app was next opened. If grief also elapsed
+     * while the app was closed, archive the old Pet and start one new generation at observation
+     * time: an unattended phone must not manufacture an endless chain of unseen generations.
      */
     @Synchronized
     fun load(context: Context, nowMillis: Long = System.currentTimeMillis()) {
+        val now = nowMillis.coerceAtLeast(0L)
         val p = prefs(context)
         var migratedTurnDay: Long? = null
         if (!loaded) {
-            lastSeenMillis = p.getLong(KEY_LAST_SEEN, 0L)
-            decayRemainderMillis = p.getLong(KEY_DECAY_REMAINDER, 0L)
-                .coerceIn(0L, PetDecay.HOUR_MS - 1L)
+            lastSeenMillis = p.getLong(KEY_LAST_SEEN, 0L).coerceAtLeast(0L)
+            decayRemainderMillis = p.getLong(KEY_DECAY_REMAINDER, 0L).coerceIn(0L, PetDecay.HOUR_MS - 1L)
             var streakLast = p.getLong(KEY_STREAK_LAST, -1L).takeIf { it >= 0L }
             if (!p.getBoolean(KEY_LOCAL_DAYS, false) && lastSeenMillis > 0L) {
                 val oldUtcDay = PetStreak.legacyUtcDayOf(lastSeenMillis)
@@ -87,17 +107,20 @@ object PetStore {
                 if (streakLast == oldUtcDay) streakLast = localDay
                 if (p.getLong(KEY_DAY, -1L) == oldUtcDay) migratedTurnDay = localDay
             }
-            val progress = PetLadder.progressFor(p.getLong(KEY_XP, 0L))
             val lastCare = p.getString(KEY_LAST_CARE, null)?.let { saved ->
                 PetCareAction.entries.firstOrNull { it.name == saved }
             }
+            val day = p.getLong(KEY_DAILY_DAY, Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
+            val missionCounts = PetMission.entries.associateWith { mission ->
+                p.getInt(KEY_MISSION + mission.name, 0).coerceIn(0, mission.target)
+            }
             _state.value = PetState(
-                progress = progress,
+                progress = PetLadder.progressFor(p.getLong(KEY_XP, 0L)),
                 needs = PetNeeds(
-                    satiety = p.getInt(KEY_SATIETY, PetNeeds.HIGH),
-                    energy = p.getInt(KEY_ENERGY, PetNeeds.HIGH),
-                    mood = p.getInt(KEY_MOOD, PetNeeds.HIGH),
-                    bond = p.getInt(KEY_BOND, PetNeeds.HIGH),
+                    satiety = p.getInt(KEY_SATIETY, PetNeeds.HIGH).coerceIn(0, 100),
+                    energy = p.getInt(KEY_ENERGY, PetNeeds.HIGH).coerceIn(0, 100),
+                    mood = p.getInt(KEY_MOOD, PetNeeds.HIGH).coerceIn(0, 100),
+                    bond = p.getInt(KEY_BOND, PetNeeds.HIGH).coerceIn(0, 100),
                 ),
                 aloneHours = 0,
                 wardrobe = PetWardrobe.fromStorage(p.getString(KEY_OUTFIT, null)),
@@ -112,45 +135,82 @@ object PetStore {
                     turnsTogether = p.getInt(KEY_TURNS_TOGETHER, 0),
                     firstDay = p.getLong(KEY_FIRST_DAY, -1L).takeIf { it >= 0L },
                 ),
+                life = PetLife(
+                    generation = p.getLong(KEY_GENERATION, 1L).coerceAtLeast(1L),
+                    bornAt = p.getLong(KEY_BORN, now).coerceAtLeast(0L),
+                    lastFedAt = p.getLong(KEY_LAST_FED, now).coerceAtLeast(0L),
+                    deathAt = p.getLong(KEY_DEATH, -1L).takeIf { it >= 0L },
+                    name = p.getString(KEY_NAME, null)?.takeIf { it.isNotBlank() } ?: identity(context),
+                ),
+                daily = PetDaily(day, p.getInt(KEY_DAILY_XP, 0).coerceIn(0, PetRewards.DAILY_CAP), missionCounts),
+                curiosity = p.getInt(KEY_CURIOSITY, 50).coerceIn(0, 100),
+                diary = PetDiaryEntry.decode(p.getString(KEY_DIARY, null)),
+                archives = PetArchiveCodec.decode(p.getString(KEY_ARCHIVES, null)),
             )
-            _pet.value = progress
             loaded = true
         }
 
-        // A clock set backwards must not invent absence or move the anchor backwards. While the
-        // screen is resumed the person is with the Pet, so that interval is not absence either.
-        val elapsed = if (!screenVisible && lastSeenMillis > 0L && nowMillis >= lastSeenMillis) {
-            nowMillis - lastSeenMillis
-        } else {
-            0L
-        }
-        val fractional = decayRemainderMillis + elapsed % PetDecay.HOUR_MS
-        val hours = (elapsed / PetDecay.HOUR_MS + fractional / PetDecay.HOUR_MS)
-            .coerceAtMost(PetDecay.MAX_DECAY_HOURS)
-        decayRemainderMillis = fractional % PetDecay.HOUR_MS
-        lastSeenMillis = maxOf(lastSeenMillis, nowMillis)
-
-        val day = PetStreak.dayOf(nowMillis)
         val before = _state.value
-        val after = before.copy(
+        val named = if (before.life.grieving) before.life else before.life.copy(name = identity(context, before.life.name))
+        val life = PetLifeRules.reconcile(named, now)
+        val newDeath = before.life.deathAt == null && life.deathAt != null
+        // The need decay stops at death. A resumed screen is presence, not absence, but does not
+        // stop the separate feeding clock. Backwards clock changes never move lastSeen backwards.
+        val until = life.deathAt?.let { minOf(now, it) } ?: now
+        val elapsed = if (!screenVisible && lastSeenMillis > 0L && until >= lastSeenMillis) {
+            until - lastSeenMillis
+        } else 0L
+        val fractional = decayRemainderMillis + elapsed % PetDecay.HOUR_MS
+        val hours = (elapsed / PetDecay.HOUR_MS + fractional / PetDecay.HOUR_MS).coerceAtMost(PetDecay.MAX_DECAY_HOURS)
+        decayRemainderMillis = fractional % PetDecay.HOUR_MS
+        lastSeenMillis = maxOf(lastSeenMillis, now)
+        val day = PetStreak.dayOf(now)
+        val base = before.copy(
             needs = PetDecay.after(before.needs, hours * PetDecay.HOUR_MS),
-            aloneHours = elapsed / PetDecay.HOUR_MS,
-            streak = PetStreak.afterVisit(before.streak, day),
-            memory = before.memory.firstSeen(day),
+            aloneHours = if (before.life.grieving) before.aloneHours else elapsed / PetDecay.HOUR_MS,
+            life = life,
+            daily = PetRewards.onDay(before.daily, day),
         )
-        _state.value = after
-        editState(context, after).apply {
+
+        if (PetLifeRules.griefFinished(life, now)) {
+            val archive = PetArchive(life, base.progress, base.needs, base.wardrobe, base.streak, base.memory, base.curiosity, base.diary)
+            val generation = if (life.generation == Long.MAX_VALUE) Long.MAX_VALUE else life.generation + 1L
+            lastSeenMillis = now
+            decayRemainderMillis = 0L
+            val next = PetState(
+                progress = PetLadder.progressFor(0L),
+                needs = PetNeeds(),
+                aloneHours = 0L,
+                streak = PetStreak.afterVisit(PetStreak(), day),
+                memory = PetMemory().firstSeen(day),
+                life = PetLife(generation, now, now, null, identity(context, life.name)),
+                daily = base.daily,
+                archives = before.archives + archive,
+            )
+            val edit = editState(context, next)
+                .putString(KEY_ARCHIVES, PetArchiveCodec.append(p.getString(KEY_ARCHIVES, null), archive))
+                .putLong(KEY_DAY, day)
+                .putInt(KEY_TURNS_TODAY, 0)
+            if (!edit.commit()) AppLogger.warning(TAG, "could not persist the Pet archive")
+            publish(next)
+            return
+        }
+
+        val after = if (life.grieving) base else base.copy(
+            streak = PetStreak.afterVisit(base.streak, day),
+            memory = base.memory.firstSeen(day),
+        )
+        val edit = editState(context, after).apply {
             if (migratedTurnDay != null) putLong(KEY_DAY, migratedTurnDay)
-        }.apply()
+        }
+        if (newDeath) {
+            if (!edit.commit()) AppLogger.warning(TAG, "could not persist the Pet's mourning state")
+        } else edit.apply()
+        publish(after)
     }
 
     fun currentXp(): Long = _state.value.progress.xp
 
-    /**
-     * Reconcile at entry; on exit stamp the end of the visible visit before starting an absence.
-     * Repeated lifecycle notifications are harmless. The screen calls this on RESUME/PAUSE, so
-     * putting the phone in the background does not leave the Pet permanently "visible".
-     */
     @Synchronized
     fun setVisible(context: Context, visible: Boolean, nowMillis: Long = System.currentTimeMillis()) {
         if (screenVisible == visible) return
@@ -158,42 +218,47 @@ object PetStore {
         screenVisible = visible
     }
 
+    /** A run started in grief can never pay a later generation. */
+    @Synchronized
+    fun generationForRun(context: Context, nowMillis: Long = System.currentTimeMillis()): Long {
+        load(context, nowMillis)
+        return if (_state.value.life.grieving) -1L else _state.value.life.generation
+    }
+
     internal data class TurnResult(val state: PetState, val recorded: Boolean)
 
-    /** Record one tracker run. Repeats within the bounded ledger never pay a second time. */
     @Synchronized
     internal fun recordTurn(
         context: Context,
         turnId: String,
         outcome: PetTurnOutcome,
         nowMillis: Long,
+        expectedGeneration: Long? = null,
     ): TurnResult {
         load(context, nowMillis)
         val p = prefs(context)
         val recent = PetTurnLedger.decode(p.getString(KEY_RECENT_TURNS, null))
         if (!PetTurnLedger.shouldRecord(turnId, recent)) return TurnResult(_state.value, false)
-
         val before = _state.value
+        if (before.life.grieving || (expectedGeneration != null && expectedGeneration != before.life.generation)) {
+            p.edit().putString(KEY_RECENT_TURNS, PetTurnLedger.encodeWith(turnId, recent)).apply()
+            return TurnResult(before, false)
+        }
         val eligible = outcome == PetTurnOutcome.SUCCESS || outcome == PetTurnOutcome.FAILURE
-        val day = PetStreak.dayOf(nowMillis)
+        val day = PetStreak.dayOf(nowMillis.coerceAtLeast(0L))
         val storedDay = p.getLong(KEY_DAY, -1L)
         val storedCount = p.getInt(KEY_TURNS_TODAY, 0).coerceAtLeast(0)
-        // A backwards clock or westward zone change must not erase the current recorded day.
-        val count = if (day >= storedDay && day != storedDay) 0 else storedCount
+        val count = if (day > storedDay) 0 else storedCount
         val after = if (eligible) {
-            val xp = PetXpRules.apply(before.progress.xp, PetXpRules.forOutcome(outcome))
+            val reward = PetRewards.cycle(PetRewardState(before.progress.xp, before.daily), outcome)
             before.copy(
-                progress = PetLadder.progressFor(xp),
+                progress = PetLadder.progressFor(reward.xp),
+                daily = reward.daily,
                 needs = PetCare.afterTurn(before.needs, outcome, turnsToday = count),
                 aloneHours = 0,
                 memory = before.memory.afterTurn(),
             )
-        } else {
-            // A cancelled/unknown run is remembered for deduplication, but pays no XP, needs or
-            // finished-turn count and does not tire the Pet on a later successful run.
-            before
-        }
-
+        } else before
         editState(context, after).apply {
             putString(KEY_RECENT_TURNS, PetTurnLedger.encodeWith(turnId, recent))
             if (eligible) {
@@ -201,48 +266,158 @@ object PetStore {
                 putInt(KEY_TURNS_TODAY, if (count == Int.MAX_VALUE) count else count + 1)
             }
         }.apply()
-        _state.value = after
-        _pet.value = after.progress
+        publish(after)
         if (after.progress.level > before.progress.level) {
             AppLogger.info(TAG, "pet levelled up: ${before.progress.level} -> ${after.progress.level}")
         }
         return TurnResult(after, true)
     }
 
-    /** Feeding, resting and playing: the three direct care actions. */
+    /** Count a real external event without retaining its content or identifier. */
     @Synchronized
-    fun care(context: Context, need: PetCareAction, nowMillis: Long = System.currentTimeMillis()): PetState {
+    fun recordEvent(
+        context: Context,
+        event: PetEvent,
+        eventId: String,
+        nowMillis: Long = System.currentTimeMillis(),
+        expectedGeneration: Long? = null,
+    ): PetState {
+        load(context, nowMillis)
+        if (eventId.isBlank() || eventId.length > 1024) return _state.value
+        val p = prefs(context)
+        val key = PetRewards.eventKey(event.name, eventId)
+        val recent = PetTurnLedger.decode(p.getString(KEY_RECENT_EVENTS, null))
+        if (!PetTurnLedger.shouldRecord(key, recent)) return _state.value
+        val before = _state.value
+        val blocked = before.life.grieving || (expectedGeneration != null && expectedGeneration != before.life.generation)
+        val reward = if (blocked) PetRewardState(before.progress.xp, before.daily)
+            else PetRewards.event(PetRewardState(before.progress.xp, before.daily), event)
+        val after = before.copy(progress = PetLadder.progressFor(reward.xp), daily = reward.daily)
+        editState(context, after).putString(KEY_RECENT_EVENTS, PetTurnLedger.encodeWith(key, recent)).apply()
+        publish(after)
+        return after
+    }
+
+    /** Feeding is the only action that resets the life clock; it must happen before death. */
+    @Synchronized
+    fun care(
+        context: Context,
+        need: PetCareAction,
+        nowMillis: Long = System.currentTimeMillis(),
+        expectedGeneration: Long? = null,
+    ): PetState {
         load(context, nowMillis)
         val before = _state.value
+        if (before.life.grieving || (expectedGeneration != null && expectedGeneration != before.life.generation)) return before
         val needs = when (need) {
             PetCareAction.FEED -> PetCare.feed(before.needs)
             PetCareAction.REST -> PetCare.rest(before.needs)
             PetCareAction.PLAY -> PetCare.play(before.needs)
         }
-        val after = before.copy(needs = needs, aloneHours = 0, memory = before.memory.afterCare(need))
+        val reward = PetRewards.mission(PetRewardState(before.progress.xp, before.daily), PetMission.FIRST_INTERACTION)
+        val after = before.copy(
+            progress = PetLadder.progressFor(reward.xp),
+            daily = reward.daily,
+            needs = needs,
+            life = if (need == PetCareAction.FEED) before.life.copy(lastFedAt = maxOf(before.life.lastFedAt, nowMillis)) else before.life,
+            aloneHours = 0,
+            memory = before.memory.afterCare(need),
+        )
         editState(context, after).apply()
-        _state.value = after
+        publish(after)
         return after
     }
 
-    /** A locked choice remains saved and is worn when its level is reached. */
     @Synchronized
-    fun wear(context: Context, outfit: PetOutfit, nowMillis: Long = System.currentTimeMillis()): PetState {
+    fun wear(
+        context: Context,
+        outfit: PetOutfit,
+        nowMillis: Long = System.currentTimeMillis(),
+        expectedGeneration: Long? = null,
+    ): PetState {
         load(context, nowMillis)
-        val after = _state.value.copy(wardrobe = _state.value.wardrobe.choose(outfit))
+        val before = _state.value
+        if (before.life.grieving || (expectedGeneration != null && expectedGeneration != before.life.generation)) return before
+        val after = before.copy(wardrobe = before.wardrobe.choose(outfit))
         editState(context, after).apply()
-        _state.value = after
+        publish(after)
         return after
     }
 
-    /** A visit must reconcile time before it updates the last-seen stamp. */
+    data class ActivityOutcome(val state: PetState, val performed: Boolean)
+
     @Synchronized
-    fun touch(context: Context, nowMillis: Long = System.currentTimeMillis()) {
+    fun activity(
+        context: Context,
+        activity: PetActivity,
+        nowMillis: Long = System.currentTimeMillis(),
+        expectedGeneration: Long? = null,
+    ): ActivityOutcome {
         load(context, nowMillis)
+        val before = _state.value
+        if (before.life.grieving || (expectedGeneration != null && expectedGeneration != before.life.generation)) {
+            return ActivityOutcome(before, false)
+        }
+        val result = PetActivities.perform(activity, before.needs, before.curiosity) ?: return ActivityOutcome(before, false)
+        val reward = if (activity == PetActivity.EXPERIMENT) {
+            PetRewards.mission(PetRewardState(before.progress.xp, before.daily), PetMission.CREATE)
+        } else PetRewardState(before.progress.xp, before.daily)
+        val progress = PetLadder.progressFor(reward.xp)
+        val after = before.copy(
+            progress = progress,
+            daily = reward.daily,
+            needs = result.needs,
+            curiosity = result.curiosity,
+            diary = if (activity == PetActivity.JOURNAL) {
+                PetDiaryEntry(nowMillis, progress.level, result.needs.energy, result.needs.bond)
+            } else before.diary,
+        )
+        editState(context, after).apply()
+        publish(after)
+        return ActivityOutcome(after, true)
     }
 
-    private fun editState(context: Context, state: PetState): SharedPreferences.Editor =
-        prefs(context).edit()
+    data class MiniGameOutcome(val state: PetState, val recorded: Boolean)
+
+    @Synchronized
+    fun finishGame(
+        context: Context,
+        game: PetMiniGame,
+        colors: List<PetColor>,
+        number: Int?,
+        sessionId: String,
+        generation: Long,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): MiniGameOutcome {
+        load(context, nowMillis)
+        val before = _state.value
+        if (before.life.grieving || before.life.generation != generation || sessionId.isBlank() || sessionId.length > 1024 ||
+            !PetMiniGames.won(game, colors, number)) return MiniGameOutcome(before, false)
+        val p = prefs(context)
+        val key = PetRewards.eventKey("GAME", sessionId)
+        val recent = PetTurnLedger.decode(p.getString(KEY_RECENT_EVENTS, null))
+        if (!PetTurnLedger.shouldRecord(key, recent)) return MiniGameOutcome(before, false)
+        val reward = PetRewards.mission(PetRewardState(before.progress.xp, before.daily), PetMission.MINIGAME)
+        val after = before.copy(
+            progress = PetLadder.progressFor(reward.xp),
+            daily = reward.daily,
+            needs = before.needs.with(PetNeed.MOOD, before.needs.mood + 1),
+        )
+        editState(context, after).putString(KEY_RECENT_EVENTS, PetTurnLedger.encodeWith(key, recent)).apply()
+        publish(after)
+        return MiniGameOutcome(after, true)
+    }
+
+    @Synchronized
+    fun touch(context: Context, nowMillis: Long = System.currentTimeMillis()) = load(context, nowMillis)
+
+    private fun publish(state: PetState) {
+        _state.value = state
+        _pet.value = state.progress
+    }
+
+    private fun editState(context: Context, state: PetState): SharedPreferences.Editor {
+        val edit = prefs(context).edit()
             .putLong(KEY_XP, state.progress.xp)
             .putInt(KEY_LEVEL, state.progress.level)
             .putInt(KEY_SATIETY, state.needs.satiety)
@@ -260,31 +435,39 @@ object PetStore {
             .putString(KEY_LAST_CARE, state.memory.lastCare?.name)
             .putInt(KEY_TURNS_TOGETHER, state.memory.turnsTogether)
             .putBoolean(KEY_LOCAL_DAYS, true)
+            .putLong(KEY_GENERATION, state.life.generation)
+            .putLong(KEY_BORN, state.life.bornAt)
+            .putLong(KEY_LAST_FED, state.life.lastFedAt)
+            .putLong(KEY_DEATH, state.life.deathAt ?: -1L)
+            .putString(KEY_NAME, state.life.name)
+            .putLong(KEY_DAILY_DAY, state.daily.day ?: Long.MIN_VALUE)
+            .putInt(KEY_DAILY_XP, state.daily.earned)
+            .putInt(KEY_CURIOSITY, state.curiosity)
+            .putString(KEY_DIARY, state.diary?.encode())
+        for (mission in PetMission.entries) edit.putInt(KEY_MISSION + mission.name, state.daily.count(mission))
+        return edit
+    }
 
     /** Restore primitive for future integration; the app's backup/restore path does not call it. */
     @Synchronized
     fun restore(context: Context, xp: Long, needs: PetNeeds? = null) {
         val edit = prefs(context).edit().putLong(KEY_XP, xp.coerceAtLeast(0L))
         needs?.let { n ->
-            edit.putInt(KEY_SATIETY, n.satiety)
-                .putInt(KEY_ENERGY, n.energy)
-                .putInt(KEY_MOOD, n.mood)
-                .putInt(KEY_BOND, n.bond)
+            edit.putInt(KEY_SATIETY, n.satiety).putInt(KEY_ENERGY, n.energy)
+                .putInt(KEY_MOOD, n.mood).putInt(KEY_BOND, n.bond)
         }
         edit.apply()
         loaded = false
         load(context)
     }
 
-    /** Test seam: forget in-memory state without erasing preferences. */
     @Synchronized
     fun forgetForTests() {
         loaded = false
         screenVisible = false
         lastSeenMillis = 0L
         decayRemainderMillis = 0L
-        _state.value = PetState(PetLadder.progressFor(0), PetNeeds(), 0)
-        _pet.value = PetLadder.progressFor(0)
+        publish(PetState(PetLadder.progressFor(0), PetNeeds(), 0))
     }
 }
 

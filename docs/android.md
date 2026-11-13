@@ -31,6 +31,31 @@ the installed build next to the newest release (`nanomuse.cn/dl/index.json` firs
 repository's GitHub Releases second: *Latest 0.1.x, you have it* / *0.1.x is out, tap to
 update*) and offers the download.
 
+## Pet
+
+Open the agent profile, tap the pen on its face and choose the Pet. Feeding, resting and playing
+change its needs. The built-in character has six stages at levels 1, 5, 10, 20, 35 and 50. The
+existing XP-to-level formula stays the same. A custom picture, emoji or clip is kept and gets a
+stage silhouette; it is not replaced or sent to an image generator.
+
+A successful tracked work cycle grants 10 XP and a failed one grants 3. Nine daily missions give
+bonuses, but cycles and missions together cannot grant more than 100 XP per local calendar day.
+The last reward may be partial. A cycle can contain several queued prompts; conversation
+missions count saved person prompts, not scheduled or headless prompts. Mission progress comes
+from care, chat, successful work, goals, memory and file writes, skill imports, stages and games.
+The Pet's activities and two mini-games are manual and run locally without model calls.
+
+The feeding clock starts on first use or migration. Only an explicit feed resets it. After 72
+hours without feeding, the Pet dies and the screen shows a read-only memorial for 72 hours. When
+the app next reconciles the elapsed time, the old generation is archived and one new Pet starts at
+level 1 with zero XP. An unattended phone does not create a chain of unseen generations. Existing
+Pets keep their XP on migration; an old visit is not treated as evidence of feeding.
+
+Pet data and archives stay in this installation's local preferences. The app does not currently
+restore them through its backup flow or sync them to another device. Check the installed APK's
+signing certificate before updating a debug build, and do not uninstall or clear its data to work
+around a signing mismatch.
+
 ## Install
 
 1. Download `nanoMuse-<version>-arm64.apk` from the

@@ -61,7 +61,7 @@ object GoalFlow {
     """.trimMargin()
 
     /** Called after every completed turn; parses goal blocks in the assistant's text. */
-    fun afterTurn(context: Context, sessionId: String, assistantText: String?) {
+    fun afterTurn(context: Context, sessionId: String, assistantText: String?, petGeneration: Long) {
         if (assistantText.isNullOrEmpty()) return
         if (assistantText.contains("```$BLOCK_GOAL")) {
             goalBlock.find(assistantText)?.groupValues?.get(1)?.let { json ->
@@ -84,8 +84,10 @@ object GoalFlow {
                     status = status,
                     note = o.stringOrNull("note"),
                 )
+                val becameDone = !wasDone && store.get(goalId)?.status == GoalStatus.DONE
+                if (becameDone) io.github.nanomuse.pet.PetEvents.goal(context, goalId, petGeneration)
                 // A goal reached is a moment for the star ask; the Goals page shows it.
-                if (status == "done" && !wasDone) io.github.nanomuse.community.StarPrompt.offer(context, io.github.nanomuse.community.StarPrompt.Moment.GOAL_DONE)
+                if (becameDone) io.github.nanomuse.community.StarPrompt.offer(context, io.github.nanomuse.community.StarPrompt.Moment.GOAL_DONE)
             }
         }
     }
@@ -197,10 +199,13 @@ object GoalFlow {
 
     fun markDone(context: Context, goal: Goal, done: Boolean) {
         val store = GoalStore.get(context)
+        val wasDone = store.get(goal.id)?.status == GoalStatus.DONE
+        val petGeneration = if (done && !wasDone) io.github.nanomuse.pet.PetEvents.generation(context) else -1L
         goal.taskId?.let { ScheduledTaskManager(context).setEnabled(it, !done) }
         store.upsert(goal.copy(status = if (done) GoalStatus.DONE else GoalStatus.ACTIVE, progress = if (done) 100 else goal.progress))
+        if (done && !wasDone) io.github.nanomuse.pet.PetEvents.goal(context, goal.id, petGeneration)
         // A goal reached is a moment for the star ask (StarPrompt); the Goals page shows it.
-        if (done && goal.status != GoalStatus.DONE) io.github.nanomuse.community.StarPrompt.offer(context, io.github.nanomuse.community.StarPrompt.Moment.GOAL_DONE)
+        if (done && !wasDone) io.github.nanomuse.community.StarPrompt.offer(context, io.github.nanomuse.community.StarPrompt.Moment.GOAL_DONE)
     }
 
     /** Deletes the goal and its check; the goal's conversation stays (it is the user's history). */

@@ -39,9 +39,9 @@ class PetTurnRecorderTest {
 
     @Test fun successFailureAndCancellationHaveDistinctEffects() {
         val success = finish("a", PetTurnOutcome.SUCCESS)
-        assertEquals(10L, success.progress.xp)
+        assertEquals(25L, success.progress.xp)
         val failure = finish("b", PetTurnOutcome.FAILURE)
-        assertEquals(13L, failure.progress.xp)
+        assertEquals(28L, failure.progress.xp)
         assertEquals(2, failure.memory.turnsTogether)
         val cancelled = finish("c", PetTurnOutcome.CANCELLED)
         val unknown = finish("d", PetTurnOutcome.UNKNOWN)
@@ -53,15 +53,15 @@ class PetTurnRecorderTest {
     @Test fun duplicateIsRejectedAfterAnotherRunAndAfterRestart() {
         finish("a", PetTurnOutcome.SUCCESS, at)
         finish("b", PetTurnOutcome.FAILURE, at + 1)
-        assertEquals(13L, finish("a", PetTurnOutcome.SUCCESS, at + 2).progress.xp)
+        assertEquals(28L, finish("a", PetTurnOutcome.SUCCESS, at + 2).progress.xp)
         PetStore.forgetForTests()
-        assertEquals(13L, finish("a", PetTurnOutcome.SUCCESS, at + 3).progress.xp)
-        assertEquals(23L, finish("c", PetTurnOutcome.SUCCESS, at + 4).progress.xp)
+        assertEquals(28L, finish("a", PetTurnOutcome.SUCCESS, at + 3).progress.xp)
+        assertEquals(38L, finish("c", PetTurnOutcome.SUCCESS, at + 4).progress.xp)
     }
 
     @Test fun distinctRunsEndingInTheSameMillisecondBothCount() {
         finish("run-1", PetTurnOutcome.SUCCESS, at)
-        assertEquals(20L, finish("run-2", PetTurnOutcome.SUCCESS, at).progress.xp)
+        assertEquals(35L, finish("run-2", PetTurnOutcome.SUCCESS, at).progress.xp)
     }
 
     @Test fun invalidSessionOrRunIdIsNotPaid() {
@@ -106,7 +106,7 @@ class PetTurnRecorderTest {
             }
             start.countDown()
             jobs.forEach { it.get(5, TimeUnit.SECONDS) }
-            assertEquals(10L, PetStore.state.value.progress.xp)
+            assertEquals(25L, PetStore.state.value.progress.xp)
             assertEquals(1, PetStore.state.value.memory.turnsTogether)
         } finally {
             pool.shutdownNow()
