@@ -1340,6 +1340,7 @@
     <string name="nm_pet_activity_cost">%1$s · %2$d tenaga</string>
     <string name="nm_pet_activity_done">Aktiviti selesai.</string>
     <string name="nm_pet_low_energy">Tenaga tidak mencukupi.</string>
+    <string name="nm_pet_activity_unavailable">Aktiviti ini tidak lagi tersedia untuk Pet ini.</string>
     <string name="nm_pet_curiosity">Rasa ingin tahu: %1$d</string>
     <string name="nm_pet_diary_entry">Jurnal terakhir: tahap %1$d, tenaga %2$d, ikatan %3$d.</string>
     <string name="nm_pet_games">Permainan mini</string>

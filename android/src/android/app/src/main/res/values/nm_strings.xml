@@ -1324,6 +1324,7 @@
     <string name="nm_pet_activity_cost">%1$s · %2$d energy</string>
     <string name="nm_pet_activity_done">Activity completed.</string>
     <string name="nm_pet_low_energy">Not enough energy.</string>
+    <string name="nm_pet_activity_unavailable">This activity is no longer available for this Pet.</string>
     <string name="nm_pet_curiosity">Curiosity: %1$d</string>
     <string name="nm_pet_diary_entry">Last journal: level %1$d, energy %2$d, bond %3$d.</string>
     <string name="nm_pet_games">Mini-games</string>

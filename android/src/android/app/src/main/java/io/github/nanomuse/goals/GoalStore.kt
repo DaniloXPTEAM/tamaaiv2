@@ -11,8 +11,7 @@ import java.io.File
  * `minis-global/nanomuse/goals.json` — every goal, newest first. Small file, read once, written
  * whole on every change; the flow is what the Goals tab and the goal cards observe.
  */
-class GoalStore private constructor(context: Context) {
-    private val file = File(context.filesDir, "minis-global/nanomuse/goals.json")
+class GoalStore internal constructor(private val file: File) {
     private val _goals = MutableStateFlow(load())
     val goals: StateFlow<List<Goal>> = _goals
 
@@ -28,29 +27,35 @@ class GoalStore private constructor(context: Context) {
 
     fun forSession(sessionId: String): Goal? = _goals.value.firstOrNull { it.sessionId == sessionId }
 
+    /** Publish a change only after its file replacement succeeds. */
     @Synchronized
-    fun upsert(goal: Goal) {
+    fun upsert(goal: Goal): Boolean {
         val stamped = goal.copy(updatedAt = System.currentTimeMillis())
         val rest = _goals.value.filterNot { it.id == goal.id }
-        _goals.value = (listOf(stamped) + rest).sortedByDescending { it.createdAt }
-        save()
+        val next = (listOf(stamped) + rest).sortedByDescending { it.createdAt }
+        if (!save(next)) return false
+        _goals.value = next
+        return true
     }
 
     @Synchronized
-    fun delete(id: String) {
-        _goals.value = _goals.value.filterNot { it.id == id }
-        save()
+    fun delete(id: String): Boolean {
+        val next = _goals.value.filterNot { it.id == id }
+        if (!save(next)) return false
+        _goals.value = next
+        return true
     }
 
     /** A `nanomuse-goal-update` block from the goal's session. */
-    fun applyUpdate(goalId: String, progress: Int?, status: String?, note: String?) {
-        val goal = get(goalId) ?: return
+    @Synchronized
+    fun applyUpdate(goalId: String, progress: Int?, status: String?, note: String?): Boolean {
+        val goal = get(goalId) ?: return false
         val newStatus = when (status?.lowercase()) {
             "done", "completed" -> GoalStatus.DONE
             "paused" -> GoalStatus.PAUSED
             else -> if (goal.status == GoalStatus.DONE) GoalStatus.ACTIVE else goal.status
         }
-        upsert(
+        return upsert(
             goal.copy(
                 progress = (progress ?: goal.progress).coerceIn(0, 100),
                 status = newStatus,
@@ -70,17 +75,15 @@ class GoalStore private constructor(context: Context) {
             .sortedByDescending { it.createdAt }
     }
 
-    private fun save() {
-        runCatching {
-            file.parentFile?.mkdirs()
-            val tmp = File(file.parentFile, file.name + ".tmp")
-            tmp.writeText(JSONArray().apply { _goals.value.forEach { put(it.toJson()) } }.toString(2))
-            if (!tmp.renameTo(file)) {
-                file.writeText(tmp.readText())
-                tmp.delete()
-            }
-        }.onFailure { AppLogger.warning(TAG, "goals.json write failed: ${it.message}") }
-    }
+    private fun save(goals: List<Goal>): Boolean = runCatching {
+        val parent = file.parentFile
+        if (parent != null && !parent.isDirectory && !parent.mkdirs() && !parent.isDirectory) error("goal directory is unavailable")
+        val tmp = File(parent, file.name + ".tmp")
+        tmp.writeText(JSONArray().apply { goals.forEach { put(it.toJson()) } }.toString(2))
+        // Both files are in the same directory. Never truncate the previous goals when a
+        // replacement fails; the UI and the Pet can retry the change on the next attempt.
+        if (!tmp.renameTo(file)) error("could not replace goals.json")
+    }.onFailure { AppLogger.warning(TAG, "goals.json write failed: ${it.message}") }.isSuccess
 
     companion object {
         private const val TAG = "Goals"
@@ -89,7 +92,8 @@ class GoalStore private constructor(context: Context) {
 
         fun get(context: Context): GoalStore =
             instance ?: synchronized(this) {
-                instance ?: GoalStore(context.applicationContext).also { instance = it }
+                instance ?: GoalStore(File(context.applicationContext.filesDir, "minis-global/nanomuse/goals.json"))
+                    .also { instance = it }
             }
     }
 }

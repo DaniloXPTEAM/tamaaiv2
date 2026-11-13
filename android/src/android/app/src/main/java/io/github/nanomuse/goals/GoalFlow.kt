@@ -78,13 +78,13 @@ object GoalFlow {
                 val goalId = o.optString("goal_id").ifEmpty { store.forSession(sessionId)?.id } ?: return@forEach
                 val status = o.stringOrNull("status")
                 val wasDone = store.all().firstOrNull { it.id == goalId }?.status == GoalStatus.DONE
-                store.applyUpdate(
+                val saved = store.applyUpdate(
                     goalId = goalId,
                     progress = if (o.has("progress")) o.optInt("progress") else null,
                     status = status,
                     note = o.stringOrNull("note"),
                 )
-                val becameDone = !wasDone && store.get(goalId)?.status == GoalStatus.DONE
+                val becameDone = saved && !wasDone && store.get(goalId)?.status == GoalStatus.DONE
                 if (becameDone) io.github.nanomuse.pet.PetEvents.goal(context, goalId, petGeneration)
                 // A goal reached is a moment for the star ask; the Goals page shows it.
                 if (becameDone) io.github.nanomuse.community.StarPrompt.offer(context, io.github.nanomuse.community.StarPrompt.Moment.GOAL_DONE)
@@ -120,7 +120,7 @@ object GoalFlow {
             steps = steps.take(6),
         )
         val store = GoalStore.get(context)
-        store.upsert(goal)
+        if (!store.upsert(goal)) return
         // Session + check task are created off the main thread; the card in the chat already shows.
         setupScope.launch { setUpGoal(context, goal, o.optString("first_check").trim()) }
     }
@@ -149,7 +149,11 @@ object GoalFlow {
                     intervalMinutes = if (goal.checkEveryHours > 0) goal.checkEveryHours * 60 else null,
                 ),
             )
-            GoalStore.get(context).upsert(withSession.copy(taskId = task.id))
+            if (!GoalStore.get(context).upsert(withSession.copy(taskId = task.id))) {
+                ScheduledTaskManager(app).delete(task.id)
+                AppLogger.warning(TAG, "goal ${goal.id}: could not save task")
+                return
+            }
             AppLogger.info(TAG, "goal ${goal.id} '${goal.title}': session=$sessionId task=${task.id}")
         } catch (e: Exception) {
             AppLogger.warning(TAG, "goal setup failed: ${e.message}")
@@ -193,25 +197,25 @@ object GoalFlow {
 
     fun setPaused(context: Context, goal: Goal, paused: Boolean) {
         val store = GoalStore.get(context)
+        if (!store.upsert(goal.copy(status = if (paused) GoalStatus.PAUSED else GoalStatus.ACTIVE))) return
         goal.taskId?.let { ScheduledTaskManager(context).setEnabled(it, !paused) }
-        store.upsert(goal.copy(status = if (paused) GoalStatus.PAUSED else GoalStatus.ACTIVE))
     }
 
     fun markDone(context: Context, goal: Goal, done: Boolean) {
         val store = GoalStore.get(context)
         val wasDone = store.get(goal.id)?.status == GoalStatus.DONE
         val petGeneration = if (done && !wasDone) io.github.nanomuse.pet.PetEvents.generation(context) else -1L
-        goal.taskId?.let { ScheduledTaskManager(context).setEnabled(it, !done) }
-        store.upsert(goal.copy(status = if (done) GoalStatus.DONE else GoalStatus.ACTIVE, progress = if (done) 100 else goal.progress))
+        if (!store.upsert(goal.copy(status = if (done) GoalStatus.DONE else GoalStatus.ACTIVE, progress = if (done) 100 else goal.progress))) return
         if (done && !wasDone) io.github.nanomuse.pet.PetEvents.goal(context, goal.id, petGeneration)
+        goal.taskId?.let { ScheduledTaskManager(context).setEnabled(it, !done) }
         // A goal reached is a moment for the star ask (StarPrompt); the Goals page shows it.
         if (done && !wasDone) io.github.nanomuse.community.StarPrompt.offer(context, io.github.nanomuse.community.StarPrompt.Moment.GOAL_DONE)
     }
 
     /** Deletes the goal and its check; the goal's conversation stays (it is the user's history). */
     fun delete(context: Context, goal: Goal) {
+        if (!GoalStore.get(context).delete(goal.id)) return
         goal.taskId?.let { ScheduledTaskManager(context).delete(it) }
-        GoalStore.get(context).delete(goal.id)
     }
 
     /** Runs the goal's check right now, in its session. */

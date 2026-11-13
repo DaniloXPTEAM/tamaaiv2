@@ -2,6 +2,11 @@ package io.github.nanomuse.sync
 
 import com.openminis.app.ui.chat.AssistantBlock
 import io.github.nanomuse.hub.Device
+import io.github.nanomuse.pet.PetEvents
+import io.github.nanomuse.pet.PetLifeRules
+import io.github.nanomuse.pet.PetPrefsContext
+import io.github.nanomuse.pet.PetStore
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -16,6 +21,8 @@ class RemoteChatBridgeTest {
         override val busy: Boolean get() = running
         var draft = "@Desk hello"
         var userCount = 0
+        var failUserSave = false
+        var userSaveGate: CompletableDeferred<Unit>? = null
         var saved = 0
         var failSave = false
         var updates = 0
@@ -30,7 +37,12 @@ class RemoteChatBridgeTest {
         override fun clearDraft() { draft = "" }
         override fun restoreDraft(text: String) { draft = text }
         override suspend fun session() = "session"
-        override suspend fun user(sessionId: String, text: String) { userCount++ }
+        override suspend fun user(sessionId: String, text: String): String {
+            userSaveGate?.await()
+            check(!failUserSave) { "user row unavailable" }
+            userCount++
+            return "user-$userCount"
+        }
         override fun started(sessionId: String) { tracked++ }
         override fun ended(sessionId: String, completed: Boolean, failed: Boolean) {
             tracked--; completions += completed; failures += failed
@@ -83,6 +95,53 @@ class RemoteChatBridgeTest {
         val updates = host.updates
         task.lateUpdate!!()
         assertEquals("a completed reply must not be resurrected", updates, host.updates)
+    }
+
+    @Test fun `saved user callback names the persisted row and cannot break the remote task`() = runTest {
+        val host = Host()
+        val bridge = RemoteChatBridge(this, host) { _, _, _ -> Task() }
+        val savedRows = mutableListOf<String>()
+        bridge.send("@Desk hello", listOf(device), false, false) { id ->
+            savedRows += id
+            error("a reward failure must not stop the task")
+        }
+        runCurrent()
+        assertEquals(listOf("user-1"), savedRows)
+        assertEquals(1, host.saved)
+        assertEquals(listOf(true), host.completions)
+
+        host.failUserSave = true
+        bridge.send("@Desk again", listOf(device), false, false) { savedRows += it }
+        runCurrent()
+        assertEquals(listOf("user-1"), savedRows)
+        assertEquals(1, host.saved)
+        assertFalse(host.busy)
+    }
+
+    @Test fun `delayed remote user row cannot credit a successor Pet`() = runTest {
+        val context = PetPrefsContext()
+        PetStore.forgetForTests()
+        try {
+            val now = System.currentTimeMillis()
+            PetStore.load(context, now)
+            val submittedGeneration = PetEvents.generation(context)
+            val gate = CompletableDeferred<Unit>()
+            val host = Host().apply { userSaveGate = gate }
+            val bridge = RemoteChatBridge(this, host) { _, _, _ -> Task() }
+            bridge.send("@Desk hello", listOf(device), false, false) { id ->
+                PetEvents.chat(context, id, submittedGeneration)
+            }
+            assertEquals(0, host.userCount)
+            PetStore.load(context, now + PetLifeRules.DEATH_AFTER_MS + PetLifeRules.GRIEF_MS)
+            assertEquals(2L, PetStore.state.value.life.generation)
+            gate.complete(Unit)
+            runCurrent()
+            assertEquals(1, host.userCount)
+            assertEquals(0L, PetStore.state.value.progress.xp)
+            assertEquals(1, host.saved)
+        } finally {
+            PetStore.forgetForTests()
+        }
     }
 
     @Test fun `offline attachments and busy refusals keep the draft and never call the transport`() = runTest {

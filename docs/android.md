@@ -41,8 +41,11 @@ stage silhouette; it is not replaced or sent to an image generator.
 A successful tracked work cycle grants 10 XP and a failed one grants 3. Nine daily missions give
 bonuses, but cycles and missions together cannot grant more than 100 XP per local calendar day.
 The last reward may be partial. A cycle can contain several queued prompts; conversation
-missions count saved person prompts, not scheduled or headless prompts. Mission progress comes
-from care, chat, successful work, goals, memory and file writes, skill imports, stages and games.
+missions count saved person prompts, including device-directed chat and avatar choices, not
+scheduled or headless prompts. A queued or compacted prompt keeps the Pet that was present when
+it was submitted. A goal counts after its updated goal file is saved. A new skill counts after its
+metadata and `SKILL.md` are written; other files may still be downloading or may be incomplete.
+Mission progress also comes from care, successful work, memory and file writes, stages and games.
 The Pet's activities and two mini-games are manual and run locally without model calls.
 
 The feeding clock starts on first use or migration. Only an explicit feed resets it. After 72

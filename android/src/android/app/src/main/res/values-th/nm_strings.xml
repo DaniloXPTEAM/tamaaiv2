@@ -1340,6 +1340,7 @@
     <string name="nm_pet_activity_cost">%1$s · พลังงาน %2$d</string>
     <string name="nm_pet_activity_done">ทำกิจกรรมแล้ว</string>
     <string name="nm_pet_low_energy">พลังงานไม่เพียงพอ</string>
+    <string name="nm_pet_activity_unavailable">กิจกรรมนี้ไม่พร้อมใช้งานสำหรับสัตว์เลี้ยงตัวนี้แล้ว</string>
     <string name="nm_pet_curiosity">ความอยากรู้: %1$d</string>
     <string name="nm_pet_diary_entry">ไดอารีล่าสุด: ระดับ %1$d พลังงาน %2$d ความผูกพัน %3$d</string>
     <string name="nm_pet_games">มินิเกม</string>

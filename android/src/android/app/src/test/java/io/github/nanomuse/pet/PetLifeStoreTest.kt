@@ -82,7 +82,9 @@ class PetLifeStoreTest {
         val now = at + 72 * hour
         assertEquals(before, PetStore.care(context, PetCareAction.FEED, now))
         assertEquals(before, PetStore.wear(context, PetOutfit.byId("moth"), now))
-        assertFalse(PetStore.activity(context, PetActivity.EXPERIMENT, now).performed)
+        val activity = PetStore.activity(context, PetActivity.EXPERIMENT, now)
+        assertFalse(activity.performed)
+        assertEquals(PetStore.ActivityStatus.UNAVAILABLE, activity.status)
         assertEquals(before, PetStore.recordEvent(context, PetEvent.GOAL, "goal", now))
         assertFalse(PetStore.finishGame(context, PetMiniGame.STEP_PATTERN, emptyList(), 8, "game", generation, now).recorded)
         assertEquals(before, PetTurnRecorder.onTurnFinished(context, "session", "late", PetTurnOutcome.SUCCESS, now))
@@ -153,6 +155,7 @@ class PetLifeStoreTest {
         assertEquals(afterFeed, PetStore.wear(context, PetOutfit.byId("moth"), atNext, oldGeneration))
         val activity = PetStore.activity(context, PetActivity.EXPERIMENT, atNext, oldGeneration)
         assertFalse(activity.performed)
+        assertEquals(PetStore.ActivityStatus.UNAVAILABLE, activity.status)
         assertEquals(afterFeed, activity.state)
     }
 
@@ -179,6 +182,7 @@ class PetLifeStoreTest {
         PetStore.load(context, at)
         val explore = PetStore.activity(context, PetActivity.EXPLORE, at)
         assertTrue(explore.performed)
+        assertEquals(PetStore.ActivityStatus.PERFORMED, explore.status)
         assertEquals(75, explore.state.needs.energy)
         assertEquals(52, explore.state.curiosity)
         val experiment = PetStore.activity(context, PetActivity.EXPERIMENT, at)
@@ -203,6 +207,7 @@ class PetLifeStoreTest {
         val before = PetStore.state.value
         val result = PetStore.activity(context, PetActivity.EXPERIMENT, at)
         assertFalse(result.performed)
+        assertEquals(PetStore.ActivityStatus.LOW_ENERGY, result.status)
         assertEquals(before, result.state)
         assertEquals(0L, result.state.progress.xp)
         assertNull(result.state.diary)

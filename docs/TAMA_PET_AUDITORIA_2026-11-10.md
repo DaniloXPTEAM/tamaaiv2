@@ -18,10 +18,12 @@ Os ciclos e as nove missões dividem o teto de 100 XP por dia local. Uma recompe
 parcial. Conversa considera mensagens da pessoa salvas, inclusive as recebidas em fila, mas não
 prompts automáticos. Metas, habilidades e operações de arquivo ou memória são projetadas sem
 armazenar texto ou caminhos. Eventos antigos e botões de uma tela anterior são vinculados à sua
-geração. Sonhar, descobrir, experimentar, diário e os dois jogos funcionam localmente e não
-iniciam chamadas de modelo. O ledger continua limitado a 256 identificadores por tipo de registro.
+geração. A missão de meta exige a gravação do arquivo de metas. Uma habilidade nova conta quando
+metadados e `SKILL.md` foram gravados; arquivos adicionais podem estar pendentes ou incompletos.
+Sonhar, descobrir, experimentar, diário e os dois jogos funcionam localmente e não iniciam chamadas
+de modelo. O ledger continua limitado a 256 identificadores por tipo de registro.
 
-O commit `ddbe89f` passou no [run Android 43514279831](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43514279831): APK arm64, testes unitários Gradle, compilação do `androidTest`, instalação e inicialização do APK x86 no emulador e sete testes instrumentados de persistência e tracker. Os testes JVM locais usam stubs Android e preferências em memória. Essa rodada não exercitou a tela do Pet nem provou persistência após morte real de processo ou atualização sobre o telefone. A suíte de tela adicionada depois precisa ser executada separadamente. Nenhuma reinstalação ou limpeza de dados foi autorizada.
+O commit `ddbe89f` passou no [run Android 43514279831](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43514279831): APK arm64, testes unitários Gradle, compilação do `androidTest`, instalação e inicialização do APK x86 no emulador e sete testes instrumentados de persistência e tracker. Os testes JVM locais usam stubs Android e preferências em memória. Essa rodada não exercitou a tela do Pet nem provou persistência após morte real de processo ou atualização sobre o telefone. As duas rodadas seguintes falharam ao compilar a suíte de tela por um import Compose inválido, corrigido depois; essa suíte ainda precisa passar no emulador. Nenhuma reinstalação ou limpeza de dados foi autorizada.
 
 O APK arm64 dessa rodada é o artefato `14080711663`, SHA-256
 `f922da9448b101e136dafcf9d273bdb1f43125e15c052065a7fe3b804e939b0a`. Seu certificado SHA-256

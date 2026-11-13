@@ -344,7 +344,10 @@ object PetStore {
         return after
     }
 
-    data class ActivityOutcome(val state: PetState, val performed: Boolean)
+    enum class ActivityStatus { PERFORMED, LOW_ENERGY, UNAVAILABLE }
+    data class ActivityOutcome(val state: PetState, val status: ActivityStatus) {
+        val performed: Boolean get() = status == ActivityStatus.PERFORMED
+    }
 
     @Synchronized
     fun activity(
@@ -356,9 +359,10 @@ object PetStore {
         load(context, nowMillis)
         val before = _state.value
         if (before.life.grieving || (expectedGeneration != null && expectedGeneration != before.life.generation)) {
-            return ActivityOutcome(before, false)
+            return ActivityOutcome(before, ActivityStatus.UNAVAILABLE)
         }
-        val result = PetActivities.perform(activity, before.needs, before.curiosity) ?: return ActivityOutcome(before, false)
+        val result = PetActivities.perform(activity, before.needs, before.curiosity)
+            ?: return ActivityOutcome(before, ActivityStatus.LOW_ENERGY)
         val reward = if (activity == PetActivity.EXPERIMENT) {
             PetRewards.mission(PetRewardState(before.progress.xp, before.daily), PetMission.CREATE)
         } else PetRewardState(before.progress.xp, before.daily)
@@ -374,7 +378,7 @@ object PetStore {
         )
         editState(context, after).apply()
         publish(after)
-        return ActivityOutcome(after, true)
+        return ActivityOutcome(after, ActivityStatus.PERFORMED)
     }
 
     data class MiniGameOutcome(val state: PetState, val recorded: Boolean)

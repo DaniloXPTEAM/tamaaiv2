@@ -3314,7 +3314,7 @@ class ChatViewModel(
      * up. Mirrors iOS `pendingSendText` / `pendingSendAttachments`.
      */
     private var pendingSendText: String? = null
-    private var pendingSendPetPersonMessage = true // nanoMuse: a compacted routine is still a routine.
+    private var pendingSendPetGeneration: Long? = null // nanoMuse: keep the submitting Pet through compaction.
 
     private val _showCompactBeforeSendPrompt = MutableStateFlow(false)
     val showCompactBeforeSendPrompt: StateFlow<Boolean> = _showCompactBeforeSendPrompt.asStateFlow()
@@ -3329,11 +3329,11 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         val text = pendingSendText ?: return
         pendingSendText = null
-        val petPersonMessage = pendingSendPetPersonMessage // nanoMuse: retain origin across compaction.
-        pendingSendPetPersonMessage = true // nanoMuse
+        val petGeneration = pendingSendPetGeneration // nanoMuse: retain the original Pet across compaction.
+        pendingSendPetGeneration = null // nanoMuse
         // nanoMuse: the outgoing-request guard performs one bounded attempt after the new
         // message is saved. A pre-send failure must not start the same attempt again (#719).
-        sendMessage(text, skipContextCheck = true, petPersonMessage = petPersonMessage)
+        sendMessage(text, skipContextCheck = true, petGeneration = petGeneration)
     }
 
     /** Dialog action: send without compacting. */
@@ -3341,9 +3341,9 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         val text = pendingSendText ?: return
         pendingSendText = null
-        val petPersonMessage = pendingSendPetPersonMessage // nanoMuse
-        pendingSendPetPersonMessage = true // nanoMuse
-        sendMessage(text, skipContextCheck = true, petPersonMessage = petPersonMessage)
+        val petGeneration = pendingSendPetGeneration // nanoMuse
+        pendingSendPetGeneration = null // nanoMuse
+        sendMessage(text, skipContextCheck = true, petGeneration = petGeneration)
     }
 
     /** Dialog dismissed — restore the text to the composer so it isn't lost. */
@@ -3351,7 +3351,7 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         pendingSendText?.let { _inputText.value = it }
         pendingSendText = null
-        pendingSendPetPersonMessage = true // nanoMuse
+        pendingSendPetGeneration = null // nanoMuse
     }
 
     // nanoMuse: local trims precede summaries, and an early failure can still leave room.
@@ -5955,7 +5955,10 @@ class ChatViewModel(
      * current agent loop finishes, drainQueuedPrompts() consumes the queue.
      * Mirrors iOS AIChatViewModel.enqueuePrompt().
      */
-    fun enqueuePrompt(text: String, petPersonMessage: Boolean = true) { // nanoMuse: keep routine provenance with a queued prompt.
+    // nanoMuse: a queued line keeps its original Pet even when sent again after a remote task.
+    fun enqueuePrompt(text: String) = nmEnqueuePrompt(text, io.github.nanomuse.pet.PetEvents.generation(context))
+
+    private fun nmEnqueuePrompt(text: String, petGeneration: Long?) {
         val trimmed = text.trim()
         val pendingAttachments = _attachments.value
         if ((trimmed.isBlank() && pendingAttachments.isEmpty()) || !_isStreaming.value) return
@@ -5964,7 +5967,7 @@ class ChatViewModel(
             id = "queued_${System.currentTimeMillis()}_${(Math.random() * 1_000_000).toInt()}",
             text = trimmed,
             attachments = pendingAttachments,
-            petGeneration = if (petPersonMessage) io.github.nanomuse.pet.PetEvents.generation(context) else null, // nanoMuse: bind at enqueue.
+            petGeneration = petGeneration, // nanoMuse: null means this is an automated prompt.
         )
         _promptQueue.value = _promptQueue.value + prompt
 
@@ -6348,17 +6351,19 @@ class ChatViewModel(
     internal fun nmCancelHeadless(turnId: String): Boolean =
         io.github.nanomuse.hub.HeadlessTurn.stop(nmHeadlessReceipt, turnId) { cancelStream() }
 
-    fun sendMessage(text: String) = nmSendMessage(text, petPersonMessage = true) // nanoMuse: normal person-origin send.
+    fun sendMessage(text: String) = nmSendMessage(text, io.github.nanomuse.pet.PetEvents.generation(context)) // nanoMuse: capture at submission.
 
-    internal fun nmSendAutomatedMessage(text: String) = nmSendMessage(text, petPersonMessage = false) // nanoMuse: headless work is not human chat.
+    internal fun nmSendAutomatedMessage(text: String) = nmSendMessage(text, null) // nanoMuse: routines and RPCs are not typed on this phone.
 
-    private fun nmSendMessage(text: String, petPersonMessage: Boolean) { // nanoMuse: preserve origin when a prompt is queued.
+    private fun nmSendMessage(text: String, petGeneration: Long?) { // nanoMuse: null is an automated prompt.
         // nanoMuse: explicit device work is routed before any local model or avatar action.
         if (nmRemoteBridge.send(text, io.github.nanomuse.hub.Hub.others(context),
-                _attachments.value.isNotEmpty() || _pastedTexts.value.isNotEmpty(), _isCompacting.value)) return
-        if (_isStreaming.value) { enqueuePrompt(text, petPersonMessage); return }
-        if (nmInterceptAvatar(text)) { nmCountableTurn = false; return }
-        sendMessage(text, skipContextCheck = false, petPersonMessage = petPersonMessage) // nanoMuse: carry origin across the send guard.
+                _attachments.value.isNotEmpty() || _pastedTexts.value.isNotEmpty(), _isCompacting.value,
+                onUserSaved = { id -> petGeneration?.let { io.github.nanomuse.pet.PetEvents.chat(context, id, it) } })) return
+        if (_isStreaming.value) { nmEnqueuePrompt(text, petGeneration); return }
+        // nanoMuse: an automated prompt must not trigger a paid avatar request on its own.
+        if (petGeneration != null && nmInterceptAvatar(text, petGeneration)) { nmCountableTurn = false; return }
+        sendMessage(text, skipContextCheck = false, petGeneration = petGeneration) // nanoMuse: carry the submitting Pet through the guard.
     }
 
     // nanoMuse: only the adapter touches upstream state; the lifecycle lives in RemoteChatBridge.
@@ -6422,7 +6427,7 @@ class ChatViewModel(
         val draft = _inputText.value
         val draftAttachments = _attachments.value
         _attachments.value = next.attachments
-        sendMessage(next.text)
+        nmSendMessage(next.text, next.petGeneration) // nanoMuse: retain queued person/routine identity and generation.
         if (_inputText.value.isEmpty() || _inputText.value == draft) {
             _inputText.value = draft
             _attachments.value = draftAttachments
@@ -6445,7 +6450,7 @@ class ChatViewModel(
     private class NmPendingFace(val sid: String, val desc: String, val reference: android.graphics.Bitmap?, val blocked: Boolean)
     private var nmPendingFace: NmPendingFace? = null
 
-    private fun nmInterceptAvatar(text: String): Boolean {
+    private fun nmInterceptAvatar(text: String, petGeneration: Long?): Boolean { // nanoMuse: saved requests retain their submitting Pet.
         val flow = io.github.nanomuse.avatar.AvatarFlow
         val sid = realSessionId.ifEmpty { sessionId }
         // A pick or "again" while the options are up in this chat.
@@ -6454,7 +6459,7 @@ class ChatViewModel(
                 is io.github.nanomuse.avatar.AvatarFlow.Choice.Index -> {
                     if (io.github.nanomuse.avatar.AvatarStudio.slots.value.getOrNull(c.index) is io.github.nanomuse.avatar.AvatarStudio.Slot.Ready) {
                         viewModelScope.launch {
-                            nmAppendUserLine(sid, text)
+                            nmAppendUserLine(sid, text, petGeneration)
                             nmChooseAvatarInternal(sid, c.index)
                         }
                         return true
@@ -6463,7 +6468,7 @@ class ChatViewModel(
                 io.github.nanomuse.avatar.AvatarFlow.Choice.Regenerate -> {
                     val desc = (flow.stage.value as? io.github.nanomuse.avatar.AvatarFlow.Stage.Choosing)?.description.orEmpty()
                     viewModelScope.launch {
-                        nmAppendUserLine(sid, text)
+                        nmAppendUserLine(sid, text, petGeneration)
                         if (flow.regenerate(context)) {
                             nmAppendAssistantLine(sid, context.getString(R.string.nm_avatar_drawing_again))
                             nmAnnounceWhenDrawn(sid, desc)
@@ -6494,7 +6499,7 @@ class ChatViewModel(
             // A draft main chat gets its session row first, so the request and the
             // reply persist like any other turn.
             val realSid = ensureSession()
-            nmAppendUserLine(realSid, text)
+            nmAppendUserLine(realSid, text, petGeneration)
             val reference = withContext(Dispatchers.IO) { flow.loadReference(context, referenceUri) }
             // Pictures paid from the Cloud allowance are priced first: the card says what
             // this face costs and what is left today, and nothing is drawn until the yes.
@@ -6671,8 +6676,9 @@ class ChatViewModel(
         val sid = realSessionId.ifEmpty { sessionId }
         val flow = io.github.nanomuse.avatar.AvatarFlow
         if (!flow.isActiveIn(sid)) return
+        val petGeneration = io.github.nanomuse.pet.PetEvents.generation(context) // nanoMuse: this choice is the person's saved chat line.
         viewModelScope.launch {
-            nmAppendUserLine(sid, context.getString(R.string.nm_avatar_pick_line, index + 1))
+            nmAppendUserLine(sid, context.getString(R.string.nm_avatar_pick_line, index + 1), petGeneration)
             nmChooseAvatarInternal(sid, index)
         }
     }
@@ -6721,11 +6727,14 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun nmAppendUserLine(sid: String, text: String) {
+    // nanoMuse: return the saved row and credit only the Pet present when the person submitted it.
+    private suspend fun nmAppendUserLine(sid: String, text: String, petGeneration: Long? = null): String {
         val partsJson = """[{"type":"text","value":${escapeJson(text)}}]"""
         val entity = chatRepository.appendMessage(sid, "user", partsJson)
+        petGeneration?.let { io.github.nanomuse.pet.PetEvents.chat(context, entity.id, it) }
         agentHistory.add(LLMMessage(role = LLMMessage.Role.USER, content = text))
         _messages.value = _messages.value + ChatMessage(id = entity.id, role = "user", content = text)
+        return entity.id
     }
 
     private suspend fun nmAppendAssistantLine(sid: String, text: String) {
@@ -6785,7 +6794,7 @@ class ChatViewModel(
     /** A suggestion chip was tapped: name the agent and send the name as the user's message. */
     fun nmPickName(name: String) {
         nmFirstConversation.pick(name)
-        sendMessage(name, skipContextCheck = false)
+        sendMessage(name, skipContextCheck = false, petGeneration = io.github.nanomuse.pet.PetEvents.generation(context)) // nanoMuse
     }
 
     // nanoMuse: the result's goal event belongs to this exact tracker job, not a replacement.
@@ -6844,7 +6853,7 @@ class ChatViewModel(
         text: String,
         skipContextCheck: Boolean,
         headless: io.github.nanomuse.hub.HeadlessTurn.Receipt? = null,
-        petPersonMessage: Boolean = true, // nanoMuse: scheduled work stays non-human if it is queued.
+        petGeneration: Long? = null, // nanoMuse: null means an automated prompt, not a person.
     ) {
         // [T-android-paste-mediaref] `[Pasted#N]` markers are NOT expanded here
         // any more.
@@ -6865,7 +6874,7 @@ class ChatViewModel(
         val trimmed = text.trim()
         // While streaming, enqueue instead of silently dropping (iOS: send vs enqueuePrompt).
         if (_isStreaming.value) {
-            enqueuePrompt(text, petPersonMessage) // nanoMuse: retain scheduled/user origin.
+            nmEnqueuePrompt(text, petGeneration) // nanoMuse: retain the submitting Pet, or the automated origin.
             return
         }
         // T180: allow attachments-only sends (no caption). Mirrors iOS, where
@@ -6888,7 +6897,7 @@ class ChatViewModel(
                 PreSendContextAction.PROCEED -> {}
                 PreSendContextAction.COMPACT_THEN_SEND -> {
                     pendingSendText = text
-                    pendingSendPetPersonMessage = petPersonMessage // nanoMuse
+                    pendingSendPetGeneration = petGeneration // nanoMuse
                     _inputText.value = ""
                     compactAndSendPending()
                     return
@@ -6897,7 +6906,7 @@ class ChatViewModel(
                     // Park the text on the VM (not the composer) so the dialog
                     // owns it; cancelCompactBeforeSend puts it back.
                     pendingSendText = text
-                    pendingSendPetPersonMessage = petPersonMessage // nanoMuse
+                    pendingSendPetGeneration = petGeneration // nanoMuse
                     _inputText.value = ""
                     _showCompactBeforeSendPrompt.value = true
                     return
@@ -6961,7 +6970,7 @@ class ChatViewModel(
         if (editingId != null) _editingMessageId.value = null
 
         // nanoMuse: do not credit a later generation for a row saved after this send began.
-        val petChatGeneration = if (petPersonMessage && headless == null) io.github.nanomuse.pet.PetEvents.generation(context) else null
+        val petChatGeneration = if (headless == null) petGeneration else null
         val headlessJob = viewModelScope.launch { // nanoMuse: retain the parent job that owns setup and streaming.
             streamJob = coroutineContext[Job] // nanoMuse: Stop during the setup (session, attachments, the user row) cancels it too, not only the agent loop launched below (#340)
             var streamLaunched = false

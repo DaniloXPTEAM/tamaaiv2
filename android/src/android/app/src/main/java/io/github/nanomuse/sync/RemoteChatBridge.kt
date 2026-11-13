@@ -33,7 +33,8 @@ class RemoteChatBridge(
         fun clearDraft()
         fun restoreDraft(text: String)
         suspend fun session(): String
-        suspend fun user(sessionId: String, text: String)
+        /** Persist the outgoing user row and return its stable identity. */
+        suspend fun user(sessionId: String, text: String): String
         fun started(sessionId: String) {}
         fun ended(sessionId: String, completed: Boolean) {}
         /** An incomplete remote run may have failed rather than being stopped by the person. */
@@ -63,7 +64,13 @@ class RemoteChatBridge(
     }
 
     /** True means addressed here, including a refusal. It must not fall into the local model. */
-    fun send(text: String, devices: List<Device>, attachments: Boolean, compacting: Boolean): Boolean {
+    fun send(
+        text: String,
+        devices: List<Device>,
+        attachments: Boolean,
+        compacting: Boolean,
+        onUserSaved: (String) -> Unit = {},
+    ): Boolean {
         val route = RemoteDeviceRoute.resolve(text, devices)
         if (route == RemoteDeviceRoute.None) return false
         if (route !is RemoteDeviceRoute.Selected) return refuse(text, Issue.AMBIGUOUS)
@@ -82,8 +89,10 @@ class RemoteChatBridge(
             var taskReturned = false
             try {
                 sessionId = host.session()
-                host.user(sessionId, text)
+                val userId = host.user(sessionId, text)
                 userShown = true
+                // Side effects such as the Pet's local reward cannot abort a remote task.
+                runCatching { onUserSaved(userId) }
                 host.started(sessionId)
                 host.show(id, run.task)
                 // UNDISPATCHED can enter callbacks before launch returns and exposes the Job.

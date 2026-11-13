@@ -1348,6 +1348,7 @@
     <string name="nm_pet_activity_cost">%1$s · %2$d energie</string>
     <string name="nm_pet_activity_done">Activitate încheiată.</string>
     <string name="nm_pet_low_energy">Energie insuficientă.</string>
+    <string name="nm_pet_activity_unavailable">Această activitate nu mai este disponibilă pentru acest animal.</string>
     <string name="nm_pet_curiosity">Curiozitate: %1$d</string>
     <string name="nm_pet_diary_entry">Ultimul jurnal: nivel %1$d, energie %2$d, legătură %3$d.</string>
     <string name="nm_pet_games">Minijocuri</string>

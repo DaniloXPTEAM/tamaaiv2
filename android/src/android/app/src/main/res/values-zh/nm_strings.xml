@@ -1317,6 +1317,7 @@
     <string name="nm_pet_activity_cost">%1$s · 消耗 %2$d 点精力</string>
     <string name="nm_pet_activity_done">活动已完成。</string>
     <string name="nm_pet_low_energy">精力不足。</string>
+    <string name="nm_pet_activity_unavailable">这个活动已不适用于当前宠物。</string>
     <string name="nm_pet_curiosity">好奇心：%1$d</string>
     <string name="nm_pet_diary_entry">最近的日记：等级 %1$d，精力 %2$d，羁绊 %3$d。</string>
     <string name="nm_pet_games">小游戏</string>

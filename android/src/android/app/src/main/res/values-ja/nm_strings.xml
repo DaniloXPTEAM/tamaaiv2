@@ -1340,6 +1340,7 @@
     <string name="nm_pet_activity_cost">%1$s · 体力 %2$d</string>
     <string name="nm_pet_activity_done">アクティビティを完了しました。</string>
     <string name="nm_pet_low_energy">体力が足りません。</string>
+    <string name="nm_pet_activity_unavailable">このペットでは、この活動は利用できなくなりました。</string>
     <string name="nm_pet_curiosity">好奇心：%1$d</string>
     <string name="nm_pet_diary_entry">最新の日記：レベル %1$d、体力 %2$d、絆 %3$d。</string>
     <string name="nm_pet_games">ミニゲーム</string>

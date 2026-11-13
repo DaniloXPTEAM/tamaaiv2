@@ -147,8 +147,12 @@ internal fun PetActivitiesCard(state: PetState) {
                         label = stringResource(R.string.nm_pet_activity_cost, stringResource(activity.titleRes()), activity.energyCost),
                         modifier = Modifier.weight(1f),
                     ) {
-                        val done = PetStore.activity(context, activity, expectedGeneration = state.life.generation).performed
-                        message = if (done) R.string.nm_pet_activity_done else R.string.nm_pet_low_energy
+                        val outcome = PetStore.activity(context, activity, expectedGeneration = state.life.generation)
+                        message = when (outcome.status) {
+                            PetStore.ActivityStatus.PERFORMED -> R.string.nm_pet_activity_done
+                            PetStore.ActivityStatus.LOW_ENERGY -> R.string.nm_pet_low_energy
+                            PetStore.ActivityStatus.UNAVAILABLE -> R.string.nm_pet_activity_unavailable
+                        }
                     }
                 }
             }

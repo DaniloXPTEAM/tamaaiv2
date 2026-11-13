@@ -1344,6 +1344,7 @@
     <string name="nm_pet_activity_cost">%1$s · %2$d enerhiya</string>
     <string name="nm_pet_activity_done">Tapos na ang aktibidad.</string>
     <string name="nm_pet_low_energy">Kulang ang enerhiya.</string>
+    <string name="nm_pet_activity_unavailable">Hindi na available ang aktibidad na ito para sa Pet na ito.</string>
     <string name="nm_pet_curiosity">Pagkausisa: %1$d</string>
     <string name="nm_pet_diary_entry">Huling tala: antas %1$d, enerhiya %2$d, ugnayan %3$d.</string>
     <string name="nm_pet_games">Mga mini-game</string>

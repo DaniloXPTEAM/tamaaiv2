@@ -4,6 +4,11 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -25,6 +30,21 @@ class PetRunBindingsTest {
         assertEquals(current, bindings.finish("current-job"))
         assertNull(bindings.current("current-job"))
         assertNull(bindings.finish("old-job"))
+    }
+
+    @Test fun suspensionReturnsToTheSameTrackedStreamJob() = runBlocking {
+        val bindings = PetRunBindings<Job>()
+        val expected = PetRunBinding("session", "turn")
+        launch(Dispatchers.Default) {
+            val streamJob = requireNotNull(coroutineContext[Job])
+            bindings.begin(streamJob, { streamJob.isActive }) { expected }
+            withContext(Dispatchers.IO) {
+                // A child context is not a substitute for the stream's own job.
+                assertNull(bindings.current(requireNotNull(coroutineContext[Job])))
+            }
+            assertEquals(expected, bindings.current(requireNotNull(coroutineContext[Job])))
+            assertEquals(expected, bindings.finish(streamJob))
+        }.join()
     }
 
     @Test fun aJobStoppedBeforeRegistrationDoesNotStartATrackerRun() {
