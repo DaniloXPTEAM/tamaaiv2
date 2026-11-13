@@ -155,21 +155,31 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
           ./gradlew :app:testDebugUnitTest --tests 'io.github.nanomuse.*' \
             --tests 'com.openminis.app.provider.*' --tests 'com.openminis.app.sandbox.*' \
-            --console=plain --no-daemon
-        # The Actions log is served from a blob host some sandboxes cannot reach, so the failing
-        # assertions are re-published as annotations, which the API does serve. TAMA: this step is
-        # the only way to read a failure from a network-restricted checkout.
-      - name: Publish failing assertions as annotations
+            --console=plain --no-daemon 2>&1 | tee /tmp/gradle-unit.log
+          exit "${PIPESTATUS[0]}"
+
+      # The on-device tests cannot run here (no emulator), but the source set must keep
+      # compiling or io.github.nanomuse.reach.ReachHubInstrumentedTest never runs anywhere (#332).
+      - name: androidTest compiles
+        working-directory: android/src/android
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          ./gradlew :app:compileDebugAndroidTestKotlin --console=plain --no-daemon 2>&1 | tee /tmp/gradle-androidtest.log
+          exit "${PIPESTATUS[0]}"
+
+      # TAMA: Actions logs may be hosted where this checkout cannot reach them. Publish compile
+      # errors and failing assertions after both test steps, including androidTest compilation.
+      - name: Publish build and test failures as annotations
         if: failure()
         run: |
-          # A compile failure leaves no JUnit XML, so the Gradle "e: ..." lines are published too.
-          # Without this the only thing readable from a restricted checkout is the exit code.
-          if [ -f /tmp/gradle.log ]; then
-            grep -E '^e: |^> Task .*FAILED|error: |AAPT2|Execution failed for task' /tmp/gradle.log \
-              | head -40 | while IFS= read -r line; do
-                echo "::error title=gradle::${line//$'\n'/ }"
-              done || true
-          fi
+          for log in /tmp/gradle.log /tmp/gradle-unit.log /tmp/gradle-androidtest.log; do
+            if [ -f "$log" ]; then
+              grep -E '^e: |^> Task .*FAILED|error: |AAPT2|Execution failed for task|Could not find |Could not resolve ' "$log" \
+                | head -40 | while IFS= read -r line; do
+                  echo "::error title=gradle::${line//$'\n'/ }"
+                done || true
+            fi
+          done
           python3 - <<'PY' || true
           import glob, xml.etree.ElementTree as ET
           for f in glob.glob('android/src/android/app/build/test-results/testDebugUnitTest/*.xml'):
@@ -178,14 +188,6 @@ jobs:
                       msg = ' '.join((fail.get('message') or '') .split())[:900]
                       print(f"::error file={case.get('classname')},line=1,title={case.get('name')}::{msg}")
           PY
-
-      # The on-device tests cannot run here (no emulator), but the source set must keep
-      # compiling or io.github.nanomuse.reach.ReachHubInstrumentedTest never runs anywhere (#332).
-      - name: androidTest compiles
-        working-directory: android/src/android
-        run: |
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          ./gradlew :app:compileDebugAndroidTestKotlin --console=plain --no-daemon
 
       - name: Badging
         run: |
