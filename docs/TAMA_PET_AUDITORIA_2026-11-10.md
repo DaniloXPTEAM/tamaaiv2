@@ -23,11 +23,11 @@ metadados e `SKILL.md` foram gravados; arquivos adicionais podem estar pendentes
 Sonhar, descobrir, experimentar, diário e os dois jogos funcionam localmente e não iniciam chamadas
 de modelo. O ledger continua limitado a 256 identificadores por tipo de registro.
 
-O commit `ddbe89f` passou no [run Android 43514279831](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43514279831): APK arm64, testes unitários Gradle, compilação do `androidTest`, instalação e inicialização do APK x86 no emulador e sete testes instrumentados de persistência e tracker. Os testes JVM locais usam stubs Android e preferências em memória. Essa rodada não exercitou a tela do Pet nem provou persistência após morte real de processo ou atualização sobre o telefone. As duas rodadas seguintes falharam ao compilar a suíte de tela por um import Compose inválido, corrigido depois; essa suíte ainda precisa passar no emulador. Nenhuma reinstalação ou limpeza de dados foi autorizada.
+O commit `4c48d8f` passou no [run Android 43522489422](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43522489422): APK arm64, testes unitários Gradle, compilação do `androidTest`, instalação e inicialização do APK x86 no emulador, oito testes instrumentados de persistência e tracker e dois testes Compose da tela. As capturas do Pet vivo e do memorial foram geradas no emulador, mas não puderam ser baixadas neste ambiente e não foram avaliadas visualmente. Os testes locais usam stubs Android e preferências em memória. Esses resultados não provam persistência após morte real do processo nem atualização sobre o telefone. Nenhuma reinstalação ou limpeza de dados foi autorizada.
 
-O APK arm64 dessa rodada é o artefato `14080711663`, SHA-256
-`f922da9448b101e136dafcf9d273bdb1f43125e15c052065a7fe3b804e939b0a`. Seu certificado SHA-256
-`ccf6133896a2d66db7796376db4d95c13cdc40995e827805f6584294ac144339` difere do artefato anterior
+O APK arm64 dessa rodada é o artefato `14083737585`, SHA-256
+`286347ef2e6e643c2b29f67996076921548d563a7bed423d0b1dca9266aef2af`. Seu certificado SHA-256
+`f73453fadb510e53e2772121763fb2af824241d7fdfce71b9aec6edd24c83fa1` difere do artefato anterior
 que a pessoa informou ter instalado. A assinatura efetivamente instalada não foi consultada.
 
 ## Escopo e identidade
