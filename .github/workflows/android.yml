@@ -195,16 +195,17 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -o pipefail
-            # Prove what the download step produced before blaming the APK for not being there.
-            echo "::notice title=apk tree::$(pwd)"
-            ls -la apk || true
-            find apk -maxdepth 3 -type f | head -20 || true
-            APK="$(find . -name '*.apk' | head -1)"
-            echo "::notice title=apk::${APK:-none found}"
+            # One annotation, written by python, on one line: the runner scroll-folds plain
+            # command output and pipes, so `ls` and `find` never reached the annotation stream and
+            # "none found" was the only thing that survived. No artefact here means the check
+            # says why at the top instead of dying three lines later.
+            python3 -c "import os,glob;r=sorted(glob.glob('apk/**/*',recursive=True));print('::warning title=download::'+repr(r[:12])+' cwd='+os.getcwd())"
+            APK="$(find apk -name '*.apk' -type f 2>/dev/null | head -1)"
             if [ -z "$APK" ]; then
-              echo "::error title=download::no APK in the workspace; download-artifact produced nothing"
+              echo "::error title=download::no APK under apk/; the artifact step produced nothing"
               exit 1
             fi
+            echo "::notice title=apk::${APK}"
             echo "installing $APK"
             adb install -r -t "$APK"
             adb shell pm list packages | grep -c 'ai.tama.assistant' | sed 's/^/::notice title=installed::packages matched: /'
@@ -213,13 +214,15 @@ jobs:
             PID="$(adb shell pidof ai.tama.assistant | tr -d '\r')"
             if [ -z "$PID" ]; then
               echo "::error title=crash::the process is not running after launch (it started and died)"
-              adb logcat -d -b crash | tail -60
+              adb logcat -d -b crash | tail -40 | while IFS= read -r l; do
+                echo "::error title=crash buffer::${l}"
+              done
               exit 1
             fi
             echo "::notice title=running::pid $PID after 20s"
             adb shell input keyevent KEYCODE_WAKEUP || true
             adb exec-out screencap -p > launch.png
-            ls -l launch.png
+            echo "::notice title=screenshot::$(stat -c%s launch.png) bytes"
             adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime.*E ' | head -20 || true
             # Published here, not in a later step: once this step ends the emulator is gone, and
             # an adb call after it hangs rather than failing.
