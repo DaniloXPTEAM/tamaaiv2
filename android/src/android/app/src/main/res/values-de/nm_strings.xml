@@ -1081,6 +1081,8 @@
     <string name="nm_reach_key_refused_body">Der Anbieter hat geantwortet, dass der Schlüssel nicht mehr gültig ist. Prüfe ihn in den Einstellungen des Anbieters.</string>
     <string name="nm_reach_quota_title">Der ChatGPT-Plan hat vorerst nichts mehr übrig</string>
     <string name="nm_reach_quota_body">OpenAI zählt die Nutzung des Plans in Fenstern von einigen Stunden und von einer Woche; dieses Fenster ist aufgebraucht.</string>
+    <string name="nm_reach_no_credit_title">%1$s hat die Anfrage aus Mangel an Guthaben abgelehnt</string>
+    <string name="nm_reach_no_credit_body">Der Schlüssel wurde akzeptiert und die Anfrage trotzdem abgelehnt: Das Konto hat kein Guthaben mehr, oder dieses Modell gehört nicht zum Tarif des Schlüssels. Guthaben hinzufügen oder ein kostenloses Modell wählen.</string>
     <string name="nm_reach_quota_key_title">%1$s hat für diesen Schlüssel kein Kontingent mehr</string>
     <string name="nm_reach_quota_key_body">Der Anbieter hat geantwortet, dass das Kontingent dieses Schlüssels aufgebraucht ist.</string>
     <string name="nm_reach_rate_title">Zu viele Anfragen auf einmal</string>

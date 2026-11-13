@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.HourglassEmpty
@@ -132,6 +133,13 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
             Icons.Outlined.HourglassEmpty, Color(0xFF7C5CFF),
             stringResource(if (plan) R.string.nm_reach_quota_title else R.string.nm_reach_quota_key_title, host),
             stringResource(if (plan) R.string.nm_reach_quota_body else R.string.nm_reach_quota_key_body),
+        )
+        // The key is fine; the account is not. Saying "invalid key" here sends a person with a
+        // free key to re-paste a key that was never the problem.
+        ProviderReach.Kind.NO_CREDIT -> Head(
+            Icons.Outlined.AccountBalanceWallet, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_no_credit_title, host),
+            stringResource(R.string.nm_reach_no_credit_body),
         )
         ProviderReach.Kind.RATE_LIMITED -> Head(
             Icons.Outlined.HourglassEmpty, Color(0xFF7C5CFF),

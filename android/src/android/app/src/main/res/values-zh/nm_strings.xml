@@ -1054,6 +1054,8 @@
     <string name="nm_reach_key_refused_body">服务商回答说这把 key 已不再有效。请到服务商设置里检查。</string>
     <string name="nm_reach_quota_title">ChatGPT 套餐暂时没有余量了</string>
     <string name="nm_reach_quota_body">OpenAI 按几小时和一周两个窗口计算套餐用量；这个窗口已用完。</string>
+    <string name="nm_reach_no_credit_title">%1$s 因额度不足拒绝了请求</string>
+    <string name="nm_reach_no_credit_body">密钥已被接受，但请求仍被拒绝：账户没有余额，或此模型不在该密钥的方案内。请充值或改用免费模型。</string>
     <string name="nm_reach_quota_key_title">%1$s 这把 key 的额度已用完</string>
     <string name="nm_reach_quota_key_body">服务商回答说这把 key 的额度已用完。</string>
     <string name="nm_reach_rate_title">同时发出的请求太多</string>

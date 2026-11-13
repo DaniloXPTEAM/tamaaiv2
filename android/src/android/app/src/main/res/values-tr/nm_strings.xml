@@ -1081,6 +1081,8 @@
     <string name="nm_reach_key_refused_body">Sağlayıcı anahtarın artık geçerli olmadığını söyledi. Sağlayıcı ayarlarından kontrol edin.</string>
     <string name="nm_reach_quota_title">ChatGPT planında şimdilik bir şey kalmadı</string>
     <string name="nm_reach_quota_body">OpenAI plan kullanımını birkaç saatlik ve bir haftalık pencerelerde sayar; bu pencere tükendi.</string>
+    <string name="nm_reach_no_credit_title">%1$s isteği kredi yetersizliği nedeniyle reddetti</string>
+    <string name="nm_reach_no_credit_body">Anahtar kabul edildi ama istek yine de reddedildi: hesapta kredi yok veya bu model anahtarın planında değil. Kredi ekleyin ya da ücretsiz bir model seçin.</string>
     <string name="nm_reach_quota_key_title">%1$s bu anahtar için kota bırakmadı</string>
     <string name="nm_reach_quota_key_body">Sağlayıcı bu anahtarın kotasının tükendiğini söyledi.</string>
     <string name="nm_reach_rate_title">Aynı anda çok fazla istek</string>

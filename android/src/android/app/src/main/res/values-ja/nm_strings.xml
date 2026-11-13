@@ -1077,6 +1077,8 @@
     <string name="nm_reach_key_refused_body">プロバイダーはこのキーが無効になったと応答しました。プロバイダーの設定で確認してください。</string>
     <string name="nm_reach_quota_title">ChatGPT プランの残量が今はありません</string>
     <string name="nm_reach_quota_body">OpenAI は数時間と 1 週間の 2 つの枠でプランの使用量を数えます。この枠を使い切りました。</string>
+    <string name="nm_reach_no_credit_title">%1$s はクレジット不足のためリクエストを拒否しました</string>
+    <string name="nm_reach_no_credit_body">キーは受理されましたが、リクエストは拒否されました。アカウントに残高がないか、このモデルがキーのプランに含まれていません。クレジットを追加するか、無料のモデルに切り替えてください。</string>
     <string name="nm_reach_quota_key_title">%1$s でこのキーの枠が残っていません</string>
     <string name="nm_reach_quota_key_body">プロバイダーはこのキーの枠を使い切ったと応答しました。</string>
     <string name="nm_reach_rate_title">同時のリクエストが多すぎます</string>

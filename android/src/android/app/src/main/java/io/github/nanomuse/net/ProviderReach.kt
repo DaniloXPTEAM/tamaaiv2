@@ -33,6 +33,18 @@ object ProviderReach {
 
         /** Too many requests at once (any other 429). */
         RATE_LIMITED,
+
+        /**
+         * The key was accepted and the request was still refused: no credit left, or the model is
+         * not enabled for this key's tier.
+         *
+         * This is the case that reads as "Invalid API key" and is not one. Upstream maps every 401
+         * *and* 403 to [com.openminis.app.data.model.LLMError.InvalidApiKey], and a credit problem
+         * is a 403: OpenRouter answers a key with no balance exactly that way, so a person with a
+         * free key is told to check a key that is fine. Every one of these carries the vendor's
+         * own sentence in `detail`, which is what the card shows.
+         */
+        NO_CREDIT,
     }
 
     data class Reach(
@@ -58,6 +70,8 @@ object ProviderReach {
     private val QUOTA_MARKERS = listOf(
         "usage_limit_reached", "usage_not_included", "insufficient_quota", "quota_exceeded",
         "plan_limit", "exceeded your current quota", "reached your usage limit", "usage limit",
+        // OpenRouter's own words for "the key is fine, the balance is not" (a 403, not a 429).
+        "insufficient credit", "more credits", "not enough credits", "negative balance",
     )
 
     // OkHttp / java.net sentences that carry the host
@@ -112,6 +126,11 @@ object ProviderReach {
             status == 403 && REGION_CODE in low -> Reach(Kind.REGION_BLOCKED, h, vendorMessage(b))
             status in setOf(403, 404, 503) && looksLikeHtml(b) -> Reach(Kind.UNREACHABLE, h, "")
             status == 401 && oauth -> Reach(Kind.SIGNED_OUT, h, "")
+            // Credit first, whichever status carried it: a 403 with "insufficient credits" is not
+            // an authentication problem, and saying so is the whole point of this branch.
+            (status == 401 || status == 403 || status == 429) && QUOTA_MARKERS.any { it in low } ->
+                Reach(Kind.NO_CREDIT, h, vendorMessage(b), retryAfterS)
+            status == 403 && !oauth -> Reach(Kind.NO_CREDIT, h, vendorMessage(b))
             status == 429 && QUOTA_MARKERS.any { it in low } -> Reach(Kind.QUOTA, h, vendorMessage(b), retryAfterS)
             status == 429 && isPlanHost(h) -> Reach(Kind.RATE_LIMITED, h, "", retryAfterS)
             else -> null

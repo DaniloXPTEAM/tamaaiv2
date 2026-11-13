@@ -1085,6 +1085,8 @@
     <string name="nm_reach_key_refused_body">Furnizorul a răspuns că cheia nu mai este valabilă. Verific-o în setările furnizorului.</string>
     <string name="nm_reach_quota_title">Planul ChatGPT nu mai are nimic disponibil deocamdată</string>
     <string name="nm_reach_quota_body">OpenAI numără utilizarea planului în ferestre de câteva ore și de o săptămână; această fereastră s-a epuizat.</string>
+    <string name="nm_reach_no_credit_title">%1$s a refuzat cererea din lipsă de credit</string>
+    <string name="nm_reach_no_credit_body">Cheia a fost acceptată, iar cererea a fost totuși refuzată: contul nu mai are credit sau acest model nu face parte din planul cheii. Adaugă credit sau folosește un model gratuit.</string>
     <string name="nm_reach_quota_key_title">%1$s nu mai are cotă pentru această cheie</string>
     <string name="nm_reach_quota_key_body">Furnizorul a răspuns că s-a epuizat cota acestei chei.</string>
     <string name="nm_reach_rate_title">Prea multe cereri deodată</string>

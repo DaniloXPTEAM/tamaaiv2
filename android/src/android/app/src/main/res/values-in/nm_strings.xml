@@ -1077,6 +1077,8 @@
     <string name="nm_reach_key_refused_body">Penyedia menjawab bahwa kunci ini sudah tidak berlaku. Periksa di pengaturan penyedia.</string>
     <string name="nm_reach_quota_title">Paket ChatGPT sedang tidak punya sisa</string>
     <string name="nm_reach_quota_body">OpenAI menghitung pemakaian paket dalam jendela beberapa jam dan satu minggu; jendela ini sudah habis.</string>
+    <string name="nm_reach_no_credit_title">%1$s menolak permintaan karena kredit habis</string>
+    <string name="nm_reach_no_credit_body">Kunci diterima tetapi permintaan tetap ditolak: akun tidak punya kredit, atau model ini tidak termasuk paket kunci. Tambahkan kredit atau pakai model gratis.</string>
     <string name="nm_reach_quota_key_title">%1$s tidak punya kuota lagi untuk kunci ini</string>
     <string name="nm_reach_quota_key_body">Penyedia menjawab bahwa kuota kunci ini sudah habis.</string>
     <string name="nm_reach_rate_title">Terlalu banyak permintaan sekaligus</string>

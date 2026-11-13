@@ -1082,6 +1082,8 @@
     <string name="nm_reach_key_refused_body">Le fournisseur a répondu que la clé n\'est plus valide. Vérifiez-la dans les réglages du fournisseur.</string>
     <string name="nm_reach_quota_title">L\'abonnement ChatGPT n\'a plus rien pour le moment</string>
     <string name="nm_reach_quota_body">OpenAI compte l\'usage de l\'abonnement par fenêtres de quelques heures et d\'une semaine ; cette fenêtre est épuisée.</string>
+    <string name="nm_reach_no_credit_title">%1$s a refusé la requête faute de crédit</string>
+    <string name="nm_reach_no_credit_body">La clé a été acceptée et la requête a quand même été refusée : le compte n\'a plus de crédit, ou ce modèle ne fait pas partie de l\'offre de la clé. Ajoutez du crédit ou utilisez un modèle gratuit.</string>
     <string name="nm_reach_quota_key_title">%1$s n\'a plus de quota pour cette clé</string>
     <string name="nm_reach_quota_key_body">Le fournisseur a répondu que le quota de cette clé est épuisé.</string>
     <string name="nm_reach_rate_title">Trop de requêtes à la fois</string>

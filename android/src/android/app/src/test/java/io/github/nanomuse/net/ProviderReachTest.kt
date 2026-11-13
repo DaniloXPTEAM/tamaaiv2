@@ -100,4 +100,33 @@ class ProviderReachTest {
         assertTrue(ProviderReach.looksLikeHtml("  <!doctype HTML><html>"))
         assertFalse(ProviderReach.looksLikeHtml("{\"a\":1}"))
     }
+
+    // TAMA: the failure that produced "Invalid API key" for a key that was valid. OpenRouter
+    // answers a key with no balance with a 403, and upstream maps every 401 and 403 to
+    // InvalidApiKey, so a free key's owner is told to check a key that is fine.
+    @Test fun `a credit refusal is not an invalid key, whichever status carried it`() {
+        val forbidden = """{"error":{"message":"Insufficient credits. Add more credits to continue.","code":403}}"""
+        val r = ProviderReach.fromHttp(403, forbidden, "openrouter.ai", oauth = false)!!
+        assertEquals(ProviderReach.Kind.NO_CREDIT, r.kind)
+        assertEquals("openrouter.ai", r.host)
+        // the vendor's own sentence survives, because it is the only thing that says what to do
+        assertTrue(r.detail, r.detail.contains("Insufficient credits"))
+
+        val asQuota = """{"error":{"message":"This request requires more credits","code":402}}"""
+        assertEquals(ProviderReach.Kind.NO_CREDIT, ProviderReach.fromHttp(429, asQuota, "openrouter.ai", oauth = false)!!.kind)
+    }
+
+    @Test fun `a plain 403 is a refusal, not an authentication failure`() {
+        val r = ProviderReach.fromHttp(403, "forbidden", "openrouter.ai", oauth = false)!!
+        assertEquals(ProviderReach.Kind.NO_CREDIT, r.kind)
+        // a 401 is still about the key, and stays where it was
+        assertNull(ProviderReach.fromHttp(401, "unauthorized", "openrouter.ai", oauth = false))
+        // an OAuth 401 is a sign-in that expired, unchanged
+        assertEquals(ProviderReach.Kind.SIGNED_OUT, ProviderReach.fromHttp(401, "", "chatgpt.com", oauth = true)!!.kind)
+    }
+
+    @Test fun `the credit sentence survives a reload`() {
+        val r = ProviderReach.fromHttp(403, """{"error":{"message":"Insufficient credits"}}""", "openrouter.ai", oauth = false)!!
+        assertEquals(r, ProviderReach.classify(ProviderReach.canonical(r)))
+    }
 }

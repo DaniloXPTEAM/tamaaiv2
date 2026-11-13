@@ -1082,6 +1082,8 @@
     <string name="nm_reach_key_refused_body">O provedor respondeu que a chave não é mais válida. Confira nas configurações do provedor.</string>
     <string name="nm_reach_quota_title">O plano do ChatGPT não tem nada disponível por enquanto</string>
     <string name="nm_reach_quota_body">A OpenAI conta o uso do plano em janelas de algumas horas e de uma semana; esta janela acabou.</string>
+    <string name="nm_reach_no_credit_title">%1$s recusou o pedido por falta de crédito</string>
+    <string name="nm_reach_no_credit_body">A chave foi aceita e o pedido ainda assim foi recusado: a conta está sem crédito, ou este modelo não faz parte do plano da chave. Adicione crédito ou use um modelo gratuito.</string>
     <string name="nm_reach_quota_key_title">%1$s não tem cota para esta chave</string>
     <string name="nm_reach_quota_key_body">O provedor respondeu que a cota desta chave acabou.</string>
     <string name="nm_reach_rate_title">Pedidos demais de uma vez</string>

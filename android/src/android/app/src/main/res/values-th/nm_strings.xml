@@ -1077,6 +1077,8 @@
     <string name="nm_reach_key_refused_body">ผู้ให้บริการตอบว่าคีย์นี้ใช้ไม่ได้แล้ว ตรวจสอบในการตั้งค่าผู้ให้บริการ</string>
     <string name="nm_reach_quota_title">แผน ChatGPT ไม่เหลือโควตาในตอนนี้</string>
     <string name="nm_reach_quota_body">OpenAI นับการใช้แผนเป็นช่วงไม่กี่ชั่วโมงและหนึ่งสัปดาห์ ช่วงนี้ใช้หมดแล้ว</string>
+    <string name="nm_reach_no_credit_title">%1$s ปฏิเสธคำขอเพราะเครดิตไม่พอ</string>
+    <string name="nm_reach_no_credit_body">คีย์ได้รับการยอมรับแต่คำขอยังถูกปฏิเสธ: บัญชีไม่มีเครดิตเหลือ หรือโมเดลนี้ไม่อยู่ในแพ็กเกจของคีย์ เติมเครดิตหรือเปลี่ยนไปใช้โมเดลฟรี</string>
     <string name="nm_reach_quota_key_title">%1$s ไม่เหลือโควตาสำหรับคีย์นี้</string>
     <string name="nm_reach_quota_key_body">ผู้ให้บริการตอบว่าโควตาของคีย์นี้หมดแล้ว</string>
     <string name="nm_reach_rate_title">ส่งคำขอพร้อมกันมากเกินไป</string>

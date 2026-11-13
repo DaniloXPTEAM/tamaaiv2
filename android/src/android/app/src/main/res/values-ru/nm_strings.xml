@@ -1089,6 +1089,8 @@
     <string name="nm_reach_key_refused_body">Провайдер ответил, что ключ больше не действителен. Проверьте его в настройках провайдера.</string>
     <string name="nm_reach_quota_title">В плане ChatGPT пока ничего не осталось</string>
     <string name="nm_reach_quota_body">OpenAI считает использование плана в окнах по несколько часов и по неделе; это окно исчерпано.</string>
+    <string name="nm_reach_no_credit_title">%1$s отклонил запрос из-за нехватки средств</string>
+    <string name="nm_reach_no_credit_body">Ключ был принят, но запрос всё равно отклонён: на счёте нет средств, или эта модель не входит в тариф ключа. Пополните баланс или выберите бесплатную модель.</string>
     <string name="nm_reach_quota_key_title">У %1$s не осталось квоты для этого ключа</string>
     <string name="nm_reach_quota_key_body">Провайдер ответил, что квота этого ключа исчерпана.</string>
     <string name="nm_reach_rate_title">Слишком много запросов сразу</string>

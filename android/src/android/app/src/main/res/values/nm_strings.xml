@@ -1060,6 +1060,11 @@
     <string name="nm_reach_key_refused_body">The provider answered that the key is not valid any more. Check it in the provider\'s settings.</string>
     <string name="nm_reach_quota_title">The ChatGPT plan has nothing left for now</string>
     <string name="nm_reach_quota_body">OpenAI counts the plan\'s use in windows of a few hours and of a week; this window is used up.</string>
+    <!-- TAMA: a key that is fine and an account that is not. OpenRouter answers a key with no
+         balance with a 403, which upstream renders as "Invalid API key" - the sentence a free
+         key's owner would chase for an hour. -->
+    <string name="nm_reach_no_credit_title">%1$s refused the request for want of credit</string>
+    <string name="nm_reach_no_credit_body">The key was accepted and the request was still refused: the account has no credit left, or this model is not in the key\'s plan. Add credit, or switch to a free model.</string>
     <string name="nm_reach_quota_key_title">%1$s has no quota left for this key</string>
     <string name="nm_reach_quota_key_body">The provider answered that this key\'s quota is used up.</string>
     <string name="nm_reach_rate_title">Too many requests at once</string>

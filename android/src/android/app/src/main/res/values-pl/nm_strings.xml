@@ -1089,6 +1089,8 @@
     <string name="nm_reach_key_refused_body">Dostawca odpowiedział, że klucz nie jest już ważny. Sprawdź go w ustawieniach dostawcy.</string>
     <string name="nm_reach_quota_title">W planie ChatGPT na razie nic nie zostało</string>
     <string name="nm_reach_quota_body">OpenAI liczy użycie planu w oknach kilkugodzinnych i tygodniowych; to okno jest wyczerpane.</string>
+    <string name="nm_reach_no_credit_title">%1$s odrzucił żądanie z powodu braku środków</string>
+    <string name="nm_reach_no_credit_body">Klucz został przyjęty, a żądanie i tak odrzucono: na koncie nie ma środków lub ten model nie jest objęty planem klucza. Doładuj konto lub wybierz darmowy model.</string>
     <string name="nm_reach_quota_key_title">%1$s nie ma już limitu dla tego klucza</string>
     <string name="nm_reach_quota_key_body">Dostawca odpowiedział, że limit tego klucza jest wyczerpany.</string>
     <string name="nm_reach_rate_title">Zbyt wiele żądań naraz</string>

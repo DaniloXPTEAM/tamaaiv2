@@ -1047,6 +1047,8 @@
     <string name="nm_reach_key_refused_body">服務商回答說這把 key 已不再有效。請到服務商設定裡檢查。</string>
     <string name="nm_reach_quota_title">ChatGPT 方案暫時沒有餘量了</string>
     <string name="nm_reach_quota_body">OpenAI 按幾小時和一週兩個視窗計算方案用量；這個視窗已用完。</string>
+    <string name="nm_reach_no_credit_title">%1$s 因額度不足拒絕了請求</string>
+    <string name="nm_reach_no_credit_body">金鑰已被接受，但請求仍被拒絕：帳戶沒有餘額，或此模型不在該金鑰的方案內。請儲值或改用免費模型。</string>
     <string name="nm_reach_quota_key_title">%1$s 這把 key 的額度已用完</string>
     <string name="nm_reach_quota_key_body">服務商回答說這把 key 的額度已用完。</string>
     <string name="nm_reach_rate_title">同時發出的請求太多</string>

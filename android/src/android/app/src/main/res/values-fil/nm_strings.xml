@@ -1081,6 +1081,8 @@
     <string name="nm_reach_key_refused_body">Sumagot ang provider na hindi na balido ang key. Suriin ito sa mga setting ng provider.</string>
     <string name="nm_reach_quota_title">Wala munang natitira sa ChatGPT plan</string>
     <string name="nm_reach_quota_body">Binibilang ng OpenAI ang paggamit ng plan sa mga window ng ilang oras at ng isang linggo; ubos na ang window na ito.</string>
+    <string name="nm_reach_no_credit_title">Tinanggihan ng %1$s ang kahilingan dahil walang credit</string>
+    <string name="nm_reach_no_credit_body">Tinanggap ang key at tinanggihan pa rin ang kahilingan: wala nang credit ang account, o wala ang model na ito sa plano ng key. Magdagdag ng credit o gumamit ng libreng model.</string>
     <string name="nm_reach_quota_key_title">Wala nang quota ang %1$s para sa key na ito</string>
     <string name="nm_reach_quota_key_body">Sumagot ang provider na ubos na ang quota ng key na ito.</string>
     <string name="nm_reach_rate_title">Masyadong maraming kahilingan nang sabay-sabay</string>

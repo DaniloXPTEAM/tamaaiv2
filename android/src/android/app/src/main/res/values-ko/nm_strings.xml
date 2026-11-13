@@ -1077,6 +1077,8 @@
     <string name="nm_reach_key_refused_body">제공자가 이 키가 더 이상 유효하지 않다고 응답했습니다. 제공자 설정에서 확인하세요.</string>
     <string name="nm_reach_quota_title">ChatGPT 플랜에 지금은 남은 양이 없습니다</string>
     <string name="nm_reach_quota_body">OpenAI는 몇 시간과 일주일 단위의 두 창으로 플랜 사용량을 셉니다. 이 창을 다 썼습니다.</string>
+    <string name="nm_reach_no_credit_title">%1$s이(가) 크레딧 부족으로 요청을 거부했습니다</string>
+    <string name="nm_reach_no_credit_body">키는 승인되었지만 요청은 거부되었습니다. 계정에 잔액이 없거나 이 모델이 키의 플랜에 포함되어 있지 않습니다. 크레딧을 충전하거나 무료 모델로 전환하세요.</string>
     <string name="nm_reach_quota_key_title">%1$s에 이 키의 할당량이 남아 있지 않습니다</string>
     <string name="nm_reach_quota_key_body">제공자가 이 키의 할당량을 다 썼다고 응답했습니다.</string>
     <string name="nm_reach_rate_title">한꺼번에 요청이 너무 많습니다</string>
