@@ -17,6 +17,9 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
+  # TAMA: download-artifact talks to the artifacts API, and without this it returns nothing and
+  # exits zero. That is what made three runs say "no apk" while the upload had succeeded.
+  actions: read
 
 env:
   NDK_VERSION: 27.2.12479018
