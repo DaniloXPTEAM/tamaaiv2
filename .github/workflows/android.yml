@@ -194,10 +194,14 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -o pipefail
-            # download-artifact extracts into a subdirectory named after the artifact, and where
-            # it lands has moved between major versions: find it instead of assuming a level.
-            APK="$(find apk -name '*.apk' | head -1)"
+            # Prove what the download step produced before blaming the APK for not being there.
+            echo "::notice title=apk tree::$(pwd) :: $(ls -la; find . -maxdepth 3 -name '*.apk' -o -maxdepth 3 -name 'apk' -type d | head)"
+            APK="$(find . -name '*.apk' | head -1)"
             echo "::notice title=apk::${APK:-none found}"
+            if [ -z "$APK" ]; then
+              echo "::error title=download::no APK in the workspace; download-artifact produced nothing"
+              exit 1
+            fi
             echo "installing $APK"
             adb install -r -t "$APK"
             adb shell pm list packages | grep -c 'ai.tama.assistant' | sed 's/^/::notice title=installed::packages matched: /'
