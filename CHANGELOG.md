@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Made the Android persistent shell decode completion markers and UTF-8 across process-read boundaries, without clearing a later command's callback.
+
 - Moved the Android prompt-size detail host outside the measured chat layout and added isolated report-sheet checks.
 
 - Added a bounded, app-tree-only process snapshot for diagnosing failed packaged-sandbox checks on the disposable Android emulator.

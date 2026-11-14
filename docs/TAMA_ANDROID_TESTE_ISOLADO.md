@@ -43,7 +43,9 @@ fails, is skipped, or reports no tests:
   permissions or an unsupported `ps` format are recorded as unknown/unavailable. The smoke
   validates the complete allowlisted tree before retaining or publishing it. One emulator run
   captured such a snapshot; this does not guarantee access on other Android devices. It is a
-  diagnostic, not a fix or proof of the cause.
+  diagnostic, not a fix or proof of the cause. Separate JVM tests feed deliberately fragmented
+  markers, split UTF-8, consecutive commands and timeouts to the real shell reader through a
+  synthetic process; they do not establish that packaged PRoot works on a device.
 - The prompt-size info row and report sheet in a synthetic Compose layout: opening the sheet,
   disposing its originating row, closing it, and switching sessions without carrying the old
   report into another chat. These focused tests run independently of the full journey and use

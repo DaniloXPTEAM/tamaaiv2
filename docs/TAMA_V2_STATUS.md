@@ -26,6 +26,24 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, Python passou no host e em Linux/macOS no CI; Windows experimental ainda falhou. Arte e keystore dependem do dono. | Investigar Windows; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
 
+## Shell: defeito de leitura reproduzido e correção preparada
+
+- Uma execução do `PersistentShell` real no host, com Android substituído e processo sintético,
+  reproduziu um defeito independente: marcador de término dividido entre leituras expirava com
+  124, divisão do código retornava -1 e UTF-8 dividido corrompia a saída. O teste de regressão
+  também falhou contra o código anterior. Isso **não comprova** que o PRoot sem saída do
+  emulador tenha a mesma causa.
+- O leitor agora decodifica UTF-8 incrementalmente e reconhece a linha completa do marcador entre
+  leituras, inclusive sua quebra de linha, sem perdê-la para o próximo comando. A remoção do
+  callback usa comparação atômica para não apagar o de uma chamada posterior; um fim de processo
+  preserva a parte incompleta na saída de erro. O timeout continua não matando o shell: a execução
+  anterior e uma tentativa posterior ainda exigem cuidado, e Stop não está provado no telefone.
+- Passaram **12 testes Kotlin no host**, com JUnit, Mockito e Android substituídos: todas as
+  divisões de marcador em duas e três partes, caracteres UTF-8 divididos, 500 comandos sintéticos
+  consecutivos, saída incompleta, timeout seguido de outro comando e Stop no processo falso.
+  O parser Kotlin não encontrou erros nas fontes. Ainda faltam build e testes Android no CI;
+  não declarar o sandbox funcional nem atribuir uma causa ao PRoot com base nesses testes.
+
 ## CI Android de `42f9e0d`: retrato de processos
 
 - [Android 43601067705](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43601067705)

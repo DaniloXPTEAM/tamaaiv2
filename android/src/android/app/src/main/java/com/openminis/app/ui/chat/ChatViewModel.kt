@@ -9943,6 +9943,7 @@ class ChatViewModel(
      *  distinct from a script that legitimately exits 127 (T-bash-on-demand M5). */
     private val BASH_MISSING_SENTINEL = 119
 
+    // nanoMuse: shell completion markers are decoded incrementally.
     /** Wrap a script to run under bash via a guest-side self-written temp file
      *  (base64, single line, self-cleaning), guarding on `command -v bash` so a
      *  vanished bash is detected precisely for inline self-heal.
@@ -9951,7 +9952,7 @@ class ChatViewModel(
      *  Android: PersistentShell drives commands as `{cmd}; echo …_EXIT_$?…` and
      *  reads the exit code from that marker line. A bare `|| exit 119` would exit
      *  the persistent shell process itself BEFORE the marker echo runs, so no
-     *  marker is emitted and PersistentShell.parseExitCode falls back to -1 —
+     *  marker is emitted and PersistentShell reports failure (-1) —
      *  the M5 self-heal sentinel check (== 119 / 30464) then never matches and a
      *  vanished bash is never re-installed. Wrapping in a subshell makes
      *  `exit 119` leave only the subshell, so `$?` = 119 reaches the marker. */
