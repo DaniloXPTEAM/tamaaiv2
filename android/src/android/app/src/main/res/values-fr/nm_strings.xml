@@ -530,14 +530,14 @@
     <string name="nm_hands_this_phone">ce téléphone</string>
     <string name="nm_hands_intro">Pour les apps sans API, il utilise le téléphone comme vous : une capture d’écran, puis des touchers, de la saisie et des balayages. Les compétences, les commandes et le navigateur passent d’abord ; l’écran est le dernier recours. Désactivé tant que vous ne l’activez pas.</string>
     <string name="nm_hands_switch">Laisser l’agent utiliser l’écran</string>
-    <string name="nm_hands_switch_footer">Pendant qu’il travaille, une capsule en haut de l’écran montre chaque étape et un bouton Stop. Les connexions, mots de passe et codes vous sont toujours laissés.</string>
+    <string name="nm_hands_switch_footer">Une capsule affiche chaque étape et le bouton Arrêter. Prenez la main pour les connexions, mots de passe et codes. Les captures peuvent contenir des informations sensibles.</string>
     <string name="nm_hands_status_off">Désactivé ; l’agent le dira quand une tâche a besoin de l’écran</string>
     <string name="nm_hands_status_ready">Prêt</string>
     <string name="nm_hands_status_missing">Activé, mais il manque encore quelque chose ci-dessous</string>
     <string name="nm_hands_status_working">Travaille sur l’écran en ce moment</string>
     <string name="nm_hands_stop_run">Arrêter ce qu’il fait</string>
     <string name="nm_hands_section_needs">Ce qu’il lui faut</string>
-    <string name="nm_hands_needs_footer">Le service d’accessibilité prend la capture d’écran et effectue les gestes ; il ne lit pas le contenu de l’écran. L’affichage par-dessus les autres apps sert à la capsule.</string>
+    <string name="nm_hands_needs_footer">Le service d’accessibilité capture l’écran, effectue les gestes et peut lire des libellés près du toucher pour vérifier les risques. Les captures vont au modèle d’écran configuré. La superposition affiche la capsule.</string>
     <string name="nm_hands_need_a11y">Service d’accessibilité</string>
     <string name="nm_hands_need_a11y_fix">Activez TAMA AI sous Applications installées dans les paramètres d’accessibilité</string>
     <string name="nm_hands_need_overlay">Affichage par-dessus les autres apps</string>
@@ -561,10 +561,10 @@
     <string name="nm_hands_why_any">le seul modèle activé qui voit</string>
     <string name="nm_hands_section_rules">Comment il se comporte</string>
     <string name="nm_hands_rule_ladder">L’écran vient en dernier : une compétence, une commande ou le navigateur d’abord.</string>
-    <string name="nm_hands_rule_secrets">Ne tape jamais de mots de passe, codes ou numéros de carte ; il vous tend le téléphone.</string>
-    <string name="nm_hands_rule_approvals">Payer, envoyer, publier ou supprimer attend votre approbation, comme dans le shell et le navigateur.</string>
-    <string name="nm_hands_rule_stop">Stop est toujours à l’écran ; rien ne continue après.</string>
-    <string name="nm_hands_rule_screenshots">La capture d’écran de chaque étape est gardée avec la conversation et envoyée uniquement à votre propre modèle.</string>
+    <string name="nm_hands_rule_secrets">L’app tente de vous laisser la main pour les champs de mot de passe, code et carte. La détection peut manquer un champ ; utilisez Arrêter en cas de doute.</string>
+    <string name="nm_hands_rule_approvals">Les actions reconnues de paiement, envoi, publication et suppression sont vérifiées pour approbation. Une autorisation antérieure peut s’appliquer et la détection peut manquer une action.</string>
+    <string name="nm_hands_rule_stop">Stop demande l’arrêt de la tâche. Une action déjà en cours peut se terminer.</string>
+    <string name="nm_hands_rule_screenshots">Les captures peuvent être enregistrées sur ce téléphone et envoyées au modèle d’écran configuré, qui peut utiliser un fournisseur distant. Elles peuvent contenir des informations sensibles.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Étape %1$d</string>

@@ -526,14 +526,14 @@
     <string name="nm_hands_this_phone">โทรศัพท์เครื่องนี้</string>
     <string name="nm_hands_intro">สำหรับแอปที่ไม่มี API มันจะใช้โทรศัพท์แบบเดียวกับคุณ: ถ่ายภาพหน้าจอ แล้วแตะ พิมพ์ และปัด ทักษะ คำสั่ง และเบราว์เซอร์มาก่อน หน้าจอเป็นทางเลือกสุดท้าย ปิดอยู่จนกว่าคุณจะเปิด</string>
     <string name="nm_hands_switch">ให้เอเจนต์ใช้หน้าจอ</string>
-    <string name="nm_hands_switch_footer">ระหว่างทำงาน แคปซูลที่ด้านบนของหน้าจอจะแสดงแต่ละขั้นตอนและปุ่มหยุด การล็อกอิน รหัสผ่าน และรหัสยืนยันเป็นหน้าที่ของคุณเสมอ</string>
+    <string name="nm_hands_switch_footer">แคปซูลแสดงแต่ละขั้นตอนและปุ่มหยุด โปรดควบคุมด้วยตนเองเมื่อเข้าสู่ระบบหรือป้อนรหัสผ่านและรหัส ภาพหน้าจออาจมีข้อมูลอ่อนไหว</string>
     <string name="nm_hands_status_off">ปิด เอเจนต์จะบอกเมื่องานต้องใช้หน้าจอ</string>
     <string name="nm_hands_status_ready">พร้อม</string>
     <string name="nm_hands_status_missing">เปิดอยู่ แต่ยังขาดบางอย่างด้านล่าง</string>
     <string name="nm_hands_status_working">กำลังทำงานบนหน้าจออยู่</string>
     <string name="nm_hands_stop_run">หยุดสิ่งที่กำลังทำ</string>
     <string name="nm_hands_section_needs">สิ่งที่ต้องใช้</string>
-    <string name="nm_hands_needs_footer">บริการการช่วยเหลือพิเศษถ่ายภาพหน้าจอและทำท่าทางสัมผัส แต่ไม่อ่านเนื้อหาบนหน้าจอ การแสดงทับแอปอื่นใช้สำหรับแคปซูล</string>
+    <string name="nm_hands_needs_footer">บริการการช่วยเหลือพิเศษจับภาพหน้าจอ ทำท่าทาง และอาจอ่านป้ายกำกับใกล้จุดแตะเพื่อตรวจสอบความเสี่ยง ภาพจะส่งไปยังโมเดลหน้าจอที่ตั้งค่าไว้ การแสดงทับใช้แสดงแคปซูล</string>
     <string name="nm_hands_need_a11y">บริการการช่วยเหลือพิเศษ</string>
     <string name="nm_hands_need_a11y_fix">เปิด TAMA AI ใต้ แอปที่ติดตั้ง ในการตั้งค่าการช่วยเหลือพิเศษ</string>
     <string name="nm_hands_need_overlay">แสดงทับแอปอื่น</string>
@@ -557,10 +557,10 @@
     <string name="nm_hands_why_any">โมเดลเดียวที่เปิดใช้และมองเห็นได้</string>
     <string name="nm_hands_section_rules">มันทำงานอย่างไร</string>
     <string name="nm_hands_rule_ladder">หน้าจอมาเป็นลำดับสุดท้าย: ทักษะ คำสั่ง หรือเบราว์เซอร์มาก่อน</string>
-    <string name="nm_hands_rule_secrets">ไม่พิมพ์รหัสผ่าน รหัสยืนยัน หรือหมายเลขบัตรเด็ดขาด มันจะส่งโทรศัพท์ให้คุณทำเอง</string>
-    <string name="nm_hands_rule_approvals">การชำระเงิน การส่ง การโพสต์ หรือการลบ จะรอการอนุมัติจากคุณ เช่นเดียวกับในเชลล์และเบราว์เซอร์</string>
-    <string name="nm_hands_rule_stop">ปุ่มหยุดอยู่บนหน้าจอเสมอ ไม่มีอะไรทำงานต่อหลังจากกด</string>
-    <string name="nm_hands_rule_screenshots">ภาพหน้าจอของแต่ละขั้นตอนเก็บไว้กับบทสนทนา และส่งไปยังโมเดลของคุณเองเท่านั้น</string>
+    <string name="nm_hands_rule_secrets">แอปพยายามส่งการควบคุมให้คุณเมื่อพบช่องรหัสผ่าน รหัส และบัตร การตรวจจับอาจพลาดช่องได้ หากไม่แน่ใจให้ใช้ปุ่มหยุด</string>
+    <string name="nm_hands_rule_approvals">การชำระเงิน ส่ง เผยแพร่ และลบที่ตรวจพบจะผ่านการตรวจสอบการอนุมัติ การอนุญาตก่อนหน้าอาจมีผล และการตรวจจับอาจพลาดการกระทำได้</string>
+    <string name="nm_hands_rule_stop">หยุดเป็นคำขอให้จบงาน การดำเนินการที่เริ่มไปแล้วอาจเสร็จสิ้น</string>
+    <string name="nm_hands_rule_screenshots">ภาพหน้าจออาจถูกบันทึกในโทรศัพท์นี้และส่งไปยังโมเดลหน้าจอที่ตั้งค่าไว้ ซึ่งอาจใช้ผู้ให้บริการระยะไกล ภาพอาจมีข้อมูลอ่อนไหว</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">ขั้นตอนที่ %1$d</string>

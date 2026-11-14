@@ -529,14 +529,14 @@
     <string name="nm_hands_this_phone">dieses Telefon</string>
     <string name="nm_hands_intro">Für Apps ohne API nutzt er das Telefon so wie du: ein Screenshot, dann Tippen, Eingeben und Wischen. Skills, Befehle und der Browser kommen zuerst; der Bildschirm ist der letzte Ausweg. Aus, bis du es einschaltest.</string>
     <string name="nm_hands_switch">Den Agenten den Bildschirm nutzen lassen</string>
-    <string name="nm_hands_switch_footer">Während er arbeitet, zeigt eine Kapsel oben am Bildschirm jeden Schritt und einen Stopp-Knopf. Logins, Passwörter und Codes bleiben immer dir überlassen.</string>
+    <string name="nm_hands_switch_footer">Eine Kapsel zeigt jeden Schritt und den Stopp-Knopf. Übernimm bei Anmeldungen, Passwörtern und Codes selbst. Bildschirmaufnahmen können vertrauliche Daten enthalten.</string>
     <string name="nm_hands_status_off">Aus; der Agent sagt Bescheid, wenn eine Aufgabe den Bildschirm braucht</string>
     <string name="nm_hands_status_ready">Bereit</string>
     <string name="nm_hands_status_missing">An, aber unten fehlt noch etwas</string>
     <string name="nm_hands_status_working">Arbeitet gerade auf dem Bildschirm</string>
     <string name="nm_hands_stop_run">Anhalten, was er gerade tut</string>
     <string name="nm_hands_section_needs">Was er braucht</string>
-    <string name="nm_hands_needs_footer">Der Bedienungshilfen-Dienst macht den Screenshot und führt die Gesten aus; er liest den Bildschirminhalt nicht. Das Einblenden über anderen Apps ist für die Kapsel.</string>
+    <string name="nm_hands_needs_footer">Der Bedienungshilfen-Dienst erfasst den Bildschirm, führt Gesten aus und kann Beschriftungen nahe einer Berührung zur Risikoprüfung lesen. Aufnahmen gehen an das konfigurierte Bildschirmmodell. Die Einblendung zeigt die Kapsel.</string>
     <string name="nm_hands_need_a11y">Bedienungshilfen-Dienst</string>
     <string name="nm_hands_need_a11y_fix">Schalte TAMA AI in den Bedienungshilfen unter Installierte Apps ein</string>
     <string name="nm_hands_need_overlay">Über anderen Apps einblenden</string>
@@ -560,10 +560,10 @@
     <string name="nm_hands_why_any">das einzige aktivierte Modell, das sehen kann</string>
     <string name="nm_hands_section_rules">Wie er sich verhält</string>
     <string name="nm_hands_rule_ladder">Der Bildschirm kommt zuletzt: zuerst ein Skill, ein Befehl oder der Browser.</string>
-    <string name="nm_hands_rule_secrets">Tippt nie Passwörter, Codes oder Kartennummern; er gibt dir das Telefon.</string>
-    <string name="nm_hands_rule_approvals">Bezahlen, Senden, Posten oder Löschen wartet auf deine Freigabe, wie in der Shell und im Browser.</string>
-    <string name="nm_hands_rule_stop">Stopp ist immer auf dem Bildschirm; danach geht nichts weiter.</string>
-    <string name="nm_hands_rule_screenshots">Der Screenshot jedes Schritts bleibt beim Gespräch und geht nur an dein eigenes Modell.</string>
+    <string name="nm_hands_rule_secrets">Die App versucht, dir bei Passwort-, Code- und Kartenfeldern die Kontrolle zu übergeben. Die Erkennung kann Felder übersehen; nutze bei Zweifeln Stopp.</string>
+    <string name="nm_hands_rule_approvals">Erkannte Aktionen zum Bezahlen, Senden, Veröffentlichen und Löschen werden auf Freigabe geprüft. Frühere Freigaben können gelten; die Erkennung kann Aktionen übersehen.</string>
+    <string name="nm_hands_rule_stop">Stopp fordert das Ende der Aufgabe an. Eine bereits laufende Aktion kann noch abgeschlossen werden.</string>
+    <string name="nm_hands_rule_screenshots">Bildschirmaufnahmen können auf diesem Telefon gespeichert und an das konfigurierte Bildschirmmodell gesendet werden, das einen entfernten Anbieter nutzen kann. Sie können vertrauliche Daten enthalten.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Schritt %1$d</string>

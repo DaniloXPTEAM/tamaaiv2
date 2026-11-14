@@ -189,6 +189,9 @@ else
 fi
 run_instrumentation io.github.nanomuse.isolated.StrictSandboxInstrumentedTest sandbox-instrumentation.log \
   'sandbox instrumentation' 1 'Packaged PRoot and persistent shell' || failed=1
+# nanoMuse: exercise the browser guard against an inline page with networking disabled.
+run_instrumentation io.github.nanomuse.isolated.BrowserGuardInstrumentedTest browser-guard-instrumentation.log \
+  'browser guard instrumentation' 1 'Synthetic WebView and approval gate' || failed=1
 
 # This is a disposable, synthetic emulator with a keyless loopback provider. Save a bounded
 # selection of runtime tags for diagnosing failures after the emulator action has stopped it.

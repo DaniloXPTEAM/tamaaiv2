@@ -526,14 +526,14 @@
     <string name="nm_hands_this_phone">ponsel ini</string>
     <string name="nm_hands_intro">Untuk aplikasi tanpa API, ia memakai ponsel seperti kamu: tangkapan layar, lalu ketukan, ketikan dan usapan. Skill, perintah dan browser didahulukan; layar adalah pilihan terakhir. Mati sampai kamu menyalakannya.</string>
     <string name="nm_hands_switch">Izinkan agen memakai layar</string>
-    <string name="nm_hands_switch_footer">Saat bekerja, kapsul di bagian atas layar menampilkan setiap langkah dan tombol Berhenti. Login, kata sandi dan kode selalu diserahkan padamu.</string>
+    <string name="nm_hands_switch_footer">Kapsul menampilkan setiap langkah dan tombol Berhenti. Ambil alih untuk login, kata sandi dan kode. Tangkapan layar dapat berisi informasi sensitif.</string>
     <string name="nm_hands_status_off">Mati; agen akan menyampaikannya saat tugas memerlukan layar</string>
     <string name="nm_hands_status_ready">Siap</string>
     <string name="nm_hands_status_missing">Nyala, tetapi ada yang masih kurang di bawah</string>
     <string name="nm_hands_status_working">Sedang bekerja di layar</string>
     <string name="nm_hands_stop_run">Hentikan yang sedang dilakukan</string>
     <string name="nm_hands_section_needs">Yang dibutuhkan</string>
-    <string name="nm_hands_needs_footer">Layanan aksesibilitas mengambil tangkapan layar dan melakukan gestur; ia tidak membaca isi layar. Menggambar di atas aplikasi lain dipakai untuk kapsul.</string>
+    <string name="nm_hands_needs_footer">Layanan aksesibilitas menangkap layar, melakukan gestur dan dapat membaca label di dekat sentuhan untuk memeriksa risiko. Tangkapan dikirim ke model layar yang dikonfigurasi. Overlay menampilkan kapsul.</string>
     <string name="nm_hands_need_a11y">Layanan aksesibilitas</string>
     <string name="nm_hands_need_a11y_fix">Nyalakan TAMA AI di bagian Aplikasi terpasang pada pengaturan aksesibilitas</string>
     <string name="nm_hands_need_overlay">Tampil di atas aplikasi lain</string>
@@ -557,10 +557,10 @@
     <string name="nm_hands_why_any">satu-satunya model aktif yang bisa melihat</string>
     <string name="nm_hands_section_rules">Cara kerjanya</string>
     <string name="nm_hands_rule_ladder">Layar paling akhir: skill, perintah atau browser dulu.</string>
-    <string name="nm_hands_rule_secrets">Tidak pernah mengetik kata sandi, kode atau nomor kartu; ia menyerahkan ponsel padamu.</string>
-    <string name="nm_hands_rule_approvals">Membayar, mengirim, memposting atau menghapus menunggu persetujuanmu, seperti di shell dan browser.</string>
-    <string name="nm_hands_rule_stop">Berhenti selalu ada di layar; tidak ada yang berlanjut setelahnya.</string>
-    <string name="nm_hands_rule_screenshots">Tangkapan layar setiap langkah disimpan bersama percakapan dan hanya dikirim ke modelmu sendiri.</string>
+    <string name="nm_hands_rule_secrets">Aplikasi mencoba menyerahkan kendali kepadamu untuk kolom kata sandi, kode dan kartu. Deteksi dapat melewatkan kolom; gunakan Berhenti jika ragu.</string>
+    <string name="nm_hands_rule_approvals">Tindakan membayar, mengirim, memposting dan menghapus yang dikenali diperiksa untuk persetujuan. Izin sebelumnya dapat berlaku dan deteksi dapat melewatkan tindakan.</string>
+    <string name="nm_hands_rule_stop">Berhenti meminta tugas dihentikan. Tindakan yang sudah berlangsung mungkin selesai.</string>
+    <string name="nm_hands_rule_screenshots">Tangkapan layar dapat disimpan di ponsel ini dan dikirim ke model layar yang dikonfigurasi, yang dapat memakai penyedia jarak jauh. Tangkapan dapat berisi informasi sensitif.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Langkah %1$d</string>

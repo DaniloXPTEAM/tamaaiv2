@@ -532,14 +532,14 @@
     <string name="nm_hands_this_phone">acest telefon</string>
     <string name="nm_hands_intro">Pentru aplicațiile fără API, folosește telefonul așa cum o faci tu: o captură de ecran, apoi atingeri, tastare și glisări. Abilitățile, comenzile și browserul vin primele; ecranul e ultima soluție. Oprit până îl pornești.</string>
     <string name="nm_hands_switch">Lasă agentul să folosească ecranul</string>
-    <string name="nm_hands_switch_footer">Cât lucrează, o capsulă în partea de sus a ecranului arată fiecare pas și un buton Stop. Autentificările, parolele și codurile îți rămân întotdeauna ție.</string>
+    <string name="nm_hands_switch_footer">O capsulă arată fiecare pas și butonul Oprire. Preia controlul pentru autentificări, parole și coduri. Capturile pot conține informații sensibile.</string>
     <string name="nm_hands_status_off">Oprit; agentul îți va spune când o sarcină are nevoie de ecran</string>
     <string name="nm_hands_status_ready">Gata</string>
     <string name="nm_hands_status_missing">Pornit, dar ceva de mai jos lipsește încă</string>
     <string name="nm_hands_status_working">Lucrează pe ecran acum</string>
     <string name="nm_hands_stop_run">Oprește ce face</string>
     <string name="nm_hands_section_needs">De ce are nevoie</string>
-    <string name="nm_hands_needs_footer">Serviciul de accesibilitate face captura de ecran și execută gesturile; nu citește conținutul ecranului. Afișarea peste alte aplicații e pentru capsulă.</string>
+    <string name="nm_hands_needs_footer">Serviciul de accesibilitate capturează ecranul, execută gesturi și poate citi etichetele din apropierea atingerii pentru a verifica riscurile. Capturile merg la modelul de ecran configurat. Suprapunerea afișează capsula.</string>
     <string name="nm_hands_need_a11y">Serviciu de accesibilitate</string>
     <string name="nm_hands_need_a11y_fix">Pornește TAMA AI sub Aplicații instalate în setările de accesibilitate</string>
     <string name="nm_hands_need_overlay">Afișare peste alte aplicații</string>
@@ -563,10 +563,10 @@
     <string name="nm_hands_why_any">singurul model activat care poate vedea</string>
     <string name="nm_hands_section_rules">Cum se comportă</string>
     <string name="nm_hands_rule_ladder">Ecranul vine ultimul: mai întâi o abilitate, o comandă sau browserul.</string>
-    <string name="nm_hands_rule_secrets">Nu tastează niciodată parole, coduri sau numere de card; îți dă telefonul ție.</string>
-    <string name="nm_hands_rule_approvals">Plata, trimiterea, postarea sau ștergerea așteaptă aprobarea ta, ca în shell și în browser.</string>
-    <string name="nm_hands_rule_stop">Stop e mereu pe ecran; nimic nu continuă după el.</string>
-    <string name="nm_hands_rule_screenshots">Captura fiecărui pas se păstrează cu conversația și e trimisă doar modelului tău.</string>
+    <string name="nm_hands_rule_secrets">Aplicația încearcă să îți lase controlul pentru câmpurile de parolă, cod și card. Detectarea poate rata un câmp; folosește Oprire dacă ai dubii.</string>
+    <string name="nm_hands_rule_approvals">Acțiunile recunoscute de plată, trimitere, publicare și ștergere sunt verificate pentru aprobare. O aprobare anterioară poate fi valabilă, iar detectarea poate rata acțiuni.</string>
+    <string name="nm_hands_rule_stop">Stop solicită oprirea sarcinii. O acțiune deja începută se poate termina.</string>
+    <string name="nm_hands_rule_screenshots">Capturile pot fi salvate pe acest telefon și trimise modelului de ecran configurat, care poate folosi un furnizor la distanță. Ele pot conține informații sensibile.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Pasul %1$d</string>

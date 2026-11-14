@@ -99,6 +99,7 @@ elif args[:3] == ["shell", "am", "instrument"]:
     is_journey = "io.github.nanomuse.isolated.RealAppJourneyInstrumentedTest" in args
     is_restart = "io.github.nanomuse.isolated.AfterProcessStopInstrumentedTest" in args
     is_sandbox = "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args
+    is_browser = "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args
     assert ["-e", "tama_isolated", "true"] == args[5:8]
     if (mode == "instrument-command" and is_pet) or (mode == "screen-command" and is_screen):
         print("INSTRUMENTATION_FAILED: test runner")
@@ -107,9 +108,11 @@ elif args[:3] == ["shell", "am", "instrument"]:
             or (mode == "journey-empty" and is_journey)):
         print("OK (0 tests)")
     elif ((mode == "instrument-failure" and is_pet) or (mode == "journey-failure" and is_journey)
-            or (mode == "restart-failure" and is_restart) or (mode == "sandbox-failure" and is_sandbox)):
+            or (mode == "restart-failure" and is_restart) or (mode == "sandbox-failure" and is_sandbox)
+            or (mode == "browser-failure" and is_browser)):
         print("FAILURES!!!")
-    elif ((mode == "journey-skipped" and is_journey) or (mode == "sandbox-skipped" and is_sandbox)):
+    elif ((mode == "journey-skipped" and is_journey) or (mode == "sandbox-skipped" and is_sandbox)
+            or (mode == "browser-skipped" and is_browser)):
         print("INSTRUMENTATION_STATUS_CODE: -4")
         print("OK (1 test)")
     elif mode == "few-screen-tests" and is_screen:
@@ -183,7 +186,7 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     invocations = [
         args for name, args in calls if name == "adb" and args[:3] == ["shell", "am", "instrument"]
     ]
-    assert len(invocations) == 5
+    assert len(invocations) == 6
     assert any(
         "io.github.nanomuse.pet.PetPersistenceInstrumentedTest" in args for args in invocations
     )
@@ -198,9 +201,13 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     assert any(
         "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args for args in invocations
     )
+    assert any(
+        "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args for args in invocations
+    )
     assert "::notice title=app journey instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=process restart instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=sandbox instrumentation::OK (1 test);" in result.stdout
+    assert "::notice title=browser guard instrumentation::OK (1 test);" in result.stdout
     assert (
         sum(name == "adb" and args[:3] == ["shell", "am", "force-stop"] for name, args in calls)
         == 1
@@ -236,6 +243,8 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
         ("restart-failure", "title=process restart instrumentation"),
         ("sandbox-failure", "title=sandbox instrumentation"),
         ("sandbox-skipped", "title=sandbox instrumentation"),
+        ("browser-failure", "title=browser guard instrumentation"),
+        ("browser-skipped", "title=browser guard instrumentation"),
     ],
 )
 def test_smoke_fails_honestly_when_a_required_step_fails(smoke, failure: str, message: str) -> None:

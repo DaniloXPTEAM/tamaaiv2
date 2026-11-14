@@ -530,14 +530,14 @@
     <string name="nm_hands_this_phone">este celular</string>
     <string name="nm_hands_intro">Para apps sem API, ele usa o celular como você: uma captura de tela, depois toques, digitação e deslizes. Skills, comandos e o navegador vêm primeiro; a tela é o último recurso. Desligado até você ligar.</string>
     <string name="nm_hands_switch">Deixar o agente usar a tela</string>
-    <string name="nm_hands_switch_footer">Enquanto trabalha, uma cápsula no topo da tela mostra cada passo e um botão Parar. Logins, senhas e códigos ficam sempre com você.</string>
+    <string name="nm_hands_switch_footer">Uma cápsula mostra cada passo e o botão Parar. Assuma o controle para logins, senhas e códigos. Capturas podem conter informações sensíveis.</string>
     <string name="nm_hands_status_off">Desligado; o agente avisará quando uma tarefa precisar da tela</string>
     <string name="nm_hands_status_ready">Pronto</string>
     <string name="nm_hands_status_missing">Ligado, mas ainda falta algo abaixo</string>
     <string name="nm_hands_status_working">Trabalhando na tela agora</string>
     <string name="nm_hands_stop_run">Parar o que ele está fazendo</string>
     <string name="nm_hands_section_needs">Do que ele precisa</string>
-    <string name="nm_hands_needs_footer">O serviço de acessibilidade tira a captura de tela e executa os gestos; ele não lê o conteúdo da tela. Sobrepor a outros apps é para a cápsula.</string>
+    <string name="nm_hands_needs_footer">O serviço de acessibilidade captura a tela, executa gestos e pode ler rótulos próximos ao toque para verificar riscos. As capturas vão para o modelo de tela configurado. A sobreposição exibe a cápsula.</string>
     <string name="nm_hands_need_a11y">Serviço de acessibilidade</string>
     <string name="nm_hands_need_a11y_fix">Ative o TAMA AI em Apps instalados nas configurações de acessibilidade</string>
     <string name="nm_hands_need_overlay">Sobrepor a outros apps</string>
@@ -561,10 +561,10 @@
     <string name="nm_hands_why_any">o único modelo ativo que enxerga</string>
     <string name="nm_hands_section_rules">Como ele se comporta</string>
     <string name="nm_hands_rule_ladder">A tela vem por último: primeiro uma skill, um comando ou o navegador.</string>
-    <string name="nm_hands_rule_secrets">Nunca digita senhas, códigos ou números de cartão; ele passa o celular para você.</string>
-    <string name="nm_hands_rule_approvals">Pagar, enviar, publicar ou excluir espera sua aprovação, como no shell e no navegador.</string>
-    <string name="nm_hands_rule_stop">Parar está sempre na tela; nada continua depois dele.</string>
-    <string name="nm_hands_rule_screenshots">A captura de tela de cada passo fica com a conversa e é enviada só ao seu próprio modelo.</string>
+    <string name="nm_hands_rule_secrets">O app tenta passar o controle para você em campos de senha, código e cartão. A detecção pode falhar; use Parar se houver dúvida.</string>
+    <string name="nm_hands_rule_approvals">Ações reconhecidas de pagar, enviar, publicar e excluir passam pela verificação de aprovação. Aprovações anteriores podem valer, e a detecção pode falhar.</string>
+    <string name="nm_hands_rule_stop">Parar solicita o fim da tarefa. Uma ação em andamento ainda pode terminar.</string>
+    <string name="nm_hands_rule_screenshots">Capturas podem ser salvas neste celular e enviadas ao modelo de tela configurado, que pode usar um provedor remoto. Elas podem conter informações sensíveis.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Passo %1$d</string>

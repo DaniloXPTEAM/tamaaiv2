@@ -66,6 +66,52 @@ class TapWordsTest {
         }
     }
 
+    @Test fun `Portuguese actions reach the same risk classes`() {
+        val samples = mapOf(
+            RiskClass.MONEY to listOf(
+                "Pagar agora", "PAGUE", "Confirmar pagamento", "Comprar agora", "Confirmar compra",
+                "Assinar", "Renovar assinatura", "Doar", "Transferir", "Confirmar pedido", "Finalizar pedido",
+            ),
+            RiskClass.DESTRUCTIVE to listOf(
+                "Excluir conversa", "Apagar arquivo", "Remover", "Cancelar pedido",
+                "Cancelar assinatura", "Solicitar reembolso", "Limpar tudo",
+            ),
+            RiskClass.OUTBOUND to listOf(
+                "Enviar", "Envie agora", "Publicar", "Compartilhar", "Responder",
+                "Comentar", "Encaminhar", "Postar", "Submeter",
+            ),
+        )
+        for ((risk, labels) in samples) {
+            for (label in labels) assertEquals(label, risk, TapWords.classify(label))
+        }
+        for (label in listOf("Próximo", "Pesquisar", "Lista de compras", "Adicionar ao carrinho", "Mensagens")) {
+            assertNull(label, TapWords.classify(label))
+        }
+        assertEquals(RiskClass.MONEY, TapWords.classify("Avançar", "Pagar R$ 20"))
+        assertEquals(RiskClass.MONEY, TapWords.classify("Excluir e pagar"))
+        assertEquals(RiskClass.DESTRUCTIVE, TapWords.classify("Enviar e apagar"))
+    }
+
+    @Test fun `Portuguese and card fields are handled as potentially secret`() {
+        for (field in listOf(
+            "Senha", "SENHAS", "palavra-passe", "código de verificação", "codigo de autenticacao",
+            "Código de segurança", "código SMS", "Código", "Número do cartão", "numero_cartao",
+            "Cartão de crédito", "card number", "CC-NUMBER",
+        )) assertTrue(field, TapWords.looksSecret(field))
+        for (field in listOf("CEP", "Pesquisa", "código do produto", "código-fonte", "mensagem")) {
+            assertFalse(field, TapWords.looksSecret(field))
+        }
+    }
+
+    @Test fun `Portuguese message fields make Enter a sending action`() {
+        for (hint in listOf("Mensagem", "Sua mensagem", "Digite uma mensagem...", "Escreva seu comentário", "Resposta", "Enviar mensagem")) {
+            assertTrue(hint, TapWords.entersSend(null, hint))
+        }
+        for (hint in listOf("Pesquisar mensagem", "Buscar mensagens", "Pesquisa", "Código do produto", "")) {
+            assertFalse(hint, TapWords.entersSend(null, hint))
+        }
+    }
+
     @Test fun `the reason names the label and the place`() {
         assertEquals("taps “去支付”: looks like a payment on 铁路12306", TapWords.reason(RiskClass.MONEY, "去支付", "铁路12306"))
         assertEquals("taps “删除”: looks like it deletes something", TapWords.reason(RiskClass.DESTRUCTIVE, "删除", null))

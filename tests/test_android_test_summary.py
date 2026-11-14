@@ -21,6 +21,7 @@ def test_summary_distinguishes_pass_fail_skip_and_missing(tmp_path, monkeypatch,
     (tmp_path / "sandbox-instrumentation.log").write_text(
         "INSTRUMENTATION_STATUS_CODE: -4\nOK (1 test)\n"
     )
+    (tmp_path / "browser-guard-instrumentation.log").write_text("OK (1 test)\n")
     assert summary.main() == 0
     output = capsys.readouterr().out
     assert "::notice title=Pet persistence::OK (8 tests)" in output
@@ -29,6 +30,7 @@ def test_summary_distinguishes_pass_fail_skip_and_missing(tmp_path, monkeypatch,
     assert "::warning title=Process restart::Not run" in output
     assert "::error title=Packaged sandbox::Failed, skipped, or no tests reported" in output
     assert "::notice title=Packaged sandbox" not in output
+    assert "::notice title=Browser guard::OK (1 test)" in output
 
 
 def test_summary_reports_process_evidence_only_if_present(tmp_path, monkeypatch, capsys) -> None:

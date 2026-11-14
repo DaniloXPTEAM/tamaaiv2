@@ -529,14 +529,14 @@
     <string name="nm_hands_this_phone">bu telefon</string>
     <string name="nm_hands_intro">API’si olmayan uygulamalar için telefonu senin gibi kullanır: bir ekran görüntüsü, sonra dokunma, yazma ve kaydırma. Beceriler, komutlar ve tarayıcı önce gelir; ekran son çaredir. Sen açana kadar kapalıdır.</string>
     <string name="nm_hands_switch">Ajanın ekranı kullanmasına izin ver</string>
-    <string name="nm_hands_switch_footer">Çalışırken ekranın üstündeki bir kapsül her adımı ve bir Durdur düğmesini gösterir. Oturum açma, parolalar ve kodlar her zaman sana bırakılır.</string>
+    <string name="nm_hands_switch_footer">Kapsül her adımı ve Durdur düğmesini gösterir. Oturum açma, parola ve kodlar için kontrolü devralın. Ekran görüntüleri hassas bilgiler içerebilir.</string>
     <string name="nm_hands_status_off">Kapalı; bir görev ekranı gerektirdiğinde ajan bunu söyler</string>
     <string name="nm_hands_status_ready">Hazır</string>
     <string name="nm_hands_status_missing">Açık, ama aşağıda hâlâ eksik bir şey var</string>
     <string name="nm_hands_status_working">Şu anda ekranda çalışıyor</string>
     <string name="nm_hands_stop_run">Yaptığı işi durdur</string>
     <string name="nm_hands_section_needs">Neye ihtiyacı var</string>
-    <string name="nm_hands_needs_footer">Erişilebilirlik hizmeti ekran görüntüsünü alır ve hareketleri yapar; ekranın içeriğini okumaz. Diğer uygulamaların üzerine çizme izni kapsül içindir.</string>
+    <string name="nm_hands_needs_footer">Erişilebilirlik hizmeti ekranı yakalar, hareketleri yapar ve riskleri kontrol etmek için dokunma yakınındaki etiketleri okuyabilir. Görüntüler yapılandırılmış ekran modeline gönderilir. Üstte gösterme izni kapsülü gösterir.</string>
     <string name="nm_hands_need_a11y">Erişilebilirlik hizmeti</string>
     <string name="nm_hands_need_a11y_fix">Erişilebilirlik ayarlarında Yüklü uygulamalar altından TAMA AI’u aç</string>
     <string name="nm_hands_need_overlay">Diğer uygulamaların üzerinde göster</string>
@@ -560,10 +560,10 @@
     <string name="nm_hands_why_any">görebilen tek etkin model</string>
     <string name="nm_hands_section_rules">Nasıl davranır</string>
     <string name="nm_hands_rule_ladder">Ekran en sona kalır: önce bir beceri, bir komut ya da tarayıcı.</string>
-    <string name="nm_hands_rule_secrets">Asla parola, kod ya da kart numarası yazmaz; telefonu sana verir.</string>
-    <string name="nm_hands_rule_approvals">Ödeme, gönderme, paylaşma ya da silme, kabukta ve tarayıcıda olduğu gibi onayını bekler.</string>
-    <string name="nm_hands_rule_stop">Durdur her zaman ekrandadır; ondan sonra hiçbir şey devam etmez.</string>
-    <string name="nm_hands_rule_screenshots">Her adımın ekran görüntüsü konuşmayla birlikte saklanır ve yalnızca kendi modeline gönderilir.</string>
+    <string name="nm_hands_rule_secrets">Uygulama parola, kod ve kart alanlarında kontrolü size vermeye çalışır. Algılama bir alanı kaçırabilir; emin değilseniz Durdur düğmesini kullanın.</string>
+    <string name="nm_hands_rule_approvals">Algılanan ödeme, gönderme, yayımlama ve silme işlemleri onay için kontrol edilir. Önceki bir izin geçerli olabilir ve algılama işlemleri kaçırabilir.</string>
+    <string name="nm_hands_rule_stop">Durdur, görevin sonlandırılmasını ister. Başlamış bir işlem tamamlanabilir.</string>
+    <string name="nm_hands_rule_screenshots">Ekran görüntüleri bu telefona kaydedilebilir ve uzak bir sağlayıcı kullanabilen yapılandırılmış ekran modeline gönderilebilir. Hassas bilgiler içerebilirler.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Adım %1$d</string>

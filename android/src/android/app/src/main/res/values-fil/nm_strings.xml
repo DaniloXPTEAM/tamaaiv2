@@ -529,14 +529,14 @@
     <string name="nm_hands_this_phone">teleponong ito</string>
     <string name="nm_hands_intro">Para sa mga app na walang API, ginagamit nito ang telepono tulad ng ginagawa mo: isang screenshot, saka mga tap, pag-type at pag-swipe. Nauuna ang mga skill, command at ang browser; ang screen ang huling paraan. Naka-off hanggang i-on mo.</string>
     <string name="nm_hands_switch">Hayaang gamitin ng agent ang screen</string>
-    <string name="nm_hands_switch_footer">Habang gumagawa ito, ipinapakita ng isang capsule sa itaas ng screen ang bawat hakbang at isang button na Itigil. Laging sa iyo ang mga login, password at code.</string>
+    <string name="nm_hands_switch_footer">Ipinapakita ng capsule ang bawat hakbang at ang button na Itigil. Ikaw ang gumamit para sa mga login, password at code. Maaaring may sensitibong impormasyon sa mga screenshot.</string>
     <string name="nm_hands_status_off">Naka-off; sasabihin ng agent kapag kailangan ng gawain ang screen</string>
     <string name="nm_hands_status_ready">Handa na</string>
     <string name="nm_hands_status_missing">Naka-on, pero may kulang pa sa ibaba</string>
     <string name="nm_hands_status_working">Gumagawa sa screen ngayon</string>
     <string name="nm_hands_stop_run">Itigil ang ginagawa nito</string>
     <string name="nm_hands_section_needs">Ano ang kailangan nito</string>
-    <string name="nm_hands_needs_footer">Kinukuha ng accessibility service ang screenshot at ginagawa ang mga gesture; hindi nito binabasa ang nilalaman ng screen. Ang pagguhit sa ibabaw ng ibang app ay para sa capsule.</string>
+    <string name="nm_hands_needs_footer">Kinukuha ng accessibility service ang screen, nagsasagawa ng mga gesture at maaaring magbasa ng mga label malapit sa tap para suriin ang panganib. Ipinapadala ang mga screenshot sa nakatakdang screen model. Ipinapakita ng overlay ang capsule.</string>
     <string name="nm_hands_need_a11y">Serbisyo ng accessibility</string>
     <string name="nm_hands_need_a11y_fix">I-on ang TAMA AI sa ilalim ng Mga naka-install na app sa mga setting ng accessibility</string>
     <string name="nm_hands_need_overlay">Ipakita sa ibabaw ng ibang app</string>
@@ -560,10 +560,10 @@
     <string name="nm_hands_why_any">ang tanging naka-enable na modelong nakakakita</string>
     <string name="nm_hands_section_rules">Paano ito kumikilos</string>
     <string name="nm_hands_rule_ladder">Nahuhuli ang screen: isang skill, isang command o ang browser muna.</string>
-    <string name="nm_hands_rule_secrets">Hindi kailanman nagta-type ng mga password, code o numero ng card; iniaabot nito sa iyo ang telepono.</string>
-    <string name="nm_hands_rule_approvals">Ang pagbabayad, pagpapadala, pag-post o pagbura ay naghihintay ng pag-apruba mo, tulad sa shell at sa browser.</string>
-    <string name="nm_hands_rule_stop">Laging nasa screen ang Itigil; walang nagpapatuloy pagkatapos nito.</string>
-    <string name="nm_hands_rule_screenshots">Ang screenshot ng bawat hakbang ay itinatago kasama ng usapan at ipinapadala lang sa sarili mong modelo.</string>
+    <string name="nm_hands_rule_secrets">Sinusubukan ng app na ibigay sa iyo ang kontrol sa mga field ng password, code at card. Maaaring may hindi matukoy; gamitin ang Itigil kung hindi sigurado.</string>
+    <string name="nm_hands_rule_approvals">Sinusuri para sa pag-apruba ang mga natukoy na pagbabayad, pagpapadala, pag-post at pagbura. Maaaring umiral ang dating pahintulot at maaaring may hindi matukoy.</string>
+    <string name="nm_hands_rule_stop">Hihilingin ng Itigil na tapusin ang gawain. Maaaring matapos pa ang kasalukuyang aksiyon.</string>
+    <string name="nm_hands_rule_screenshots">Maaaring i-save ang mga screenshot sa teleponong ito at ipadala sa nakatakdang screen model, na maaaring gumamit ng remote provider. Maaaring may sensitibong impormasyon ang mga ito.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Hakbang %1$d</string>

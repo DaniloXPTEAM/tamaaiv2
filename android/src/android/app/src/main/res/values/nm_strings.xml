@@ -520,14 +520,14 @@
     <string name="nm_hands_this_phone">this phone</string>
     <string name="nm_hands_intro">For apps with no API it uses the phone the way you do: a screenshot, then taps, typing and swipes. Skills, commands and the browser come first; the screen is the last resort. Off until you switch it on.</string>
     <string name="nm_hands_switch">Let the agent use the screen</string>
-    <string name="nm_hands_switch_footer">While it works, a capsule at the top of the screen shows each step and a Stop button. Logins, passwords and codes are always left to you.</string>
+    <string name="nm_hands_switch_footer">A capsule shows each step and a Stop button. Take over for sign-ins, passwords and codes. Screenshots may contain sensitive information.</string>
     <string name="nm_hands_status_off">Off; the agent will say so when a task needs the screen</string>
     <string name="nm_hands_status_ready">Ready</string>
     <string name="nm_hands_status_missing">On, but something below is still missing</string>
     <string name="nm_hands_status_working">Working on the screen now</string>
     <string name="nm_hands_stop_run">Stop what it is doing</string>
     <string name="nm_hands_section_needs">What it needs</string>
-    <string name="nm_hands_needs_footer">The accessibility service takes the screenshot and performs the gestures; it does not read the screen\'s contents. Drawing over other apps is for the capsule.</string>
+    <string name="nm_hands_needs_footer">The accessibility service captures the screen, performs gestures and may read labels near a tap to check risks. Screenshots go to the configured screen model. The overlay shows the capsule.</string>
     <string name="nm_hands_need_a11y">Accessibility service</string>
     <string name="nm_hands_need_a11y_fix">Turn on TAMA AI under Installed apps in the accessibility settings</string>
     <string name="nm_hands_need_overlay">Display over other apps</string>
@@ -551,10 +551,10 @@
     <string name="nm_hands_why_any">the only enabled model that can see</string>
     <string name="nm_hands_section_rules">How it behaves</string>
     <string name="nm_hands_rule_ladder">The screen comes last: a skill, a command or the browser first.</string>
-    <string name="nm_hands_rule_secrets">Never types passwords, codes or card numbers; it hands the phone to you.</string>
-    <string name="nm_hands_rule_approvals">Paying, sending, posting or deleting waits for your approval, as in the shell and the browser.</string>
-    <string name="nm_hands_rule_stop">Stop is always on the screen; nothing continues after it.</string>
-    <string name="nm_hands_rule_screenshots">Each step\'s screenshot is kept with the conversation and sent only to your own model.</string>
+    <string name="nm_hands_rule_secrets">The app tries to hand control to you for password, code and card fields. Detection can miss a field; use Stop if unsure.</string>
+    <string name="nm_hands_rule_approvals">Recognized payment, send, post and delete actions are checked for approval. An earlier grant can apply; detection can miss actions.</string>
+    <string name="nm_hands_rule_stop">Stop requests the run to end. An action already in progress may still finish.</string>
+    <string name="nm_hands_rule_screenshots">Screenshots can be saved on this phone and sent to the configured screen model, which may use a remote provider. They can contain sensitive information.</string>
     <!-- the capsule -->
     <string name="nm_hands_step">Step %1$d</string>
     <string name="nm_hands_looking">Looking at the screen…</string>

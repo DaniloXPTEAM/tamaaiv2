@@ -526,14 +526,14 @@
     <string name="nm_hands_this_phone">이 휴대전화</string>
     <string name="nm_hands_intro">API가 없는 앱에서는 사람처럼 휴대전화를 씁니다. 스크린샷을 찍고, 탭하고, 입력하고, 스와이프합니다. 스킬, 명령, 브라우저가 먼저이고 화면은 마지막 수단입니다. 켜기 전까지는 꺼져 있습니다.</string>
     <string name="nm_hands_switch">에이전트가 화면을 쓰게 허용</string>
-    <string name="nm_hands_switch_footer">작업하는 동안 화면 위쪽의 캡슐이 각 단계와 중지 버튼을 보여 줍니다. 로그인, 비밀번호, 인증 코드는 항상 직접 입력합니다.</string>
+    <string name="nm_hands_switch_footer">캡슐에 각 단계와 중지 버튼이 표시됩니다. 로그인, 비밀번호와 코드는 직접 처리하세요. 스크린샷에는 민감한 정보가 담길 수 있습니다.</string>
     <string name="nm_hands_status_off">끔. 작업에 화면이 필요하면 에이전트가 알려 줍니다</string>
     <string name="nm_hands_status_ready">준비됨</string>
     <string name="nm_hands_status_missing">켬, 하지만 아래에 아직 빠진 것이 있습니다</string>
     <string name="nm_hands_status_working">지금 화면에서 작업 중</string>
     <string name="nm_hands_stop_run">하던 일 멈추기</string>
     <string name="nm_hands_section_needs">필요한 것</string>
-    <string name="nm_hands_needs_footer">접근성 서비스가 스크린샷을 찍고 제스처를 수행합니다. 화면의 내용을 읽지는 않습니다. 다른 앱 위에 표시는 캡슐을 위한 것입니다.</string>
+    <string name="nm_hands_needs_footer">접근성 서비스는 화면을 캡처하고 제스처를 수행하며 위험을 확인하기 위해 터치 근처의 라벨을 읽을 수 있습니다. 캡처는 설정된 화면 모델로 전송됩니다. 오버레이는 캡슐을 표시합니다.</string>
     <string name="nm_hands_need_a11y">접근성 서비스</string>
     <string name="nm_hands_need_a11y_fix">접근성 설정의 설치된 앱에서 TAMA AI를 켜세요</string>
     <string name="nm_hands_need_overlay">다른 앱 위에 표시</string>
@@ -557,10 +557,10 @@
     <string name="nm_hands_why_any">볼 수 있는 유일하게 켜진 모델</string>
     <string name="nm_hands_section_rules">동작 방식</string>
     <string name="nm_hands_rule_ladder">화면은 마지막입니다. 스킬, 명령, 브라우저가 먼저입니다.</string>
-    <string name="nm_hands_rule_secrets">비밀번호, 인증 코드, 카드 번호는 절대 입력하지 않습니다. 휴대전화를 넘겨 드립니다.</string>
-    <string name="nm_hands_rule_approvals">결제, 전송, 게시, 삭제는 셸과 브라우저에서처럼 승인을 기다립니다.</string>
-    <string name="nm_hands_rule_stop">중지는 항상 화면에 있고, 누른 뒤에는 아무것도 계속되지 않습니다.</string>
-    <string name="nm_hands_rule_screenshots">각 단계의 스크린샷은 대화와 함께 보관되고 내 모델에만 전송됩니다.</string>
+    <string name="nm_hands_rule_secrets">앱은 비밀번호, 코드와 카드 입력란에서 제어권을 넘기려고 합니다. 입력란을 놓칠 수 있으므로 확실하지 않으면 중지를 누르세요.</string>
+    <string name="nm_hands_rule_approvals">결제, 전송, 게시와 삭제로 인식된 동작은 승인을 확인합니다. 이전 승인이 적용될 수 있고 동작을 감지하지 못할 수도 있습니다.</string>
+    <string name="nm_hands_rule_stop">중지는 실행 종료를 요청합니다. 이미 진행 중인 동작은 완료될 수 있습니다.</string>
+    <string name="nm_hands_rule_screenshots">스크린샷은 이 휴대전화에 저장되고 설정된 화면 모델로 전송될 수 있습니다. 모델은 원격 제공자를 사용할 수 있으며 캡처에는 민감한 정보가 담길 수 있습니다.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">%1$d단계</string>

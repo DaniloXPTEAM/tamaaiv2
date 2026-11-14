@@ -529,14 +529,14 @@
     <string name="nm_hands_this_phone">este teléfono</string>
     <string name="nm_hands_intro">Para apps sin API usa el teléfono como lo harías tú: una captura de pantalla y luego toques, escritura y deslizamientos. Primero van las habilidades, los comandos y el navegador; la pantalla es el último recurso. Desactivado hasta que lo actives.</string>
     <string name="nm_hands_switch">Dejar que el agente use la pantalla</string>
-    <string name="nm_hands_switch_footer">Mientras trabaja, una cápsula en la parte superior de la pantalla muestra cada paso y un botón de Parar. Los inicios de sesión, contraseñas y códigos siempre quedan en tus manos.</string>
+    <string name="nm_hands_switch_footer">Una cápsula muestra cada paso y el botón Parar. Toma el control para iniciar sesión e introducir contraseñas y códigos. Las capturas pueden contener información sensible.</string>
     <string name="nm_hands_status_off">Desactivadas: el agente te lo dirá cuando una tarea necesite la pantalla</string>
     <string name="nm_hands_status_ready">Listas</string>
     <string name="nm_hands_status_missing">Activadas, pero aún falta algo de lo de abajo</string>
     <string name="nm_hands_status_working">Trabajando en la pantalla ahora</string>
     <string name="nm_hands_stop_run">Parar lo que está haciendo</string>
     <string name="nm_hands_section_needs">Qué necesita</string>
-    <string name="nm_hands_needs_footer">El servicio de accesibilidad toma la captura y realiza los gestos; no lee el contenido de la pantalla. Mostrar sobre otras apps es para la cápsula.</string>
+    <string name="nm_hands_needs_footer">El servicio de accesibilidad captura la pantalla, realiza gestos y puede leer etiquetas cerca de un toque para comprobar riesgos. Las capturas van al modelo de pantalla configurado. La superposición muestra la cápsula.</string>
     <string name="nm_hands_need_a11y">Servicio de accesibilidad</string>
     <string name="nm_hands_need_a11y_fix">Activa TAMA AI en Apps instaladas dentro de los ajustes de accesibilidad</string>
     <string name="nm_hands_need_overlay">Mostrar sobre otras apps</string>
@@ -560,10 +560,10 @@
     <string name="nm_hands_why_any">el único modelo activado que puede ver</string>
     <string name="nm_hands_section_rules">Cómo se comporta</string>
     <string name="nm_hands_rule_ladder">La pantalla va al final: primero una habilidad, un comando o el navegador.</string>
-    <string name="nm_hands_rule_secrets">Nunca escribe contraseñas, códigos ni números de tarjeta; te pasa el teléfono a ti.</string>
-    <string name="nm_hands_rule_approvals">Pagar, enviar, publicar o eliminar espera tu aprobación, igual que en el shell y el navegador.</string>
-    <string name="nm_hands_rule_stop">Parar está siempre en pantalla; nada continúa después.</string>
-    <string name="nm_hands_rule_screenshots">La captura de cada paso se guarda con la conversación y se envía solo a tu propio modelo.</string>
+    <string name="nm_hands_rule_secrets">La app intenta cederte el control en campos de contraseña, código y tarjeta. La detección puede fallar; usa Parar si tienes dudas.</string>
+    <string name="nm_hands_rule_approvals">Las acciones reconocidas de pagar, enviar, publicar y eliminar pasan por una comprobación de aprobación. Una autorización anterior puede aplicarse y la detección puede fallar.</string>
+    <string name="nm_hands_rule_stop">Parar solicita detener la tarea. Una acción ya iniciada puede terminar.</string>
+    <string name="nm_hands_rule_screenshots">Las capturas pueden guardarse en este teléfono y enviarse al modelo de pantalla configurado, que puede usar un proveedor remoto. Pueden contener información sensible.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Paso %1$d</string>

@@ -535,14 +535,14 @@
     <string name="nm_hands_this_phone">ten telefon</string>
     <string name="nm_hands_intro">W aplikacjach bez API używa telefonu tak jak ty: zrzut ekranu, potem dotknięcia, pisanie i przesunięcia. Najpierw umiejętności, polecenia i przeglądarka; ekran jest ostatecznością. Wyłączone, dopóki tego nie włączysz.</string>
     <string name="nm_hands_switch">Pozwól agentowi używać ekranu</string>
-    <string name="nm_hands_switch_footer">Podczas pracy kapsuła u góry ekranu pokazuje każdy krok i przycisk Stop. Logowania, hasła i kody zawsze zostają tobie.</string>
+    <string name="nm_hands_switch_footer">Kapsuła pokazuje każdy krok i przycisk Zatrzymaj. Przejmij sterowanie przy logowaniu, hasłach i kodach. Zrzuty ekranu mogą zawierać poufne informacje.</string>
     <string name="nm_hands_status_off">Wyłączone; agent powie o tym, gdy zadanie będzie wymagać ekranu</string>
     <string name="nm_hands_status_ready">Gotowe</string>
     <string name="nm_hands_status_missing">Włączone, ale czegoś poniżej wciąż brakuje</string>
     <string name="nm_hands_status_working">Pracuje teraz na ekranie</string>
     <string name="nm_hands_stop_run">Zatrzymaj to, co robi</string>
     <string name="nm_hands_section_needs">Czego potrzebuje</string>
-    <string name="nm_hands_needs_footer">Usługa ułatwień dostępu robi zrzut ekranu i wykonuje gesty; nie czyta zawartości ekranu. Wyświetlanie nad innymi aplikacjami służy kapsule.</string>
+    <string name="nm_hands_needs_footer">Usługa ułatwień dostępu robi zrzuty ekranu, wykonuje gesty i może odczytywać etykiety przy dotknięciu, aby sprawdzić ryzyko. Zrzuty trafiają do skonfigurowanego modelu ekranu. Nakładka pokazuje kapsułę.</string>
     <string name="nm_hands_need_a11y">Usługa ułatwień dostępu</string>
     <string name="nm_hands_need_a11y_fix">Włącz TAMA AI w sekcji Zainstalowane aplikacje w ustawieniach ułatwień dostępu</string>
     <string name="nm_hands_need_overlay">Wyświetlanie nad innymi aplikacjami</string>
@@ -566,10 +566,10 @@
     <string name="nm_hands_why_any">jedyny włączony model, który widzi</string>
     <string name="nm_hands_section_rules">Jak się zachowuje</string>
     <string name="nm_hands_rule_ladder">Ekran na końcu: najpierw umiejętność, polecenie albo przeglądarka.</string>
-    <string name="nm_hands_rule_secrets">Nigdy nie wpisuje haseł, kodów ani numerów kart; oddaje telefon tobie.</string>
-    <string name="nm_hands_rule_approvals">Płatność, wysyłanie, publikowanie lub usuwanie czeka na twoją zgodę, tak jak w powłoce i przeglądarce.</string>
-    <string name="nm_hands_rule_stop">Stop jest zawsze na ekranie; po nim nic nie trwa dalej.</string>
-    <string name="nm_hands_rule_screenshots">Zrzut ekranu z każdego kroku zostaje przy rozmowie i trafia tylko do twojego własnego modelu.</string>
+    <string name="nm_hands_rule_secrets">Aplikacja próbuje przekazać Ci kontrolę przy polach hasła, kodu i karty. Wykrywanie może pominąć pole; w razie wątpliwości użyj Zatrzymaj.</string>
+    <string name="nm_hands_rule_approvals">Rozpoznane działania płatności, wysyłania, publikowania i usuwania są sprawdzane pod kątem zgody. Wcześniejsza zgoda może obowiązywać, a wykrywanie może pominąć działanie.</string>
+    <string name="nm_hands_rule_stop">Stop prosi o zakończenie zadania. Rozpoczęta czynność może się jeszcze zakończyć.</string>
+    <string name="nm_hands_rule_screenshots">Zrzuty ekranu mogą być zapisane w tym telefonie i wysłane do skonfigurowanego modelu ekranu, który może korzystać ze zdalnego dostawcy. Mogą zawierać poufne informacje.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Krok %1$d</string>

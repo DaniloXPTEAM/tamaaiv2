@@ -8,11 +8,11 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | `0bdb919`: APK instalado teve hash conferido, mas smoke falhou. `262b822`: [Android 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294), build e unitários passaram; smoke parou porque a leitura do APK instalado não correspondeu ao hash selado. | Diagnosticar leitura e repetir CI sem reduzir o gate de integridade; investigar PRoot. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: a jornada expirou ao esperar o relatório, sem tabela. `c0faef7` move o painel para fora da lista e dispensa o teclado; a alteração compilou em `262b822`, mas o smoke não chegou à jornada. | Confirmar o painel no APK e publicar a tabela do pedido real ao servidor falso. |
+| T0a: build, testes e hash | PARCIAL | [Android 43590807353](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43590807353): build passou e leitura do APK instalado correspondeu ao selado; Pet passou, mas jornada e PRoot falharam. | Investigar o diálogo do Pixel Launcher e o PRoot no emulador sem reduzir os gates. Release ainda não comprovado. |
+| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: a jornada expirou ao esperar o relatório, sem tabela. `c0faef7` move o painel para fora da lista e dispensa o teclado; em `43590807353`, um diálogo do Pixel Launcher impediu a jornada antes do chat. | Confirmar o painel no APK e publicar a tabela do pedido real ao servidor falso. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
-| T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). A jornada instrumentada não rodou por falha prévia na conferência do APK. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
+| T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
 | T2: detalhes tocáveis | PENDENTE | Sem prova de painel completo. | Implementar e testar na interface. |
 | T3: metas medidas | BLOQUEADA | Depende da tabela real de T0b. | Recalibrar perfis depois da medição. |
 | T4: roteador e perfis | PENDENTE | Perfis e orçamento ainda não integrados. | Criar roteador e testes por intenção, continuidade e orçamento. |
@@ -23,8 +23,50 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
 | T8: imagem | PENDENTE | Consultar a configuração não equivale a gerar imagem. | Tool e mensagem de configuração ausente. |
 | T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
-| T10: tradução e resíduos | PARCIAL / BLOQUEADA | As novas strings do medidor têm pt-BR e paridade; os demais textos não foram revisados. Arte de origem e keystore dependem do dono. | Continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
+| T10: tradução e resíduos | PARCIAL / BLOQUEADA | Avisos de operação da tela revisados em 17 locales; testes de paridade e heurísticas passaram no host. O teste de WebView sintética foi preparado, ainda sem execução Android. Arte e keystore dependem do dono. | Validar as mudanças no CI; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI do diagnóstico de leitura do APK
+
+- [Android 43590807353](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43590807353),
+  commit original `fb499df`: o build debug arm64, os unitários e a compilação da instrumentação
+  passaram; os dois jobs de previews também. A primeira leitura do APK instalado teve 70.648.768
+  bytes e SHA-256 `1c35e738e507bf13bb312cf6c983a7405c17a2e1ef37afcc797742ce8947623b`,
+  igual ao APK selado. O certificado informado foi
+  `7c2c5601b6597d813d9fff63ed3f9c0f4a8d539ffb7da2ea03077b5622df715c`, diferente do
+  artefato anterior; a assinatura do telefone continua desconhecida.
+- No emulador descartável, os oito testes de persistência Pet e dois de tela passaram. A jornada
+  falhou antes da primeira captura porque a Activity não ganhou foco. A captura de diagnóstico,
+  reconstruída das anotações e conferida pelo SHA-256
+  `1f7a5bfaaf80b71254ba36c66b466511d3fd6391122f950071896f7da176d347`, mostra o diálogo
+  **Pixel Launcher isn't responding** sobre a tela inicial do TAMA. Isso identifica a janela
+  que encobriu o app nessa captura, não a causa da lentidão do launcher. A jornada de chat,
+  tabela count-only e restart não foram executados até o fim.
+- O primeiro comando do sandbox voltou a expirar com código 124, processo vivo e saída vazia.
+  Não há causa demonstrada nem conclusão para ARM físico. Test Suite, iOS e harness passaram;
+  o workflow Android falhou. O workflow Commits falhou porque o assunto de `fb499df` não seguia
+  Conventional Commits. Apenas a mensagem foi corrigida para `bb50bfb` com DCO, e o check
+  [Commits 43592023070](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43592023070) passou.
+  O CI Android de `bb50bfb` estava em andamento ao registrar este status.
+- O plano único fornecido pelo dono foi preservado em `35018fe`, sem alteração de conteúdo;
+  SHA-256 `00e2a1bf719fd5c69c570f278ac578de7f3ec19ba2aff3eb372a5d7a761996b5`.
+
+## Permissões e guardas de tela: verificação parcial
+
+- As mensagens sobre Hands agora explicam que capturas podem conter dados sensíveis e ser enviadas
+  ao modelo configurado, que a acessibilidade pode ler rótulos e que a detecção ou o botão Parar
+  não garantem desfazer uma ação em andamento. Aprovações lembradas podem ser aplicadas. Há
+  alterações em 17 arquivos de idioma; XML, paridade, placeholders e regras automáticas de estilo
+  passaram. A qualidade semântica das demais traduções não foi validada por falantes.
+- As heurísticas incluem exemplos comuns em português para pagamento, exclusão, envio e campos
+  sensíveis; o navegador também considera a etiqueta acessível do botão pai e recusa `click`/`type`
+  quando não consegue inspecionar o alvo. Foram 21 testes Kotlin host e um DOM sintético no Node;
+  cancelamento foi testado no nível da inspeção. Não equivalem a comportamento Android.
+- Foi acrescentado um teste instrumentado em WebView sem rede, com página e dados fictícios, para
+  uma digitação comum, alvo ausente, campo de cartão e pagamento negado. O teste ainda precisa
+  rodar no CI: não afirmar que passou. A guarda de `click`/`type` **não cobre JavaScript arbitrário**;
+  rótulos podem ser ambíguos, a página pode mudar entre inspeção e ação e os controles de Hands
+  também são heurísticos. Não se trata de proteção completa nem de `SECURITY_RELEASE`.
 
 ## CI de `262b822`: build passou, smoke interrompido
 
@@ -38,10 +80,11 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   divergência é do APK instalado ou da transferência `adb`. Nenhum teste instrumentado rodou,
   inclusive Pet, jornada e sandbox; não há tabela. O workflow terminou em falha. Test Suite,
   iOS, harness e Commits passaram separadamente.
-- A nova verificação proposta registra status, tamanho e hash de cada leitura, tenta a leitura
+- A verificação posterior registra status, tamanho e hash de cada leitura, tenta a leitura
   uma vez mais e coleta, só para diagnóstico, o hash calculado no emulador. **Continua exigindo
   leitura completa e hash exato do arquivo instalado**; resultado incorreto nunca é aceito pelo
-  hash alternativo. Ainda aguarda execução no CI. Os testes com `adb` falso passaram no host.
+  hash alternativo. Em `43590807353`, a primeira leitura foi completa e coincidiu com o selado;
+  isso não identifica a causa da divergência do run anterior. Testes com `adb` falso passaram.
 
 ## CI de `0bdb919`: linha de base parcial
 
@@ -84,10 +127,11 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   O teste de interface preparado exige uma única chamada para o 413, retry manual, redução do
   teto, contagem regressiva e intervalo monotônico de pelo menos 2,9 s antes da resposta local.
   Os testes HTTP e de armazenamento passaram no job de unitários do CI; a jornada Android ainda
-  não foi executada porque o smoke parou antes dela.
-- 19 testes Python direcionados passaram e um foi pulado; `git diff --check`, Ruff direcionado e
-  sintaxe do script de smoke passaram. O teste instrumentado do relatório recebeu um diagnóstico
-  de contagem de controles, sem registrar conteúdo da conversa, caso volte a expirar.
+  não chegou aos pedidos, primeiro por falha de integridade e depois pelo diálogo do launcher.
+- A verificação mais recente no host incluiu 62 testes Python direcionados, Ruff e sintaxe do
+  script de smoke, além de 11 testes Kotlin de medição e paridade e 21 de guardas com substitutos
+  para dependências Android. `git diff --check` passou. O teste instrumentado do relatório recebeu
+  um diagnóstico de contagem de controles, sem registrar conteúdo da conversa, caso volte a expirar.
 
 ## Decisões e limites
 

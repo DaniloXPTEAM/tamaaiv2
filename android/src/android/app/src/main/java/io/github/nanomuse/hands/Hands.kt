@@ -23,9 +23,8 @@ import kotlinx.coroutines.flow.asStateFlow
  * prerequisites hold, the agent gets `nanomuse-hands` — a screenshot-driven operator that taps,
  * types and swipes in the apps that have no API — as the last rung of the ladder.
  *
- * The eyes are the screenshot alone: no accessibility tree is read for perception. The
- * accessibility service is the hand (gestures, the screenshot itself, the focused field to
- * type into) and nothing more.
+ * The screen model uses screenshots for perception. Locally, the accessibility service also
+ * reads the focused field and labels near a tap for risk checks; those checks can miss things.
  */
 object Hands {
     private const val PREFS = "nanomuse"
@@ -215,8 +214,8 @@ object Hands {
             append("A task is rarely all screen: find the number with a command, the button with the screen, and ask before it is pressed.\n")
             if (on && r.ready) {
                 append("The screen is available: `nanomuse-hands run --task \"<one clear task, with every detail the hands need>\" [--app \"<app name>\"]` ")
-                append("(screen model: ${r.model?.label}). It looks at screenshots — never the accessibility tree — and taps, types and swipes; a capsule with Stop shows the user what it does. ")
-                append("It never types passwords, codes or card numbers: for a login or a code it hands the phone to the user and waits. Taps that pay, send, post or delete go through the same approval card as the shell and the browser. ")
+                append("(screen model: ${r.model?.label}). It uses screenshots for perception; local risk checks can also read labels near taps. A capsule with Stop shows its actions. ")
+                append("Never type passwords, codes or card numbers; ask the user to take over. Ask before paying, sending, posting or deleting. Automatic checks can miss a field or action, and an earlier approval may apply. ")
                 append("It returns JSON: `outcome` is done (with `answer`), stopped (the user tapped Stop — do not restart it), needs_user (`question` — relay it and wait), infeasible or failed (with `message`); `last_screen` is a picture you can show with `![screen](<last_screen>)`. ")
                 append("Keep the complete JSON result: do not pipe nanomuse-hands run through head or tail. Save it to a file or parse named fields with jq, preserving ok, outcome, steps, last_screen and the answer, message or question. ")
                 append("Tell the user in one line that you are about to use the screen and which app, then run it; give one task per run, and never a payment as the task. `nanomuse-hands apps` lists the installed apps; `nanomuse-hands status` says what is set up.")

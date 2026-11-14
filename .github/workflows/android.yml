@@ -323,6 +323,7 @@ jobs:
             journey-instrumentation.log
             restart-instrumentation.log
             sandbox-instrumentation.log
+            browser-guard-instrumentation.log
             android-runtime.log
             prompt-size.log
             prompt-size-summary.md

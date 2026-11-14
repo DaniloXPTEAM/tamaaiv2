@@ -511,14 +511,14 @@
     <string name="nm_hands_this_phone">這台手機</string>
     <string name="nm_hands_intro">對於沒有介面的 App，它像你一樣用手機：看一眼截圖，然後點、輸、滑。技能、命令列、瀏覽器能辦的先用，螢幕是最後一步。預設關閉。</string>
     <string name="nm_hands_switch">允許操作螢幕</string>
-    <string name="nm_hands_switch_footer">操作時螢幕頂部會有一個膠囊，顯示每一步和「停止」按鈕。登入、密碼、驗證碼永遠留給你自己輸。</string>
+    <string name="nm_hands_switch_footer">膠囊會顯示每一步和停止按鈕。登入、密碼和驗證碼請由你自己操作。螢幕截圖可能包含敏感資訊。</string>
     <string name="nm_hands_status_off">已關閉；任務需要用到螢幕時它會告訴你</string>
     <string name="nm_hands_status_ready">就緒</string>
     <string name="nm_hands_status_missing">已開啟，但下面還有沒準備好的</string>
     <string name="nm_hands_status_working">正在操作螢幕</string>
     <string name="nm_hands_stop_run">停止目前操作</string>
     <string name="nm_hands_section_needs">需要什麼</string>
-    <string name="nm_hands_needs_footer">無障礙服務只負責截圖和手勢，不讀取螢幕內容。懸浮視窗權限用來顯示膠囊。</string>
+    <string name="nm_hands_needs_footer">無障礙服務會擷取螢幕並執行手勢，還可能讀取點擊位置附近的標籤以檢查風險。截圖會傳送給已設定的螢幕模型。懸浮權限用於顯示膠囊。</string>
     <string name="nm_hands_need_a11y">無障礙服務</string>
     <string name="nm_hands_need_a11y_fix">到無障礙設定裡「已安裝的應用程式」中打開 TAMA AI</string>
     <string name="nm_hands_need_overlay">顯示在其他應用程式上層</string>
@@ -542,10 +542,10 @@
     <string name="nm_hands_why_any">唯一一個啟用了、又能看圖的模型</string>
     <string name="nm_hands_section_rules">它會怎麼做</string>
     <string name="nm_hands_rule_ladder">螢幕排最後：先試技能、命令列、瀏覽器。</string>
-    <string name="nm_hands_rule_secrets">從不代輸密碼、驗證碼、卡號；遇到就把手機交還給你。</string>
-    <string name="nm_hands_rule_approvals">付款、傳送、發布、刪除之前先問你，和命令列、瀏覽器一樣。</string>
-    <string name="nm_hands_rule_stop">「停止」一直在螢幕上，點了就不會再動。</string>
-    <string name="nm_hands_rule_screenshots">每一步的截圖隨對話保存，只傳給你自己的模型。</string>
+    <string name="nm_hands_rule_secrets">遇到密碼、驗證碼和銀行卡欄位時，應用程式會嘗試把控制權交給你。偵測可能遺漏欄位；不確定時請按停止。</string>
+    <string name="nm_hands_rule_approvals">辨識出的付款、傳送、發布和刪除操作會檢查是否需要批准。之前的授權可能生效，偵測也可能遺漏操作。</string>
+    <string name="nm_hands_rule_stop">「停止」會要求結束任務；已開始的動作可能仍會完成。</string>
+    <string name="nm_hands_rule_screenshots">截圖可能儲存在此手機上，並傳送給已設定的螢幕模型；該模型可能使用遠端服務供應商。截圖可能包含敏感資訊。</string>
     <!-- the capsule -->
     <string name="nm_hands_step">第 %1$d 步</string>
     <string name="nm_hands_looking">正在看螢幕…</string>

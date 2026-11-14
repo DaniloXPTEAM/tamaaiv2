@@ -16,6 +16,7 @@ CHECKS = (
     ("journey-instrumentation.log", "Real app journey", 1),
     ("restart-instrumentation.log", "Process restart", 1),
     ("sandbox-instrumentation.log", "Packaged sandbox", 1),
+    ("browser-guard-instrumentation.log", "Browser guard", 1),
 )
 SUMMARY = re.compile(r"^OK \((\d+) tests?\)", re.MULTILINE)
 FAILED = re.compile(

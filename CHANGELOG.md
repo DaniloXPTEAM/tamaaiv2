@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Expanded Android screen and browser checks for common Portuguese labels, refused browser clicks or typing when the target cannot be inspected, and clarified the limits of detection, Stop and screenshot privacy.
+
 - Added bounded readback diagnostics to the isolated Android APK integrity check without bypassing a mismatch.
 
 - Kept the Android prompt-size report outside the recycled message row and dismissed the keyboard when opening it.

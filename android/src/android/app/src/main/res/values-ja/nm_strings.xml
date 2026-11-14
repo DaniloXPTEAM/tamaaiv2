@@ -526,14 +526,14 @@
     <string name="nm_hands_this_phone">この端末</string>
     <string name="nm_hands_intro">API のないアプリでは、あなたと同じようにスマートフォンを使います: スクリーンショットを撮り、タップ、入力、スワイプをします。スキル、コマンド、ブラウザーが先で、画面は最後の手段です。オンにするまではオフです。</string>
     <string name="nm_hands_switch">エージェントに画面を使わせる</string>
-    <string name="nm_hands_switch_footer">作業中は画面上部のカプセルに各ステップと停止ボタンが表示されます。ログイン、パスワード、コードは常にあなたに任されます。</string>
+    <string name="nm_hands_switch_footer">カプセルに各ステップと停止ボタンが表示されます。ログイン、パスワード、コードの入力は自分で行ってください。画面の画像には機密情報が含まれる場合があります。</string>
     <string name="nm_hands_status_off">オフ。タスクに画面が必要なときはエージェントがそう伝えます</string>
     <string name="nm_hands_status_ready">準備完了</string>
     <string name="nm_hands_status_missing">オンですが、下の項目がまだ足りません</string>
     <string name="nm_hands_status_working">今、画面で作業中です</string>
     <string name="nm_hands_stop_run">作業を止める</string>
     <string name="nm_hands_section_needs">必要なもの</string>
-    <string name="nm_hands_needs_footer">ユーザー補助サービスがスクリーンショットを撮り、ジェスチャーを行います。画面の内容は読み取りません。他のアプリの上に重ねて表示する権限はカプセルのためです。</string>
+    <string name="nm_hands_needs_footer">ユーザー補助サービスは画面の撮影とジェスチャーを行い、リスク確認のためタップ付近のラベルを読む場合があります。画像は設定された画面モデルに送られます。オーバーレイはカプセルの表示に使います。</string>
     <string name="nm_hands_need_a11y">ユーザー補助サービス</string>
     <string name="nm_hands_need_a11y_fix">ユーザー補助の設定の「インストール済みアプリ」で TAMA AI をオンにしてください</string>
     <string name="nm_hands_need_overlay">他のアプリの上に重ねて表示</string>
@@ -557,10 +557,10 @@
     <string name="nm_hands_why_any">有効なモデルのうち画面を見られる唯一のもの</string>
     <string name="nm_hands_section_rules">ふるまい</string>
     <string name="nm_hands_rule_ladder">画面は最後です: まずスキル、コマンド、ブラウザーを使います。</string>
-    <string name="nm_hands_rule_secrets">パスワード、コード、カード番号は決して入力しません。端末をあなたに渡します。</string>
-    <string name="nm_hands_rule_approvals">支払い、送信、投稿、削除は、シェルやブラウザーと同じくあなたの承認を待ちます。</string>
-    <string name="nm_hands_rule_stop">停止ボタンは常に画面にあり、押したあとは何も続きません。</string>
-    <string name="nm_hands_rule_screenshots">各ステップのスクリーンショットは会話と一緒に保存され、あなた自身のモデルにだけ送られます。</string>
+    <string name="nm_hands_rule_secrets">パスワード、コード、カードの欄では操作を引き継ぐよう試みます。検出できない場合もあるため、迷ったら停止してください。</string>
+    <string name="nm_hands_rule_approvals">支払い、送信、投稿、削除と認識した操作は承認を確認します。以前の許可が適用されることがあり、操作を検出できない場合もあります。</string>
+    <string name="nm_hands_rule_stop">「停止」で実行の終了を要求します。すでに進行中の操作は完了する場合があります。</string>
+    <string name="nm_hands_rule_screenshots">画面の画像はこの端末に保存され、設定された画面モデルに送信される場合があります。モデルは外部の提供元を使うことがあり、画像には機密情報が含まれる場合があります。</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">ステップ %1$d</string>

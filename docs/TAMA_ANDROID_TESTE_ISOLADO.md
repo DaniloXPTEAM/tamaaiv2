@@ -35,6 +35,9 @@ fails, is skipped, or reports no tests:
   No app data is cleared between the two runs.
 - The packaged PRoot sandbox executing commands, writing and rereading a session workspace file,
   and reporting a failed shell command's exit code.
+- A network-blocked WebView on an inline synthetic page: ordinary typing, a refused unknown
+  selector, a refused fake card field and a denied payment-labeled tap. This checks specific
+  click/type cases only; it does not establish comprehensive detection or guard JavaScript.
 
 Full-size PNGs, individual instrumentation logs and a process-id summary are uploaded as
 `tama-device-smoke`. Small JPEG check annotations are generated from synthetic emulator images

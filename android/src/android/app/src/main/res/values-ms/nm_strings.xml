@@ -526,14 +526,14 @@
     <string name="nm_hands_this_phone">telefon ini</string>
     <string name="nm_hands_intro">Untuk aplikasi tanpa API, ia menggunakan telefon seperti anda: tangkapan skrin, kemudian ketikan, taipan dan leretan. Kemahiran, perintah dan pelayar didahulukan; skrin ialah pilihan terakhir. Mati sehingga anda menghidupkannya.</string>
     <string name="nm_hands_switch">Benarkan ejen menggunakan skrin</string>
-    <string name="nm_hands_switch_footer">Semasa ia bekerja, satu kapsul di bahagian atas skrin menunjukkan setiap langkah dan butang Berhenti. Log masuk, kata laluan dan kod sentiasa diserahkan kepada anda.</string>
+    <string name="nm_hands_switch_footer">Kapsul menunjukkan setiap langkah dan butang Henti. Ambil alih untuk log masuk, kata laluan dan kod. Tangkapan skrin mungkin mengandungi maklumat sensitif.</string>
     <string name="nm_hands_status_off">Mati; ejen akan memberitahu apabila sesuatu tugas memerlukan skrin</string>
     <string name="nm_hands_status_ready">Sedia</string>
     <string name="nm_hands_status_missing">Hidup, tetapi ada yang masih belum lengkap di bawah</string>
     <string name="nm_hands_status_working">Sedang bekerja di skrin sekarang</string>
     <string name="nm_hands_stop_run">Hentikan apa yang sedang dilakukannya</string>
     <string name="nm_hands_section_needs">Apa yang diperlukannya</string>
-    <string name="nm_hands_needs_footer">Perkhidmatan kebolehcapaian mengambil tangkapan skrin dan melakukan gerak isyarat; ia tidak membaca kandungan skrin. Melukis di atas aplikasi lain adalah untuk kapsul.</string>
+    <string name="nm_hands_needs_footer">Perkhidmatan kebolehcapaian menangkap skrin, melakukan gerak isyarat dan boleh membaca label berhampiran sentuhan untuk menyemak risiko. Tangkapan dihantar kepada model skrin yang ditetapkan. Tindanan memaparkan kapsul.</string>
     <string name="nm_hands_need_a11y">Perkhidmatan kebolehcapaian</string>
     <string name="nm_hands_need_a11y_fix">Hidupkan TAMA AI di bawah Aplikasi dipasang dalam tetapan kebolehcapaian</string>
     <string name="nm_hands_need_overlay">Paparkan di atas aplikasi lain</string>
@@ -557,10 +557,10 @@
     <string name="nm_hands_why_any">satu-satunya model didayakan yang boleh melihat</string>
     <string name="nm_hands_section_rules">Cara ia bertindak</string>
     <string name="nm_hands_rule_ladder">Skrin yang terakhir: kemahiran, perintah atau pelayar dahulu.</string>
-    <string name="nm_hands_rule_secrets">Tidak pernah menaip kata laluan, kod atau nombor kad; ia menyerahkan telefon kepada anda.</string>
-    <string name="nm_hands_rule_approvals">Membayar, menghantar, menyiarkan atau memadam menunggu kelulusan anda, seperti dalam shell dan pelayar.</string>
-    <string name="nm_hands_rule_stop">Berhenti sentiasa ada di skrin; tiada apa-apa diteruskan selepasnya.</string>
-    <string name="nm_hands_rule_screenshots">Tangkapan skrin setiap langkah disimpan bersama perbualan dan hanya dihantar ke model anda sendiri.</string>
+    <string name="nm_hands_rule_secrets">Aplikasi cuba menyerahkan kawalan kepada anda untuk medan kata laluan, kod dan kad. Pengesanan boleh terlepas medan; gunakan Henti jika tidak pasti.</string>
+    <string name="nm_hands_rule_approvals">Tindakan bayar, hantar, siar dan padam yang dikenal pasti disemak untuk kelulusan. Kebenaran terdahulu mungkin terpakai dan pengesanan boleh terlepas tindakan.</string>
+    <string name="nm_hands_rule_stop">Berhenti meminta tugas dihentikan. Tindakan yang sudah berjalan mungkin selesai.</string>
+    <string name="nm_hands_rule_screenshots">Tangkapan skrin boleh disimpan pada telefon ini dan dihantar kepada model skrin yang ditetapkan, yang mungkin menggunakan penyedia jauh. Tangkapan boleh mengandungi maklumat sensitif.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Langkah %1$d</string>
