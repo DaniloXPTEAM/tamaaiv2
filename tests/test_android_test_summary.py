@@ -57,3 +57,22 @@ def test_runtime_diagnostics_are_bounded_and_escape_commands(tmp_path, monkeypat
     for line in output.splitlines():
         if "diagnostics::" in line:
             assert len(line.split("::", 2)[-1]) <= 3000
+
+
+def test_translation_diagnostics_survive_the_shell_tail_limit(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "android-runtime.log").write_text(
+        "D/PRootStderr(1): ndk_translation/guest.cc: CHECK failed: 1 != 1 (50%)\n"
+        + "".join(f"D/PRootStderr(1): later line {index}\n" for index in range(12)),
+        encoding="utf-8",
+    )
+    assert summary.main() == 0
+    output = capsys.readouterr().out
+    translation = next(
+        line for line in output.splitlines() if "title=Translation diagnostics" in line
+    )
+    assert "ndk_translation/guest.cc" in translation
+    assert "50%25" in translation
+    assert len(translation.split("::", 2)[-1]) <= 3000

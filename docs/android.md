@@ -36,7 +36,10 @@ the Pet, with a matching dark palette. The five home destinations and their func
 same. The current tab carries its label, and the paw beside the agent name opens the Pet directly;
 tapping the face or name still opens the agent profile. Appearance settings, including a custom
 avatar, theme override and chat background, remain in place. The isolated test procedure and its
-limits are in [TAMA_ANDROID_TESTE_ISOLADO.md](TAMA_ANDROID_TESTE_ISOLADO.md).
+limits are in [TAMA_ANDROID_TESTE_ISOLADO.md](TAMA_ANDROID_TESTE_ISOLADO.md). In run `43544369188`
+the Compose journey and process-restart assertions passed, but a Pixel Launcher dialog appeared in
+some raw emulator screenshots and the translated PRoot shell check timed out. Those results do not
+establish an unobstructed physical-phone journey or a working native ARM sandbox.
 
 ## Pet
 

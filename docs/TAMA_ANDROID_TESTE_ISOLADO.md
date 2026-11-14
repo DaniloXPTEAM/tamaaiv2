@@ -62,6 +62,27 @@ log included an `ndk_translation` check failure. This is a failure of that trans
 check, not evidence that the sandbox works or fails on a physical ARM phone. The process-restart
 check did not run because the journey failed.
 
+[Run 43544369188](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43544369188) for commit
+`c2c06b6` built the arm64 APK, passed Gradle unit tests and compiled the instrumented tests. Its
+sealed and installed APK hashes both were
+`26bab34090ce867e46501d669bb0fe05fc6063262a6b4a867f3ca631d190c608`. Eight Pet persistence and
+two Pet-screen tests passed. The Compose-driven journey passed its assertions for onboarding,
+the five tabs, Pet care, the local streaming chat and a controlled model-list 503; a separate
+instrumentation run after force-stop passed the stored chat, Pet, provider and appearance checks.
+The recorded PIDs were 4439 and 4898, with two chat rows and 30 Pet XP. The fixture is not a real
+provider. The packaged shell's first command still timed out after 60 seconds with exit code 124,
+so the smoke job and the Android workflow failed; this does not establish the outcome on native
+ARM or a physical device.
+
+All 16 small JPEG previews from that run were reconstructed and their SHA-256s matched. The
+`journey-pet` Compose-root preview now actually shows the Pet screen. However, the raw `launch`,
+`pet-alive` and `pet-memorial` previews show an Android **Pixel Launcher isn't responding** dialog
+over the app. The journey's Compose-root images omit system windows, and that run did not assert
+window focus, so it cannot establish an unobstructed, touch-driven user journey. The tests now
+require the Activity to have window focus when capturing journey screens and after restart, and
+save a full-display last-screen diagnostic; those changes require their own CI run. Compose
+semantics actions are still not a substitute for a person's physical touch or visual approval.
+
 **This procedure is not itself a test result.** Check the exact workflow run, its annotations,
 logs and artifacts before saying a step passed. An emulator with ARM translation is not a physical
 ARM phone; in particular, native sandbox execution and external services require their own evidence.

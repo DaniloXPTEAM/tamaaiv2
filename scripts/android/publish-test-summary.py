@@ -68,6 +68,14 @@ def main() -> int:
                     details.replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")[:3000]
                 )
                 print(f"::notice title={title}::{details}")
+
+        # An ARM translation failure may precede the last eight shell lines. Preserve it
+        # separately, without treating its presence or absence as a proven root cause.
+        translation = [line.strip() for line in lines if "ndk_translation/" in line][-8:]
+        if translation:
+            details = " | ".join(translation)[-2800:]
+            details = details.replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")[:3000]
+            print(f"::notice title=Translation diagnostics::{details}")
     return 0
 
 

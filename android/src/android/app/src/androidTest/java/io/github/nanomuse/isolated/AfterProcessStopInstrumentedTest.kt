@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Process
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasContentDescription
@@ -25,6 +26,7 @@ import io.github.nanomuse.pet.PetStore
 import io.github.nanomuse.ui.chat.ChatBackground
 import java.io.File
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -44,6 +46,18 @@ class AfterProcessStopInstrumentedTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @After fun captureLastScreenForDiagnosis() {
+        // Preserve the real system windows if the relaunched Activity lost focus.
+        if (InstrumentationRegistry.getArguments().getString("tama_isolated") == "true") {
+            runCatching {
+                requireIsolatedEmulator()
+                val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return@runCatching
+                File(context.cacheDir, "journey-last-screen.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+        }
+    }
+
     @Test fun chatPetAndAppearanceSurviveAnActualProcessStop() {
         requireIsolatedEmulator()
         val marker = context.getSharedPreferences("tama_ci_journey", Context.MODE_PRIVATE)
@@ -56,6 +70,11 @@ class AfterProcessStopInstrumentedTest {
         compose.waitUntil(45_000) { app.subsystemsReady() && app.providerRepository.configLoaded.value }
         compose.waitUntil(45_000) {
             compose.onAllNodes(hasContentDescription(context.getString(R.string.nm_tab_chat))).fetchSemanticsNodes().isNotEmpty()
+        }
+        try {
+            compose.waitUntil(15_000) { compose.activity.hasWindowFocus() }
+        } catch (failure: ComposeTimeoutException) {
+            throw AssertionError("The relaunched app window never gained focus", failure)
         }
         assertEquals(session, MainChat.persisted(context))
         val rows = runBlocking { app.chatRepository.dao.loadMessages(session) }

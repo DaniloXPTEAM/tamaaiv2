@@ -6,6 +6,7 @@ import android.os.Process
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.assertIsSelected
@@ -72,8 +73,13 @@ class RealAppJourneyInstrumentedTest {
     private fun back() = compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
 
     private fun capture(name: String) {
-        // Capture the tested Compose root after its frame is idle, not a possibly stale
-        // emulator display frame. This omits Android's system bars.
+        // Compose screenshots omit system windows, so don't let a passing journey conceal
+        // an ANR dialog or another window that prevented the Activity from receiving focus.
+        try {
+            compose.waitUntil(15_000) { compose.activity.hasWindowFocus() }
+        } catch (failure: ComposeTimeoutException) {
+            throw AssertionError("The app window never gained focus; inspect the full-screen diagnostic", failure)
+        }
         compose.waitForIdle()
         val screenshot = compose.onRoot().captureToImage().asAndroidBitmap()
         File(context.cacheDir, name).outputStream().use { assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, it)) }
@@ -81,9 +87,15 @@ class RealAppJourneyInstrumentedTest {
     }
 
     @After fun captureLastScreenForDiagnosis() {
-        // The script verifies a fresh emulator before enabling this test. Never capture a phone.
+        // The isolated-emulator guard prevents capturing a person's screen. Unlike the journey
+        // previews, this full-display diagnostic deliberately includes Android system dialogs.
         if (InstrumentationRegistry.getArguments().getString("tama_isolated") == "true") {
-            runCatching { requireIsolatedEmulator(); capture("journey-last-screen.png") }
+            runCatching {
+                requireIsolatedEmulator()
+                val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return@runCatching
+                File(context.cacheDir, "journey-last-screen.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
         }
     }
 

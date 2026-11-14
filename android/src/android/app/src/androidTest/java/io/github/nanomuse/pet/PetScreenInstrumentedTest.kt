@@ -6,11 +6,14 @@ import android.content.SharedPreferences
 import android.graphics.Bitmap
 import com.openminis.app.ui.theme.MinisTheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -60,11 +63,11 @@ class PetScreenInstrumentedTest {
         }
     }
 
-    /** Screenshots are optional diagnostics, never an assertion or a substitute for a phone. */
+    /** Optional Compose diagnostics: they omit system windows and do not replace a phone test. */
     private fun capture(filename: String) {
         compose.waitForIdle()
         runCatching {
-            val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return
+            val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
             File(target.cacheDir, filename).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             bitmap.recycle()
         }
