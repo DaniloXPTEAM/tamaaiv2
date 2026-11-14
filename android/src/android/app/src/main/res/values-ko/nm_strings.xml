@@ -1102,6 +1102,15 @@
     <string name="nm_reach_sign_in">다시 로그인</string>
     <string name="nm_reach_open_provider">제공자 열기</string>
     <string name="nm_reach_own_key">내 키 추가</string>
+    <string name="nm_reach_retry_stale">이 오류가 더 이상 최신 오류가 아니거나 작업이 실행 중입니다.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">오류 세부정보</string>
+    <string name="nm_reach_sheet_message">제공업체 메시지</string>
+    <string name="nm_reach_sheet_unavailable">정보 없음</string>
+    <string name="nm_reach_sheet_privacy">메시지가 축약되었거나 개인 정보 또는 감지되지 않은 비밀을 포함할 수 있습니다. 복사하기 전에 확인하세요.</string>
+    <string name="nm_reach_sheet_change_model">모델 변경</string>
+    <string name="nm_reach_sheet_provider_settings">제공업체 설정 열기</string>
     <string name="nm_reach_details">자세히</string>
     <string name="nm_reach_details_hide">자세히 숨기기</string>
     <string name="nm_reach_hours_minutes">%1$d시간 %2$d분</string>

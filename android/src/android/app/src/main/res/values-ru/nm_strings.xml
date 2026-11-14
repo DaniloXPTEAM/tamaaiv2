@@ -1114,6 +1114,15 @@
     <string name="nm_reach_sign_in">Войти снова</string>
     <string name="nm_reach_open_provider">Открыть провайдеров</string>
     <string name="nm_reach_own_key">Добавить свой ключ</string>
+    <string name="nm_reach_retry_stale">Эта ошибка уже не последняя или задача ещё выполняется.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Сведения об ошибке</string>
+    <string name="nm_reach_sheet_message">Сообщение поставщика</string>
+    <string name="nm_reach_sheet_unavailable">Нет данных</string>
+    <string name="nm_reach_sheet_privacy">Сообщение может быть сокращено и содержать личные данные или нераспознанные секреты. Проверьте его перед копированием.</string>
+    <string name="nm_reach_sheet_change_model">Сменить модель</string>
+    <string name="nm_reach_sheet_provider_settings">Открыть настройки поставщика</string>
     <string name="nm_reach_details">Подробности</string>
     <string name="nm_reach_details_hide">Скрыть подробности</string>
     <string name="nm_reach_hours_minutes">%1$d ч %2$d мин</string>

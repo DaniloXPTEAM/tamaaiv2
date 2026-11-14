@@ -24,6 +24,7 @@ def test_summary_distinguishes_pass_fail_skip_and_missing(tmp_path, monkeypatch,
         "INSTRUMENTATION_STATUS_CODE: -4\nOK (1 test)\n"
     )
     (tmp_path / "prompt-detail-instrumentation.log").write_text("OK (3 tests)\n")
+    (tmp_path / "provider-detail-instrumentation.log").write_text("OK (4 tests)\n")
     (tmp_path / "background-service-instrumentation.log").write_text("OK (1 test)\n")
     (tmp_path / "browser-guard-instrumentation.log").write_text("OK (1 test)\n")
     assert summary.main() == 0
@@ -35,6 +36,7 @@ def test_summary_distinguishes_pass_fail_skip_and_missing(tmp_path, monkeypatch,
     assert "::error title=Packaged sandbox::Failed, skipped, or no tests reported" in output
     assert "::notice title=Packaged sandbox" not in output
     assert "::notice title=Prompt detail::OK (3 tests)" in output
+    assert "::notice title=Provider error detail::OK (4 tests)" in output
     assert "::notice title=Background warning::OK (1 test)" in output
     assert "::notice title=Browser guard::OK (1 test)" in output
 
@@ -53,6 +55,27 @@ def test_prompt_detail_summary_requires_all_interface_tests(tmp_path, monkeypatc
     (tmp_path / "prompt-detail-instrumentation.log").write_text("OK (2 tests)\n")
     assert summary.main() == 0
     assert "::error title=Prompt detail::" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "OK (3 tests)\n",
+        "OK (2 tests)\n",
+        "OK (0 tests)\n",
+        "FAILURES!!!\n",
+        "INSTRUMENTATION_STATUS_CODE: -4\nOK (4 tests)\n",
+    ],
+)
+def test_provider_detail_summary_rejects_missing_failed_or_skipped_cases(
+    tmp_path, monkeypatch, capsys, contents: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "provider-detail-instrumentation.log").write_text(contents)
+    assert summary.main() == 0
+    output = capsys.readouterr().out
+    assert "::error title=Provider error detail::" in output
+    assert "::notice title=Provider error detail::" not in output
 
 
 @pytest.mark.parametrize(

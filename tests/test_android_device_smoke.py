@@ -142,6 +142,7 @@ elif args[:3] == ["shell", "am", "instrument"]:
     is_restart = "io.github.nanomuse.isolated.AfterProcessStopInstrumentedTest" in args
     is_sandbox = "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args
     is_prompt_detail = "io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest" in args
+    is_provider_detail = "io.github.nanomuse.isolated.ProviderErrorDetailInstrumentedTest" in args
     is_background_warning = "io.github.nanomuse.isolated.BackgroundServiceWarningInstrumentedTest" in args
     is_browser = "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args
     is_anr_policy = "io.github.nanomuse.isolated.EmulatorAnrPolicyInstrumentedTest" in args
@@ -157,21 +158,24 @@ elif args[:3] == ["shell", "am", "instrument"]:
             or (mode == "restart-failure" and is_restart)
             or (mode.startswith("sandbox-") and mode != "sandbox-skipped" and is_sandbox)
             or (mode == "prompt-detail-failure" and is_prompt_detail)
+            or (mode == "provider-detail-failure" and is_provider_detail)
             or (mode == "background-warning-failure" and is_background_warning)
             or (mode == "browser-failure" and is_browser) or (mode == "anr-policy-failure" and is_anr_policy)):
         print("FAILURES!!!")
     elif ((mode == "journey-skipped" and is_journey) or (mode == "sandbox-skipped" and is_sandbox)
             or (mode == "prompt-detail-skipped" and is_prompt_detail)
+            or (mode == "provider-detail-skipped" and is_provider_detail)
             or (mode == "background-warning-skipped" and is_background_warning)
             or (mode == "browser-skipped" and is_browser) or (mode == "anr-policy-skipped" and is_anr_policy)):
         print("INSTRUMENTATION_STATUS_CODE: -4")
         print("OK (1 test)")
     elif mode == "few-screen-tests" and is_screen:
         print("OK (1 test)")
-    elif mode == "few-prompt-detail-tests" and is_prompt_detail:
+    elif ((mode == "few-prompt-detail-tests" and is_prompt_detail)
+            or (mode == "few-provider-detail-tests" and is_provider_detail)):
         print("OK (2 tests)")
     else:
-        print("OK (8 tests)" if is_pet else "OK (3 tests)" if is_prompt_detail else "OK (2 tests)" if is_screen or is_sandbox else "OK (1 test)")
+        print("OK (8 tests)" if is_pet else "OK (4 tests)" if is_provider_detail else "OK (3 tests)" if is_prompt_detail else "OK (2 tests)" if is_screen or is_sandbox else "OK (1 test)")
 
 """
 
@@ -239,7 +243,7 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     invocations = [
         args for name, args in calls if name == "adb" and args[:3] == ["shell", "am", "instrument"]
     ]
-    assert len(invocations) == 9
+    assert len(invocations) == 10
     assert any(
         "io.github.nanomuse.pet.PetPersistenceInstrumentedTest" in args for args in invocations
     )
@@ -274,6 +278,8 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     assert "::notice title=sandbox instrumentation::OK (2 tests);" in result.stdout
     assert "::notice title=prompt detail instrumentation::OK (3 tests);" in result.stdout
     assert (checkout / "prompt-detail-instrumentation.log").read_text().strip() == "OK (3 tests)"
+    assert "::notice title=provider detail instrumentation::OK (4 tests);" in result.stdout
+    assert (checkout / "provider-detail-instrumentation.log").read_text().strip() == "OK (4 tests)"
     assert "::notice title=background warning instrumentation::OK (1 test);" in result.stdout
     assert (
         checkout / "background-service-instrumentation.log"
@@ -326,6 +332,9 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
         ("prompt-detail-failure", "title=prompt detail instrumentation"),
         ("prompt-detail-skipped", "title=prompt detail instrumentation"),
         ("few-prompt-detail-tests", "title=prompt detail instrumentation"),
+        ("provider-detail-failure", "title=provider detail instrumentation"),
+        ("provider-detail-skipped", "title=provider detail instrumentation"),
+        ("few-provider-detail-tests", "title=provider detail instrumentation"),
         ("background-warning-failure", "title=background warning instrumentation"),
         ("background-warning-skipped", "title=background warning instrumentation"),
         ("browser-failure", "title=browser guard instrumentation"),
@@ -467,6 +476,10 @@ def test_failed_journey_does_not_claim_restart_but_still_runs_sandbox(smoke) -> 
     )
     assert any(
         "io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest" in args
+        for args in invocations
+    )
+    assert any(
+        "io.github.nanomuse.isolated.ProviderErrorDetailInstrumentedTest" in args
         for args in invocations
     )
     assert any(

@@ -1085,6 +1085,15 @@
     <string name="nm_reach_sign_in">Sign in again</string>
     <string name="nm_reach_open_provider">Open providers</string>
     <string name="nm_reach_own_key">Add a key of your own</string>
+    <string name="nm_reach_retry_stale">This failure is no longer the latest, or a task is still running.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Error details</string>
+    <string name="nm_reach_sheet_message">Provider message</string>
+    <string name="nm_reach_sheet_unavailable">Not available</string>
+    <string name="nm_reach_sheet_privacy">The message may be shortened and may contain private data or undetected secrets. Review before copying.</string>
+    <string name="nm_reach_sheet_change_model">Change model</string>
+    <string name="nm_reach_sheet_provider_settings">Open provider settings</string>
     <string name="nm_reach_details">Details</string>
     <string name="nm_reach_details_hide">Hide details</string>
     <string name="nm_reach_hours_minutes">%1$d h %2$d min</string>

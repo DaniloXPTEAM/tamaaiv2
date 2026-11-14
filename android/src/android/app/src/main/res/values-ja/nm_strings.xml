@@ -1102,6 +1102,15 @@
     <string name="nm_reach_sign_in">もう一度サインイン</string>
     <string name="nm_reach_open_provider">プロバイダーを開く</string>
     <string name="nm_reach_own_key">自分のキーを追加</string>
+    <string name="nm_reach_retry_stale">このエラーは最新のものではないか、タスクがまだ実行中です。</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">エラーの詳細</string>
+    <string name="nm_reach_sheet_message">プロバイダーのメッセージ</string>
+    <string name="nm_reach_sheet_unavailable">情報なし</string>
+    <string name="nm_reach_sheet_privacy">メッセージは短縮されている場合があり、個人情報や検出されない秘密情報を含む可能性があります。コピーする前に確認してください。</string>
+    <string name="nm_reach_sheet_change_model">モデルを変更</string>
+    <string name="nm_reach_sheet_provider_settings">プロバイダー設定を開く</string>
     <string name="nm_reach_details">詳細</string>
     <string name="nm_reach_details_hide">詳細を隠す</string>
     <string name="nm_reach_hours_minutes">%1$d 時間 %2$d 分</string>

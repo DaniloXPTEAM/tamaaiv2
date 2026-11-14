@@ -1107,6 +1107,15 @@
     <string name="nm_reach_sign_in">Se reconnecter</string>
     <string name="nm_reach_open_provider">Ouvrir les fournisseurs</string>
     <string name="nm_reach_own_key">Ajouter une clé à vous</string>
+    <string name="nm_reach_retry_stale">Cette erreur ne concerne plus la dernière tentative ou une tâche est encore en cours.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Détails de l’erreur</string>
+    <string name="nm_reach_sheet_message">Message du fournisseur</string>
+    <string name="nm_reach_sheet_unavailable">Indisponible</string>
+    <string name="nm_reach_sheet_privacy">Le message peut être abrégé et contenir des données privées ou des secrets non détectés. Vérifiez avant de copier.</string>
+    <string name="nm_reach_sheet_change_model">Changer de modèle</string>
+    <string name="nm_reach_sheet_provider_settings">Ouvrir les paramètres du fournisseur</string>
     <string name="nm_reach_details">Détails</string>
     <string name="nm_reach_details_hide">Masquer les détails</string>
     <string name="nm_reach_hours_minutes">%1$d h %2$d min</string>

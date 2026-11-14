@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Added a tappable Android provider-error detail sheet with the failed request's model, redacted message and guarded retry.
+
 - Enlarged the Android prompt-report touch target and strengthened its isolated gesture diagnostics.
 
 - Added bounded debug-only prompt-sheet lifecycle diagnostics and a focused-composer emulator test without logging conversation content.

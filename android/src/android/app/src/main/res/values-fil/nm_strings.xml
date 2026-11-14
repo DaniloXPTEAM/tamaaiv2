@@ -1106,6 +1106,15 @@
     <string name="nm_reach_sign_in">Mag-sign in muli</string>
     <string name="nm_reach_open_provider">Buksan ang mga provider</string>
     <string name="nm_reach_own_key">Magdagdag ng sariling key</string>
+    <string name="nm_reach_retry_stale">Hindi na ito ang pinakabagong error, o may gawain pang tumatakbo.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Mga detalye ng error</string>
+    <string name="nm_reach_sheet_message">Mensahe ng provider</string>
+    <string name="nm_reach_sheet_unavailable">Hindi available</string>
+    <string name="nm_reach_sheet_privacy">Maaaring pinaikli ang mensahe at naglalaman ito ng pribadong data o hindi natukoy na mga sekreto. Suriin bago kopyahin.</string>
+    <string name="nm_reach_sheet_change_model">Palitan ang modelo</string>
+    <string name="nm_reach_sheet_provider_settings">Buksan ang mga setting ng provider</string>
     <string name="nm_reach_details">Mga detalye</string>
     <string name="nm_reach_details_hide">Itago ang mga detalye</string>
     <string name="nm_reach_hours_minutes">%1$d o %2$d min</string>

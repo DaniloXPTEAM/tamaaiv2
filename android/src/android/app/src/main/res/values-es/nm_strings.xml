@@ -1106,6 +1106,15 @@
     <string name="nm_reach_sign_in">Iniciar sesión de nuevo</string>
     <string name="nm_reach_open_provider">Abrir proveedores</string>
     <string name="nm_reach_own_key">Añadir una clave propia</string>
+    <string name="nm_reach_retry_stale">Este fallo ya no es el más reciente o todavía hay una tarea en curso.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Detalles del error</string>
+    <string name="nm_reach_sheet_message">Mensaje del proveedor</string>
+    <string name="nm_reach_sheet_unavailable">No disponible</string>
+    <string name="nm_reach_sheet_privacy">El mensaje puede estar abreviado y contener datos privados o secretos no detectados. Revísalo antes de copiarlo.</string>
+    <string name="nm_reach_sheet_change_model">Cambiar de modelo</string>
+    <string name="nm_reach_sheet_provider_settings">Abrir ajustes del proveedor</string>
     <string name="nm_reach_details">Detalles</string>
     <string name="nm_reach_details_hide">Ocultar detalles</string>
     <string name="nm_reach_hours_minutes">%1$d h %2$d min</string>

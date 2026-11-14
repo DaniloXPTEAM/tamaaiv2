@@ -133,9 +133,18 @@ fits when the default is not there; *Not now* changes nothing, and so does an un
 The other model choices stay as they are. The page is the place to change it later.
 
 **A provider refusal.** For OpenAI-compatible providers, the chat distinguishes rejected
-authentication (HTTP 401), denied access (403), a reported credit or payment limit, and request
-limits (429). When the provider supplies an error message, the card shows it with the credential
-redacted. A 403 alone does not say whether the key or account balance is the problem. For
+authentication (HTTP 401), denied access (403), a reported credit or payment limit, request or
+output size refusals, and rate limits (429). Tap the provider error card or *Details* to see the
+HTTP status, provider, model from the failed request, and a bounded provider message. The sheet
+can copy the message, retry the same unresolved turn, open the model picker or provider settings.
+An older error or a stream event may not have a status or model snapshot; the sheet says when a
+value is unavailable rather than guessing from the current picker. A retry from an old sheet is
+refused if the conversation or failure has changed. Relay and allowance refusals keep their
+special cards and actions.
+
+Known request credentials and common key forms are redacted, but an error message can still
+contain private text or a secret in an unrecognized or transformed form. Review it before copying
+or sharing it. A 403 alone does not say whether the key or account balance is the problem. For
 OpenRouter, select an available `:free` model or `openrouter/free` if you want to try a free model;
 availability, request limits and account restrictions still apply. OpenRouter describes these
 limits at [API limits](https://openrouter.ai/docs/api_reference/limits). A model listing is not a

@@ -1107,6 +1107,15 @@
     <string name="nm_reach_sign_in">Entrar de novo</string>
     <string name="nm_reach_open_provider">Abrir provedores</string>
     <string name="nm_reach_own_key">Adicionar uma chave sua</string>
+    <string name="nm_reach_retry_stale">Esta falha já não é a mais recente ou há uma tarefa em andamento.</string>
+    <string name="nm_reach_generic_title">%1$s não conseguiu concluir o pedido</string>
+    <string name="nm_reach_generic_body">Confira a mensagem e as configurações antes de tentar de novo.</string>
+    <string name="nm_reach_sheet_title">Detalhes do erro</string>
+    <string name="nm_reach_sheet_message">Mensagem do provedor</string>
+    <string name="nm_reach_sheet_unavailable">Não informado</string>
+    <string name="nm_reach_sheet_privacy">A mensagem pode ter sido abreviada e conter dados pessoais ou segredos não identificados. Revise antes de copiar.</string>
+    <string name="nm_reach_sheet_change_model">Trocar de modelo</string>
+    <string name="nm_reach_sheet_provider_settings">Abrir configurações do provedor</string>
     <string name="nm_reach_details">Detalhes</string>
     <string name="nm_reach_details_hide">Ocultar detalhes</string>
     <string name="nm_reach_hours_minutes">%1$d h %2$d min</string>

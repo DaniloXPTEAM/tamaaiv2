@@ -1106,6 +1106,15 @@
     <string name="nm_reach_sign_in">Yeniden oturum aç</string>
     <string name="nm_reach_open_provider">Sağlayıcıları aç</string>
     <string name="nm_reach_own_key">Kendi anahtarını ekle</string>
+    <string name="nm_reach_retry_stale">Bu hata artık en son hata değil veya bir görev hâlâ çalışıyor.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Hata ayrıntıları</string>
+    <string name="nm_reach_sheet_message">Sağlayıcı mesajı</string>
+    <string name="nm_reach_sheet_unavailable">Bilgi yok</string>
+    <string name="nm_reach_sheet_privacy">Mesaj kısaltılmış olabilir ve özel veri veya tespit edilmemiş gizli bilgiler içerebilir. Kopyalamadan önce kontrol edin.</string>
+    <string name="nm_reach_sheet_change_model">Modeli değiştir</string>
+    <string name="nm_reach_sheet_provider_settings">Sağlayıcı ayarlarını aç</string>
     <string name="nm_reach_details">Ayrıntılar</string>
     <string name="nm_reach_details_hide">Ayrıntıları gizle</string>
     <string name="nm_reach_hours_minutes">%1$d sa %2$d dk</string>

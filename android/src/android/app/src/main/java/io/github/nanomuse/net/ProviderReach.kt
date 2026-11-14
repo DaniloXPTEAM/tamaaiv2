@@ -55,6 +55,9 @@ object ProviderReach {
 
         /** The provider responded with a server error, not necessarily a network failure. */
         SERVER_ERROR,
+
+        /** An HTTP or stream refusal that has no more specific explanation. */
+        PROVIDER_ERROR,
     }
 
     data class Reach(
@@ -71,6 +74,10 @@ object ProviderReach {
         val httpStatus: Int? = null,
         /** A supplied but unparsable wait must not be treated as a missing header. */
         val retryAfterPresent: Boolean = retryAfterS != null,
+        /** Model in the actual failed request, when that request provided one. */
+        val modelId: String = "",
+        /** Redacted provider message only, not its JSON metadata; bounded before persistence. */
+        val originalMessage: String = "",
     ) {
         /** Whether the host is the ChatGPT plan's (the card names the plan, not an API). */
         val isChatGptPlan: Boolean get() = isPlanHost(host)
@@ -83,6 +90,10 @@ object ProviderReach {
 
     private const val CANONICAL_PREFIX = "nm_reach:"
     private const val CANONICAL_V2_PREFIX = "nm_reach2:"
+    private const val CANONICAL_V3_PREFIX = "nm_reach3:"
+    // A provider can echo arbitrary content. Never retain its complete JSON or an unbounded line.
+    private const val ORIGINAL_MESSAGE_MAX = 16_384
+    private const val MODEL_ID_MAX = 256
 
     private val REQUEST_SIZE_MARKERS = listOf(
         "request too large", "request is too large", "request_too_large", "payload too large",
@@ -140,7 +151,7 @@ object ProviderReach {
     fun classify(text: String, hintHost: String? = null): Reach? {
         val t = text.trim()
         if (t.isEmpty()) return null
-        if (t.startsWith(CANONICAL_PREFIX) || t.startsWith(CANONICAL_V2_PREFIX)) return parseCanonical(t)
+        if (t.startsWith(CANONICAL_PREFIX) || t.startsWith(CANONICAL_V2_PREFIX) || t.startsWith(CANONICAL_V3_PREFIX)) return parseCanonical(t)
         val low = t.lowercase(Locale.ROOT)
         val hint = hintHost?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }.orEmpty()
 
@@ -164,20 +175,28 @@ object ProviderReach {
     /** Classify an HTTP response without guessing that a forbidden request means no credit. */
     fun fromHttp(
         status: Int, body: String?, host: String, oauth: Boolean, retryAfterS: Int? = null,
-        retryAfterPresent: Boolean = retryAfterS != null,
+        retryAfterPresent: Boolean = retryAfterS != null, credential: String? = null,
+        credentials: Collection<String> = emptyList(), includeOtherFailures: Boolean = false,
     ): Reach? {
         val b = body.orEmpty()
-        val low = b.lowercase(Locale.ROOT)
         val h = host.lowercase(Locale.ROOT)
-        val message = vendorMessage(b)
-        // Look at the provider's sentence, not arbitrary JSON metadata or echoed prompt text.
-        val messageLow = message.lowercase(Locale.ROOT)
+        val redactions = credentials + listOfNotNull(credential)
+        // Classify the decoded provider sentence before redaction. A key can itself be part of
+        // a marker or limit, and masking it must not change retry/fallback decisions. The raw
+        // sentence stays local to this call; only the redacted, bounded version is retained.
+        val rawMessage = vendorMessageValue(b)
+        val original = redactedText(rawMessage, redactions)
+        val message = bounded(original.replace('\n', ' ').replace('\r', ' '), 300)
+        val classificationMessage = bounded(rawMessage.replace('\n', ' ').replace('\r', ' '), 300)
+        val messageLow = classificationMessage.lowercase(Locale.ROOT)
+        // Quota and region signals can be codes, but an echoed prompt in metadata is not a code.
+        val signals = (bounded(rawMessage, ORIGINAL_MESSAGE_MAX) + " " + vendorCodes(b)).lowercase(Locale.ROOT)
         val creditReported = CREDIT_MARKERS.any { it in messageLow }
         val requestTooLarge = REQUEST_SIZE_MARKERS.any { it in messageLow }
         val responseLimit = OUTPUT_NAMES.any { it in messageLow } && OUTPUT_LIMIT_MARKERS.any { it in messageLow } &&
             UNSUPPORTED_PARAMETER_MARKERS.none { it in messageLow }
         val reach = when {
-            status == 403 && REGION_CODE in low -> Reach(Kind.REGION_BLOCKED, h, message)
+            status == 403 && REGION_CODE in signals -> Reach(Kind.REGION_BLOCKED, h, message)
             status in setOf(403, 404, 503) && looksLikeHtml(b) -> Reach(Kind.UNREACHABLE, h, "")
             status == 401 && oauth -> Reach(Kind.SIGNED_OUT, h, message)
             status == 401 -> Reach(Kind.AUTH_REJECTED, h, message)
@@ -191,13 +210,20 @@ object ProviderReach {
             status == 413 || (status == 400 && requestTooLarge) ->
                 Reach(Kind.REQUEST_TOO_LARGE, h, message, retryAfterS)
             status == 400 && responseLimit ->
-                Reach(Kind.RESPONSE_LIMIT, h, message, retryAfterS, outputLimit(message))
-            status == 429 && QUOTA_MARKERS.any { it in low } -> Reach(Kind.QUOTA, h, statusDetail(status, message), retryAfterS)
+                Reach(Kind.RESPONSE_LIMIT, h, message, retryAfterS, outputLimit(classificationMessage))
+            status == 429 && QUOTA_MARKERS.any { it in signals } -> Reach(Kind.QUOTA, h, statusDetail(status, message), retryAfterS)
             status == 429 -> Reach(Kind.RATE_LIMITED, h, message, retryAfterS)
             status in 500..599 -> Reach(Kind.SERVER_ERROR, h, message, retryAfterS)
+            // Status zero is reserved for a stream error with no HTTP status, never shown as HTTP 0.
+            includeOtherFailures && (status == 0 || status in 300..499) ->
+                Reach(Kind.PROVIDER_ERROR, h, message, retryAfterS)
             else -> null
         }
-        return reach?.copy(httpStatus = status, retryAfterPresent = retryAfterPresent)
+        return reach?.copy(
+            host = redactCredentials(reach.host, redactions),
+            httpStatus = status.takeIf { it in 100..599 }, retryAfterPresent = retryAfterPresent,
+            originalMessage = original,
+        )
     }
 
     /** Extract an unambiguous, explicitly stated ceiling, or decline to guess. */
@@ -231,27 +257,54 @@ object ProviderReach {
     private fun statusDetail(status: Int, message: String): String =
         if (message.isBlank()) "HTTP $status" else "HTTP $status: $message"
 
-    /** Remove the credential actually used and common key forms before logging or persisting errors. */
-    fun redactBody(body: String, credential: String? = null): String {
-        val withoutCredential = credential?.takeIf { it.isNotEmpty() }?.let { body.replace(it, "[redacted]") } ?: body
-        return BEARER_RX.replace(KEY_RX.replace(withoutCredential, "[redacted]"), "Bearer [redacted]")
+    /** Remove a known credential and common key forms before logging or persisting errors. */
+    fun redactBody(body: String, credential: String? = null): String =
+        redactCredentials(body, listOfNotNull(credential))
+
+    /** Redact every captured request credential, including overlapping values, longest first. */
+    fun redactCredentials(body: String, credentials: Collection<String>): String {
+        val withoutCredentials = credentials.asSequence().filter { it.isNotEmpty() }.distinct()
+            .sortedByDescending { it.length }.fold(body) { text, secret -> text.replace(secret, "[redacted]") }
+        return BEARER_RX.replace(KEY_RX.replace(withoutCredentials, "[redacted]"), "Bearer [redacted]")
     }
+
+    /** Redact already-decoded text and cap it without splitting a UTF-16 surrogate pair. */
+    fun redactedText(text: String, credentials: Collection<String> = emptyList(), maxChars: Int = ORIGINAL_MESSAGE_MAX): String =
+        bounded(redactCredentials(text, credentials), maxChars.coerceIn(1, ORIGINAL_MESSAGE_MAX))
+
+    private fun bounded(text: String, maxChars: Int): String {
+        if (text.length <= maxChars) return text
+        val end = if (Character.isHighSurrogate(text[maxChars - 1]) && Character.isLowSurrogate(text[maxChars])) maxChars - 1 else maxChars
+        return text.substring(0, end)
+    }
+
+    /** Attach only the model from this request's serialized body, never the current picker. */
+    fun withRequestModel(
+        reach: Reach, requestModel: String?, credential: String? = null,
+        credentials: Collection<String> = emptyList(),
+    ): Reach = reach.copy(modelId = redactedText(requestModel.orEmpty(), credentials + listOfNotNull(credential), MODEL_ID_MAX))
 
     /** A versioned, delimiter-safe line for persistence; old lines remain readable. */
     fun canonical(reach: Reach): String {
-        if (reach.httpStatus == null && reach.outputLimit == null && reach.retryAfterPresent == (reach.retryAfterS != null)) {
+        val hasDetails = reach.modelId.isNotEmpty() || reach.originalMessage.isNotEmpty()
+        if (!hasDetails && reach.httpStatus == null && reach.outputLimit == null && reach.retryAfterPresent == (reach.retryAfterS != null)) {
             return CANONICAL_PREFIX + reach.kind.name.lowercase(Locale.ROOT) + ":" + reach.host + ":" +
                 (reach.retryAfterS ?: "") + "|" + reach.detail.replace('\n', ' ')
         }
         fun encode(text: String): String = Base64.getUrlEncoder().withoutPadding().encodeToString(text.toByteArray(Charsets.UTF_8))
-        return CANONICAL_V2_PREFIX + listOf(
+        val fields = listOf(
             reach.kind.name.lowercase(Locale.ROOT), reach.retryAfterS?.toString().orEmpty(),
             reach.outputLimit?.toString().orEmpty(), reach.httpStatus?.toString().orEmpty(),
             if (reach.retryAfterPresent) "1" else "0", encode(reach.host), encode(reach.detail.replace('\n', ' ')),
-        ).joinToString(":")
+        )
+        return if (hasDetails) CANONICAL_V3_PREFIX + (fields + listOf(
+            encode(bounded(redactBody(reach.modelId), MODEL_ID_MAX)),
+            encode(bounded(redactBody(reach.originalMessage), ORIGINAL_MESSAGE_MAX)),
+        )).joinToString(":") else CANONICAL_V2_PREFIX + fields.joinToString(":")
     }
 
     private fun parseCanonical(t: String): Reach? {
+        if (t.startsWith(CANONICAL_V3_PREFIX)) return parseCanonicalV2(t.removePrefix(CANONICAL_V3_PREFIX), hasDetails = true)
         if (t.startsWith(CANONICAL_V2_PREFIX)) return parseCanonicalV2(t.removePrefix(CANONICAL_V2_PREFIX))
         if (!t.startsWith(CANONICAL_PREFIX)) return null
         val rest = t.removePrefix(CANONICAL_PREFIX)
@@ -268,9 +321,9 @@ object ProviderReach {
         return Reach(kind, host, detail, retry)
     }
 
-    private fun parseCanonicalV2(rest: String): Reach? = runCatching {
+    private fun parseCanonicalV2(rest: String, hasDetails: Boolean = false): Reach? = runCatching {
         val parts = rest.split(':')
-        require(parts.size == 7)
+        require(parts.size == if (hasDetails) 9 else 7)
         val kind = Kind.valueOf(parts[0].uppercase(Locale.ROOT))
         fun number(value: String, range: IntRange): Int? =
             if (value.isEmpty()) null else value.toInt().also { require(it in range) }
@@ -280,7 +333,11 @@ object ProviderReach {
         require(parts[4] == "0" || parts[4] == "1")
         val retryAfterPresent = parts[4] == "1"
         fun decode(value: String): String = String(Base64.getUrlDecoder().decode(value), Charsets.UTF_8)
-        Reach(kind, decode(parts[5]), decode(parts[6]), retry, limit, status, retryAfterPresent)
+        if (hasDetails) require(parts[7].length <= MODEL_ID_MAX * 4 && parts[8].length <= ORIGINAL_MESSAGE_MAX * 4)
+        val model = if (hasDetails) decode(parts[7]) else ""
+        val original = if (hasDetails) decode(parts[8]) else ""
+        require(model.length <= MODEL_ID_MAX && original.length <= ORIGINAL_MESSAGE_MAX)
+        Reach(kind, decode(parts[5]), decode(parts[6]), retry, limit, status, retryAfterPresent, model, original)
     }.getOrNull()
 
     fun looksLikeHtml(body: String): Boolean {
@@ -293,20 +350,48 @@ object ProviderReach {
             ?: RESOLVE_RX.find(t)?.groupValues?.get(1)?.lowercase(Locale.ROOT)
             ?: HOST_IN_URL_RX.find(t)?.groupValues?.get(1)?.lowercase(Locale.ROOT)
 
-    /** The provider's `error.message`, or a short plain-text response when it sent one. */
-    private fun vendorMessage(t: String): String {
+    /** Recognized structured code fields, excluding arbitrary provider metadata. */
+    private fun vendorCodes(body: String): String {
+        val start = body.indexOf('{')
+        if (start < 0) return ""
+        return runCatching {
+            val json = org.json.JSONObject(body.substring(start))
+            val err = json.optJSONObject("error") ?: json
+            listOf(err.opt("code") as? String, err.opt("type") as? String).filterNotNull().joinToString(" ")
+        }.getOrDefault("")
+    }
+
+    /** A retry decision reads only the decoded provider message, before credentials are masked. */
+    fun messageSaysUpstreamGaveNothing(body: String): Boolean =
+        ModelBlip.saysUpstreamGaveNothing(vendorMessageValue(body))
+
+    /** Redacted, bounded message only; opaque JSON and HTML are deliberately omitted. */
+    fun diagnosticMessage(
+        body: String, credential: String? = null, maxChars: Int = 500,
+        credentials: Collection<String> = emptyList(),
+    ): String = vendorMessage(body, maxChars.coerceIn(1, ORIGINAL_MESSAGE_MAX), singleLine = false,
+        credentials = credentials + listOfNotNull(credential))
+
+    /** The provider's message, redacted after JSON decoding and bounded before retention. */
+    private fun vendorMessage(
+        t: String, maxChars: Int = 300, singleLine: Boolean = true,
+        credentials: Collection<String> = emptyList(),
+    ): String {
+        val redacted = redactCredentials(vendorMessageValue(t), credentials)
+        return bounded(if (singleLine) redacted.replace('\n', ' ').replace('\r', ' ') else redacted, maxChars)
+    }
+
+    /** Decode a string message only; object-valued messages and opaque JSON are not displayed. */
+    private fun vendorMessageValue(t: String): String {
         val start = t.indexOf('{')
         if (start >= 0) {
-            runCatching {
+            return runCatching {
                 val json = org.json.JSONObject(t.substring(start))
                 val err = json.optJSONObject("error") ?: json
-                val m = err.optString("message")
-                if (m.isNotBlank()) return redactBody(m).replace('\n', ' ').take(300)
-            }
-            return "" // Do not display an unparsed JSON body, which may contain private metadata.
+                (err.opt("message") as? String).orEmpty()
+            }.getOrDefault("")
         }
         val plain = t.trim()
-        if (plain.isBlank() || looksLikeHtml(plain) || plain.startsWith("<")) return ""
-        return redactBody(plain).replace('\n', ' ').take(300)
+        return if (plain.isBlank() || looksLikeHtml(plain) || plain.startsWith("<")) "" else plain
     }
 }

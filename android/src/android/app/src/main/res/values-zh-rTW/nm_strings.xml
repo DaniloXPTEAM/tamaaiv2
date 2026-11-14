@@ -1072,6 +1072,15 @@
     <string name="nm_reach_sign_in">重新登入</string>
     <string name="nm_reach_open_provider">開啟服務商</string>
     <string name="nm_reach_own_key">新增自己的 key</string>
+    <string name="nm_reach_retry_stale">這已不是最近一次錯誤，或仍有工作正在執行。</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">錯誤詳情</string>
+    <string name="nm_reach_sheet_message">供應商訊息</string>
+    <string name="nm_reach_sheet_unavailable">未提供</string>
+    <string name="nm_reach_sheet_privacy">訊息可能已縮短，也可能包含個人資料或未偵測到的機密。複製前請先檢查。</string>
+    <string name="nm_reach_sheet_change_model">切換模型</string>
+    <string name="nm_reach_sheet_provider_settings">開啟供應商設定</string>
     <string name="nm_reach_details">詳情</string>
     <string name="nm_reach_details_hide">收起詳情</string>
     <string name="nm_reach_hours_minutes">%1$d 小時 %2$d 分鐘</string>

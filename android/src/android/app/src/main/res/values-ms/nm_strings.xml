@@ -1102,6 +1102,15 @@
     <string name="nm_reach_sign_in">Log masuk semula</string>
     <string name="nm_reach_open_provider">Buka penyedia</string>
     <string name="nm_reach_own_key">Tambah kunci sendiri</string>
+    <string name="nm_reach_retry_stale">Ralat ini bukan lagi yang terkini, atau tugas masih berjalan.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Butiran ralat</string>
+    <string name="nm_reach_sheet_message">Mesej penyedia</string>
+    <string name="nm_reach_sheet_unavailable">Tiada maklumat</string>
+    <string name="nm_reach_sheet_privacy">Mesej mungkin dipendekkan dan mungkin mengandungi data peribadi atau rahsia yang tidak dikesan. Semak sebelum menyalin.</string>
+    <string name="nm_reach_sheet_change_model">Tukar model</string>
+    <string name="nm_reach_sheet_provider_settings">Buka tetapan penyedia</string>
     <string name="nm_reach_details">Butiran</string>
     <string name="nm_reach_details_hide">Sembunyikan butiran</string>
     <string name="nm_reach_hours_minutes">%1$d j %2$d min</string>

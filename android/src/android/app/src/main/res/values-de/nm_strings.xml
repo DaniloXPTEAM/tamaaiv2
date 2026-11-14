@@ -1106,6 +1106,15 @@
     <string name="nm_reach_sign_in">Erneut anmelden</string>
     <string name="nm_reach_open_provider">Anbieter öffnen</string>
     <string name="nm_reach_own_key">Eigenen Schlüssel hinzufügen</string>
+    <string name="nm_reach_retry_stale">Dieser Fehler ist nicht mehr der letzte oder eine Aufgabe läuft noch.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Fehlerdetails</string>
+    <string name="nm_reach_sheet_message">Nachricht des Anbieters</string>
+    <string name="nm_reach_sheet_unavailable">Nicht verfügbar</string>
+    <string name="nm_reach_sheet_privacy">Die Nachricht kann gekürzt sein und private Daten oder unerkannte Geheimnisse enthalten. Vor dem Kopieren prüfen.</string>
+    <string name="nm_reach_sheet_change_model">Modell wechseln</string>
+    <string name="nm_reach_sheet_provider_settings">Anbietereinstellungen öffnen</string>
     <string name="nm_reach_details">Details</string>
     <string name="nm_reach_details_hide">Details ausblenden</string>
     <string name="nm_reach_hours_minutes">%1$d Std. %2$d Min.</string>

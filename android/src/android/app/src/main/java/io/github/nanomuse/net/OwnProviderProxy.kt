@@ -244,6 +244,9 @@ object OwnProviderProxy {
         }
     }
 
+    /** Tests only: snapshot the relay host so a fixture can restore global proxy state. */
+    internal fun relayHostForTests(): String = relayHost
+
     /** Tests only: the configuration and host list the selector uses, without a context. */
     fun setForTests(config: Config, routed: Set<String>, relay: String = "") {
         current = config

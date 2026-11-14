@@ -38,6 +38,27 @@ class ProviderReachTest {
         assertNull(ProviderReach.classify(""))
     }
 
+    @Test fun `generic diagnostics are opt in and do not invent an HTTP status for a stream event`() {
+        val body = """{"error":{"message":"Invalid parameter: fixture-secret"}}"""
+        assertNull(ProviderReach.fromHttp(400, body, "api.example", false))
+        val http = ProviderReach.withRequestModel(
+            ProviderReach.fromHttp(400, body, "api.example", false,
+                credentials = listOf("fixture-secret"), includeOtherFailures = true)!!,
+            "wire-model",
+        )
+        assertEquals(ProviderReach.Kind.PROVIDER_ERROR, http.kind)
+        assertEquals(400, http.httpStatus)
+        assertEquals("Invalid parameter: [redacted]", http.originalMessage)
+        assertEquals(http, ProviderReach.classify(ProviderReach.canonical(http)))
+        val stream = ProviderReach.fromHttp(0, body, "api.example", false,
+            credentials = listOf("fixture-secret"), includeOtherFailures = true)!!
+        assertEquals(ProviderReach.Kind.PROVIDER_ERROR, stream.kind)
+        assertNull(stream.httpStatus)
+        assertEquals("Invalid parameter: [redacted]", stream.originalMessage)
+        assertEquals(stream, ProviderReach.classify(ProviderReach.canonical(stream)))
+        assertNull(ProviderReach.fromHttp(200, body, "api.example", false, includeOtherFailures = true))
+    }
+
     @Test fun `the vendor's codes win over the network words`() {
         val region = ProviderReach.classify("""[403] {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported"}}""", "chatgpt.com")!!
         assertEquals(ProviderReach.Kind.REGION_BLOCKED, region.kind)
@@ -62,6 +83,11 @@ class ProviderReachTest {
         assertEquals(7200, quota.retryAfterS)
         assertEquals(ProviderReach.Kind.RATE_LIMITED, ProviderReach.fromHttp(429, "{}", "chatgpt.com", oauth = true)!!.kind)
         assertEquals(ProviderReach.Kind.RATE_LIMITED, ProviderReach.fromHttp(429, "{}", "api.deepseek.com", oauth = false)!!.kind)
+        // An echoed prompt or metadata cannot turn a transient rate limit into a spent quota.
+        val echo = """{"error":{"message":"Try again later","metadata":{"prompt":"insufficient_quota"}}}"""
+        assertEquals(ProviderReach.Kind.RATE_LIMITED, ProviderReach.fromHttp(429, echo, "api.deepseek.com", false)!!.kind)
+        val regionEcho = """{"error":{"message":"Access denied","metadata":{"prompt":"unsupported_country_region_territory"}}}"""
+        assertEquals(ProviderReach.Kind.ACCESS_DENIED, ProviderReach.fromHttp(403, regionEcho, "api.example", false)!!.kind)
     }
 
     @Test fun `the canonical line survives a round trip`() {
@@ -136,6 +162,48 @@ class ProviderReachTest {
     @Test fun `unparsed JSON metadata is not displayed`() {
         val r = ProviderReach.fromHttp(403, """{"error":{"metadata":{"private":"do not show"}}}""", "openrouter.ai", oauth = false)!!
         assertEquals("", r.detail)
+        assertEquals("", r.originalMessage)
+    }
+
+    @Test fun `extended detail retains the failing request model and redacted message across reload`() {
+        // The secret is JSON-escaped on the wire, so redaction must also run after decoding.
+        val credential = "fixture-secret"
+        val longMessage = "Request too large, " + "z".repeat(500) + "\\u0066ixture-secret\\nend"
+        val wire = """{"error":{"message":"$longMessage","metadata":{"private":"not a message"}}}"""
+        val reach = ProviderReach.withRequestModel(
+            ProviderReach.fromHttp(413, wire, "API.example", false, credential = credential)!!,
+            "model: α | 你好", credential,
+        )
+        assertEquals("api.example", reach.host)
+        assertEquals("model: α | 你好", reach.modelId)
+        assertTrue(reach.detail.length <= 300)
+        assertTrue(reach.originalMessage.length > 500)
+        assertTrue(reach.originalMessage.contains("[redacted]\nend"))
+        assertFalse(reach.originalMessage.contains(credential))
+        assertFalse(reach.originalMessage.contains("not a message"))
+        val line = ProviderReach.canonical(reach)
+        assertTrue(line.startsWith("nm_reach3:"))
+        assertEquals(reach, ProviderReach.classify(line))
+        assertFalse(ProviderReach.diagnosticMessage(wire, credential).contains(credential))
+        assertEquals("", ProviderReach.diagnosticMessage("""{"error":{"metadata":"private"}}""", credential))
+    }
+
+    @Test fun `extended fields are bounded without splitting unicode and old diagnostics remain readable`() {
+        val huge = "x".repeat(16_383) + "🙂" + "extra"
+        val reach = ProviderReach.withRequestModel(
+            ProviderReach.fromHttp(413, huge, "host", false)!!,
+            "m".repeat(255) + "🙂" + "extra",
+        )
+        assertEquals(16_383, reach.originalMessage.length)
+        assertEquals(255, reach.modelId.length)
+        assertEquals(reach, ProviderReach.classify(ProviderReach.canonical(reach)))
+        val old = ProviderReach.Reach(ProviderReach.Kind.RESPONSE_LIMIT, "[fd00::1]", "old", 2, 128, 400)
+        val oldLine = ProviderReach.canonical(old)
+        assertTrue(oldLine.startsWith("nm_reach2:"))
+        assertEquals(old, ProviderReach.classify(oldLine))
+        assertNull(ProviderReach.classify("nm_reach3:response_limit:2:128:400:1:YQ:Yg:!!!:eA"))
+        assertNull(ProviderReach.classify("nm_reach3:response_limit:2:128:400:1:YQ:Yg:"
+            + "Y".repeat(1025) + ":eA"))
     }
 
     @Test fun `oversized requests are distinct from output and quota errors`() {

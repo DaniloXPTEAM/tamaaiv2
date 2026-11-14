@@ -1114,6 +1114,15 @@
     <string name="nm_reach_sign_in">Zaloguj się ponownie</string>
     <string name="nm_reach_open_provider">Otwórz dostawców</string>
     <string name="nm_reach_own_key">Dodaj własny klucz</string>
+    <string name="nm_reach_retry_stale">To nie jest już ostatni błąd lub zadanie nadal trwa.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Szczegóły błędu</string>
+    <string name="nm_reach_sheet_message">Wiadomość dostawcy</string>
+    <string name="nm_reach_sheet_unavailable">Brak informacji</string>
+    <string name="nm_reach_sheet_privacy">Wiadomość może być skrócona i zawierać dane prywatne lub niewykryte sekrety. Sprawdź ją przed skopiowaniem.</string>
+    <string name="nm_reach_sheet_change_model">Zmień model</string>
+    <string name="nm_reach_sheet_provider_settings">Otwórz ustawienia dostawcy</string>
     <string name="nm_reach_details">Szczegóły</string>
     <string name="nm_reach_details_hide">Ukryj szczegóły</string>
     <string name="nm_reach_hours_minutes">%1$d godz. %2$d min</string>

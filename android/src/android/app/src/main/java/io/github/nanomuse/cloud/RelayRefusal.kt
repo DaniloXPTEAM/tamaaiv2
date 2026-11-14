@@ -164,13 +164,14 @@ object RelayRefusal {
      */
     fun parse(status: Int, body: String?, fromRelay: Boolean = false): Refusal? {
         val err = errorObject(body)
-        val code = err?.optString("code")?.takeIf { it.isNotBlank() }
+        // Object-valued fields are opaque metadata, not a code or a sentence to retain.
+        val code = (err?.opt("code") as? String)?.takeIf { it.isNotBlank() }
         val relays = err?.optString("type") == RELAY_TYPE || (fromRelay && code != null && code in RELAY_CODES)
         val contentCheck = (status == 400 || status == 0) && contentCheck(body)
         if (!relays && !contentCheck && !(fromRelay && (status == 413 || status >= 500 || status == 401))) return null
         val paused = err?.optBoolean("paused", false) == true
         val retry = err?.optDouble("retry_after", 0.0)?.takeIf { it > 0 }?.let { kotlin.math.ceil(it).toInt() }
-        val message = err?.optString("message")?.takeIf { it.isNotBlank() }
+        val message = (err?.opt("message") as? String)?.takeIf { it.isNotBlank() }
             ?: body?.trim()?.takeIf { it.isNotBlank() && !it.startsWith("{") && !it.startsWith("<") }?.take(200)
             ?: ""
         if (contentCheck) return Refusal(Kind.CONTENT_REJECTED, status, "content_rejected", message)

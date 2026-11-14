@@ -2424,7 +2424,13 @@ fun ChatScreen(
         // map (which is last-writer-wins across sessions).
         LocalMarkdownSessionId provides sessionId,
     ) {
-    // nanoMuse: keep prompt details outside the footer's SubcomposeLayout and recycled rows.
+    // nanoMuse: keep both detail sheets outside the measured footer and recycled rows.
+    io.github.nanomuse.ui.chat.ProviderErrorDetailHost(
+        // nanoMuse: draft promotion changes the displayed identity without changing the route.
+        sessionId = nmDisplayedSessionId,
+        onChangeModel = { showModelPicker = true },
+        onOpenProviderSettings = { ChatLinkResolver.dispatchDeepLink(context, "minis://settings/providers") },
+    ) { openProviderErrorDetail ->
     io.github.nanomuse.ui.chat.PromptSizeDetailHost(sessionId) { openPromptSizeDetail ->
     Scaffold(
         containerColor = nmChatBackground, // nanoMuse: chat-only canvas
@@ -4377,25 +4383,52 @@ fun ChatScreen(
                             }
                             // nanoMuse: a provider that could not be reached (or refused the
                             // region, or whose sign-in ran out) is a card, not the socket's text
-                            is FlatChatItem.AssistantError -> io.github.nanomuse.ui.chat.NmProviderErrorOrBanner(
-                                error = item.error,
-                                onRetry = {
-                                    coroutineScope.launch { tracedScrollToItem("INLINE-RETRY-LAST", 0, 0) }
-                                    safeMutate { viewModel.retryLast() }
-                                },
-                                // nanoMuse: one turn on nanoMuse Cloud after a model of the person's own failed; nothing is switched
-                                onRetryOnCloud = if (viewModel.nmOffersCloudRetry()) ({
-                                    coroutineScope.launch { tracedScrollToItem("INLINE-RETRY-LAST", 0, 0) }
-                                    safeMutate { viewModel.nmRetryLastOnCloud() }
-                                }) else null,
-                            ) {
-                                InlineErrorBanner(
-                                    error = item.error,
-                                    onRetry = {
+                            is FlatChatItem.AssistantError -> {
+                                // nanoMuse: details can outlive a lazy row. Never retry a newer,
+                                // resolved or different session's turn from an old error.
+                                val rowSession = viewModel.currentSessionId
+                                val captureTarget = {
+                                    val snapshot = viewModel.messages.value.singleOrNull {
+                                        it.id == item.sourceMessageId && it.error == item.error
+                                    }
+                                    io.github.nanomuse.ui.chat.ProviderErrorRetryTarget(
+                                        rowSession, item.sourceMessageId, item.error, snapshot,
+                                    )
+                                }
+                                val retryIfCurrent: (io.github.nanomuse.ui.chat.ProviderErrorRetryTarget, () -> Unit) -> Unit = { target, action ->
+                                    val current = viewModel.messages.value
+                                    val last = current.lastOrNull { it.role == "assistant" || it.role == "user" }
+                                    if (target.matches(
+                                            viewModel.currentSessionId, last?.role, last?.id, last?.error, last,
+                                            viewModel.isStreaming.value, current.count { it.id == target.messageId },
+                                        )) {
                                         coroutineScope.launch { tracedScrollToItem("INLINE-RETRY-LAST", 0, 0) }
-                                        safeMutate { viewModel.retryLast() }
+                                        safeMutate(action)
+                                    } else {
+                                        android.widget.Toast.makeText(context, context.getString(R.string.nm_reach_retry_stale), android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                val retry: () -> Unit = { retryIfCurrent(captureTarget()) { viewModel.retryLast() } }
+                                io.github.nanomuse.ui.chat.NmProviderErrorOrBanner(
+                                    error = item.error,
+                                    onRetry = retry,
+                                    // nanoMuse: one turn on Cloud after an own model failed; no slot changes.
+                                    onRetryOnCloud = if (viewModel.nmOffersCloudRetry()) ({
+                                        retryIfCurrent(captureTarget()) { viewModel.nmRetryLastOnCloud() }
+                                    }) else null,
+                                    onOpenDetails = { reach, guidance ->
+                                        // Snapshot at opening, not at composition: later retries that
+                                        // reproduce the same id and error must not revive this action.
+                                        val openedTarget = captureTarget()
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus()
+                                        openProviderErrorDetail(reach, guidance) {
+                                            retryIfCurrent(openedTarget) { viewModel.retryLast() }
+                                        }
                                     },
-                                )
+                                ) {
+                                    InlineErrorBanner(error = item.error, onRetry = retry)
+                                }
                             }
                             is FlatChatItem.AssistantLegacyContent -> BoundsTrackedBlock(
                                 messageId = item.messageId,
@@ -7030,6 +7063,7 @@ fun ChatScreen(
         }
     }
     } // nanoMuse: PromptSizeDetailHost outlives footer measurement and lazy-row disposal.
+    } // nanoMuse: ProviderErrorDetailHost has the same stable chat lifetime.
 
     // Browser bottom sheet
     if (showBrowserSheet) {

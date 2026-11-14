@@ -1102,6 +1102,15 @@
     <string name="nm_reach_sign_in">Masuk lagi</string>
     <string name="nm_reach_open_provider">Buka penyedia</string>
     <string name="nm_reach_own_key">Tambahkan kunci sendiri</string>
+    <string name="nm_reach_retry_stale">Kesalahan ini bukan lagi yang terbaru, atau tugas masih berjalan.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Detail kesalahan</string>
+    <string name="nm_reach_sheet_message">Pesan penyedia</string>
+    <string name="nm_reach_sheet_unavailable">Tidak tersedia</string>
+    <string name="nm_reach_sheet_privacy">Pesan mungkin dipersingkat dan dapat berisi data pribadi atau rahasia yang tidak terdeteksi. Periksa sebelum menyalin.</string>
+    <string name="nm_reach_sheet_change_model">Ganti model</string>
+    <string name="nm_reach_sheet_provider_settings">Buka pengaturan penyedia</string>
     <string name="nm_reach_details">Rincian</string>
     <string name="nm_reach_details_hide">Sembunyikan rincian</string>
     <string name="nm_reach_hours_minutes">%1$d j %2$d mnt</string>

@@ -349,6 +349,12 @@ class OpenAIProvider private constructor(
         else if (isAzure) header("api-key", token)
         else header("Authorization", "Bearer $token")
 
+    // nanoMuse: request headers can override the configured key or send several credentials.
+    private fun requestCredentials(request: Request): List<String> =
+        io.github.nanomuse.net.ProviderCredentials.fromHeaders(
+            request.headers.names().associateWith { request.headers.values(it) }, apiKey,
+        )
+
     /**
      * Build the request URL for Azure OpenAI, mirroring the official AzureOpenAI
      * SDK shape (and iOS azureURL, T-ios-azure-openai-deployments):
@@ -708,10 +714,10 @@ class OpenAIProvider private constructor(
         }
         // nanoMuse: OpenCode Go wants one stable id per conversation (io.github.nanomuse.net.OpenCodeSession); the relay's record takes the same id and, with it, where the call sits (io.github.nanomuse.cloud.CloudHeaders)
         val request = buildRequest(bodyStr, if (io.github.nanomuse.net.OpenCodeSession.wants(basePath) || io.github.nanomuse.cloud.CloudHeaders.isCloud(extraHeaders)) derivePromptCacheKey(messages) else null, messages)
-        // nanoMuse: a provider may echo the bearer in an error; never retain it in the log or chat.
-        val responseCredential = request.header("Authorization")?.let {
-            if (it.startsWith("Bearer ", ignoreCase = true)) it.substringAfter(' ') else it
-        } ?: request.header("api-key")
+        // nanoMuse: a provider may echo any request credential, even JSON-escaped.
+        val responseCredentials = requestCredentials(request)
+        // nanoMuse: this is the actual wire model, not whatever the picker says after a fallback.
+        val requestModelId = (body.opt("model") as? String)?.takeIf { it.isNotBlank() }
         val headerMap = mutableMapOf<String, String>()
         for (name in request.headers.names()) {
             headerMap[name] = request.headers[name] ?: ""
@@ -833,13 +839,13 @@ class OpenAIProvider private constructor(
         }
         io.github.nanomuse.cloud.CloudHeaders.noteResponse(response) // nanoMuse: the id the relay gave the turn, for the events about it
         if (!response.isSuccessful) {
-            // nanoMuse: redact the actual request credential before it reaches logs or the chat.
-            val errorBody = io.github.nanomuse.net.ProviderReach.redactBody(response.body?.string() ?: "", responseCredential)
-            // T321: full error body — debug-only, but kept unconditional here
-            // since non-2xx is rare and the body is critical for diagnosis.
+            // nanoMuse: keep the raw body only in this call for JSON decoding and classification.
+            // A provider can echo a prompt or JSON-escaped credentials, so never log it.
+            val errorBody = response.body?.string() ?: ""
+            // nanoMuse: the redacted message, rather than opaque metadata, is available in chat.
             com.openminis.app.logging.AppLogger.error(
                 "OpenAIProvider",
-                "[T321] ← HTTP ${response.code} error body: $errorBody"
+                "[T321] ← HTTP ${response.code} provider error"
             )
             response.close()
             // T302: skip the LLMRequestLog write entirely on release builds —
@@ -854,11 +860,13 @@ class OpenAIProvider private constructor(
                         requestBody = bodyStr,
                         durationMs = System.currentTimeMillis() - startTime,
                         responseStatusCode = response.code,
-                        responseBody = errorBody.take(2000),
+                        // nanoMuse: exclude opaque JSON metadata and re-redact after decoding.
+                        responseBody = io.github.nanomuse.net.ProviderReach.diagnosticMessage(errorBody, maxChars = 2000, credentials = responseCredentials),
                     )
                 )
             }
-            throw mapHttpError(response.code, errorBody, response.header("Retry-After")) // nanoMuse: retain the provider's wait hint
+            // nanoMuse: retain the wait hint and wire model; redact after decoding JSON.
+            throw mapHttpError(response.code, errorBody, response.header("Retry-After"), requestModelId, responseCredentials)
         }
         if (com.openminis.app.BuildConfig.DEBUG) {
             com.openminis.app.debug.LLMRequestLog.add(
@@ -883,7 +891,8 @@ class OpenAIProvider private constructor(
         // chunk, and finishes — bypassing the chat/tool SSE state machine below.
         if (isCodexImageModel) {
             try {
-                handleCodexImageStream(reader) { chunk -> trySend(chunk) }
+                // nanoMuse: redact echoed request credentials in structured image failures.
+                handleCodexImageStream(reader, responseCredentials) { chunk -> trySend(chunk) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -990,18 +999,15 @@ class OpenAIProvider private constructor(
                     break
                 }
 
-                val event = try { JSONObject(payload) } catch (e: Exception) {
-                    // nanoMuse: even a malformed error event may echo the request credential.
-                    val safeMessage = io.github.nanomuse.net.ProviderReach.redactBody(e.message.orEmpty(), responseCredential)
-                    val safePayload = io.github.nanomuse.net.ProviderReach.redactBody(payload, responseCredential)
+                val event = try { JSONObject(payload) } catch (_: Exception) {
+                    // nanoMuse: malformed payloads and parser exceptions may contain private
+                    // text or escaped credentials. Keep only the length, not their contents.
                     com.openminis.app.logging.AppLogger.warning(
-                        "OpenAIProvider",
-                        "[T321] SSE JSON parse failed: $safeMessage payload=${safePayload.take(300)}"
+                        "OpenAIProvider", "[T321] SSE JSON parse failed: payloadChars=${payload.length}"
                     )
                     continue
                 }
-                // nanoMuse: a mid-stream error can echo the same bearer as an HTTP error.
-                android.util.Log.d("ToolChain[Provider]", "RAW SSE: ${io.github.nanomuse.net.ProviderReach.redactBody(payload, responseCredential)}")
+                // nanoMuse: do not log raw SSE, which may contain a prompt or escaped credentials.
                 sseEventCount++
 
                 // T321: per-event delta-field summary. Only counts/lengths,
@@ -1142,19 +1148,27 @@ class OpenAIProvider private constructor(
                             // response.error = {code, message}. Mirrors iOS 637cd890.
                             val resp = event.optJSONObject("response")
                             val err = resp?.optJSONObject("error")
-                            val code = err?.optString("code")?.takeIf { it.isNotEmpty() } ?: "unknown"
-                            val message = err?.optString("message")?.takeIf { it.isNotEmpty() }
-                                ?: "response.failed with no error detail"
+                            val code = (err?.opt("code") as? String)?.takeIf { it.isNotEmpty() } ?: "unknown"
+                            // nanoMuse: attach this stream's model and decoded, redacted message.
+                            // There is no HTTP status in this event; do not invent one. Relay and
+                            // content-check refusals keep their existing special classification.
+                            val diagnosticBody = JSONObject().put("error", err ?: JSONObject()).toString()
+                            val mapped = mapHttpError(0, diagnosticBody, requestModelId = requestModelId, requestCredentials = responseCredentials)
+                            val safeCode = io.github.nanomuse.net.ProviderReach.redactedText(code, responseCredentials, 128)
+                            val message = io.github.nanomuse.net.ProviderReach.diagnosticMessage(diagnosticBody, credentials = responseCredentials)
+                                .ifBlank { "response.failed with no error detail" }
                             com.openminis.app.logging.AppLogger.error(
-                                "OpenAIProvider",
-                                "Responses API response.failed — code=$code message=$message"
+                                "OpenAIProvider", "Responses API response.failed"
                             )
-                            if (code == "server_error" || code == "rate_limit_exceeded") {
-                                // Transient family: retry on the same model
-                                // rather than falling back through the group.
-                                throw LLMError.TransientError("[$code] $message")
+                            // Preserve the existing retry family independently of the diagnostic card.
+                            val failure = if (code == "server_error" || code == "rate_limit_exceeded") {
+                                LLMError.TransientError("[$safeCode] $message")
+                            } else {
+                                LLMError.ProviderError("[$safeCode] $message")
                             }
-                            throw LLMError.ProviderError("[$code] $message")
+                            failure.nmProviderReach = mapped.nmProviderReach
+                            failure.nmRelayError = mapped.nmRelayError
+                            throw failure
                         }
                         type == "response.incomplete" -> {
                             // [T-responses-terminal-events] The server ended the
@@ -1287,9 +1301,8 @@ class OpenAIProvider private constructor(
                     val inlineError = event.optJSONObject("error")
                     if (inlineError != null) {
                         val code = inlineError.optInt("code", 0)
-                        // nanoMuse: the same redaction and classification applies to mid-stream errors.
-                        val safeEvent = io.github.nanomuse.net.ProviderReach.redactBody(event.toString(), responseCredential)
-                        val err = mapHttpError(code, safeEvent)
+                        // nanoMuse: classify this event, then redact its decoded message.
+                        val err = mapHttpError(code, event.toString(), requestModelId = requestModelId, requestCredentials = responseCredentials)
                         throw err
                     }
                     event.optJSONObject("nanomuse")?.let { io.github.nanomuse.cloud.NmStreamStatus.note(it) } // nanoMuse: the relay's "queued, N ahead" before the model speaks (docs/cloud.md)
@@ -1496,11 +1509,11 @@ class OpenAIProvider private constructor(
                 )
             }
         } catch (e: Exception) {
-            // T321: never silently swallow — log message + top-3 stack frames.
+            // nanoMuse: exception messages may include raw or escaped response content.
             val frames = e.stackTrace.take(3).joinToString(" | ") { "${it.className}.${it.methodName}:${it.lineNumber}" }
             com.openminis.app.logging.AppLogger.error(
                 "OpenAIProvider",
-                "[T321] stream parse exception: ${e.javaClass.simpleName}: ${e.message} @ $frames " +
+                "[T321] stream parse exception: ${e.javaClass.simpleName} @ $frames " +
                     "(events=$sseEventCount contentLen=$contentLen reasoningLen=$reasoningLen)"
             )
             cancel("Stream error", mapError(e))
@@ -1657,6 +1670,8 @@ class OpenAIProvider private constructor(
             // override can't misroute the request.
             for ((k, v) in imageExtraBody) body.put(k, v ?: JSONObject.NULL)
             body.put("model", model.id)
+            // nanoMuse: snapshot the model that is actually serialized for this request.
+            val requestModelId = body.optString("model", "")
 
             val bodyStr = body.toString()
             val jsonMediaType = "application/json".toMediaType()
@@ -1706,13 +1721,13 @@ class OpenAIProvider private constructor(
             }
 
             if (statusCode !in 200..299) {
-                // nanoMuse: do not log or store an echoed credential.
-                val safeBody = io.github.nanomuse.net.ProviderReach.redactBody(responseBody, token)
+                // nanoMuse: headers can add or override credentials on this request.
+                val credentials = requestCredentials(request)
                 com.openminis.app.logging.AppLogger.warning(
                     "OpenAIProvider",
-                    "[ModelUseRoute] images/generations HTTP $statusCode body=${safeBody.take(300)}",
+                    "[ModelUseRoute] images/generations HTTP $statusCode",
                 )
-                throw mapHttpError(statusCode, safeBody, response.header("Retry-After"))
+                throw mapHttpError(statusCode, responseBody, response.header("Retry-After"), requestModelId, credentials)
             }
 
             val json = try {
@@ -1770,8 +1785,9 @@ class OpenAIProvider private constructor(
         val userSetResponseFormat = imageExtraBody.containsKey("response_format")
         var triedWithoutFormat = userSetResponseFormat
         while (true) {
+            val requestModelId = model.id // nanoMuse: this exact value goes on the wire.
             val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
-            multipart.addFormDataPart("model", model.id)
+            multipart.addFormDataPart("model", requestModelId)
             multipart.addFormDataPart("prompt", prompt)
             multipart.addFormDataPart("n", n.toString())
             if (size != null) multipart.addFormDataPart("size", size)
@@ -1832,13 +1848,13 @@ class OpenAIProvider private constructor(
             }
 
             if (statusCode !in 200..299) {
-                // nanoMuse: do not log or store an echoed credential.
-                val safeBody = io.github.nanomuse.net.ProviderReach.redactBody(responseBody, token)
+                // nanoMuse: headers can add or override credentials on this request.
+                val credentials = requestCredentials(request)
                 com.openminis.app.logging.AppLogger.warning(
                     "OpenAIProvider",
-                    "[ModelUseRoute] images/edits HTTP $statusCode body=${safeBody.take(300)}",
+                    "[ModelUseRoute] images/edits HTTP $statusCode",
                 )
-                throw mapHttpError(statusCode, safeBody, response.header("Retry-After"))
+                throw mapHttpError(statusCode, responseBody, response.header("Retry-After"), requestModelId, credentials)
             }
 
             val json = try {
@@ -2686,10 +2702,11 @@ class OpenAIProvider private constructor(
      *
      * Streams line-by-line (no 8 MB StringBuilder + regex backtracking): only
      * the one `result` base64 string is retained, decoded once at the end.
-     * Never logs the token (the SSE body carries no Authorization).
+     * Provider error messages can echo the request's credentials and are redacted.
      */
     private suspend fun handleCodexImageStream(
         reader: BufferedReader,
+        credentials: Collection<String>, // nanoMuse: for decoded error and refusal text
         emit: (LLMStreamChunk) -> Unit,
     ) {
         var b64Result: String? = null
@@ -2754,11 +2771,12 @@ class OpenAIProvider private constructor(
                     }
                 }
                 "response.failed", "error" -> {
-                    val msg = event.optJSONObject("response")?.optJSONObject("error")?.optString("message")
-                        ?.takeIf { it.isNotEmpty() }
-                        ?: event.optJSONObject("error")?.optString("message")?.takeIf { it.isNotEmpty() }
+                    // nanoMuse: object-valued metadata is not a user-facing error message.
+                    val error = event.optJSONObject("response")?.optJSONObject("error") ?: event.optJSONObject("error")
+                    val msg = (error?.opt("message") as? String)?.takeIf { it.isNotEmpty() }
                         ?: "Codex image generation failed"
-                    throw LLMError.ProviderError(msg)
+                    // nanoMuse: the message is decoded, so escaped credentials are now visible.
+                    throw LLMError.ProviderError(io.github.nanomuse.net.ProviderReach.redactedText(msg, credentials, 500))
                 }
             }
         }
@@ -2790,7 +2808,8 @@ class OpenAIProvider private constructor(
         // Safety refusal: the image call explicitly failed and/or the model
         // returned a refusal message instead of an image.
         if (imageCallFailed || refusalText != null) {
-            val reason = refusalText?.trim()
+            // nanoMuse: a refusal can echo the request credential too.
+            val reason = refusalText?.trim()?.let { io.github.nanomuse.net.ProviderReach.redactedText(it, credentials, 500) }
             throw LLMError.ProviderError(
                 "Image generation was rejected by the safety system" +
                     (reason?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "."),
@@ -3485,21 +3504,32 @@ class OpenAIProvider private constructor(
         )
     }
 
-    private fun mapHttpError(statusCode: Int, body: String, retryAfter: String? = null): LLMError {
+    private fun mapHttpError(
+        statusCode: Int, body: String, retryAfter: String? = null,
+        requestModelId: String? = null, requestCredentials: Collection<String> = emptyList(),
+    ): LLMError {
         // nanoMuse: retain each provider response on its own exception. A process-wide last-error
         // slot could show a different request's failure after a fallback or a parallel call.
-        val safeBody = io.github.nanomuse.net.ProviderReach.redactBody(body, apiKey)
+        // Parse raw JSON first: literal redaction before parsing can corrupt JSON when a key
+        // contains a quote, and does not find a JSON-escaped credential. The body itself is not retained.
         val fromRelay = io.github.nanomuse.net.OwnProviderProxy.isRelay(basePath)
-        val relayError = io.github.nanomuse.cloud.AllowanceSignal.fromHttpError(statusCode, safeBody, fromRelay = fromRelay)
+        val relayError = io.github.nanomuse.cloud.AllowanceSignal.fromHttpError(statusCode, body, fromRelay = fromRelay)?.let {
+            // nanoMuse: allowance guidance and links can echo credentials too, not just message.
+            io.github.nanomuse.cloud.ProviderRefusalSanitizer.sanitize(it, requestCredentials)
+        }
+        // nanoMuse: relay refusals keep their existing special handling and allowance actions.
         val reach = if (relayError != null) null else io.github.nanomuse.net.ProviderReach.fromHttp(
-            statusCode, safeBody,
+            statusCode, body,
             host = if (isOAuth && !forceChatCompletions) "chatgpt.com" else io.github.nanomuse.net.OwnProviderProxy.hostOf(basePath),
             oauth = isOAuth,
             // nanoMuse: retain either delta-seconds or an HTTP-date without overflowing;
             // an invalid supplied header must not turn into a guessed short wait.
             retryAfterS = io.github.nanomuse.net.ProviderReach.retryAfterSeconds(retryAfter),
             retryAfterPresent = retryAfter != null,
-        )
+            credentials = requestCredentials,
+            // nanoMuse: an otherwise unclassified provider failure still gets details.
+            includeOtherFailures = true,
+        )?.let { io.github.nanomuse.net.ProviderReach.withRequestModel(it, requestModelId, credentials = requestCredentials) }
         fun withDiagnostics(error: LLMError): LLMError = error.apply {
             nmProviderReach = reach
             nmRelayError = relayError
@@ -3507,24 +3537,23 @@ class OpenAIProvider private constructor(
         if (statusCode == 401) return withDiagnostics(LLMError.InvalidApiKey())
         if (statusCode == 429) return withDiagnostics(LLMError.RateLimited())
 
-        val message = try {
-            val json = JSONObject(safeBody)
-            val error = json.optJSONObject("error")
-            val errorMessage = error?.safeOptString("message", "") ?: safeBody
-            "[$statusCode] $errorMessage"
-        } catch (_: Exception) {
-            "HTTP $statusCode: ${safeBody.take(500)}"
-        }
+        // nanoMuse: parsed provider message only. Opaque JSON metadata and HTML are not
+        // needed to explain a failure and may echo prompts or encoded credentials.
+        val errorMessage = io.github.nanomuse.net.ProviderReach.diagnosticMessage(body, credentials = requestCredentials)
+        val message = if (errorMessage.isNotBlank()) "[$statusCode] $errorMessage" else "HTTP $statusCode"
 
         // nanoMuse: a 403 is access denied, not proof of an invalid API key. It follows the
         // ProviderError path below, preserving both its status and the provider's message.
-        // nanoMuse: a gateway's 400 that says its own upstream gave nothing ("HTTP 0") is a blip to retry (#640)
-        if (statusCode == 400 && io.github.nanomuse.net.ModelBlip.saysUpstreamGaveNothing(message)) return withDiagnostics(LLMError.TransientError(message))
+        // nanoMuse: classify the decoded sentence before masking, since a credential might
+        // collide with "HTTP 0"; opaque metadata cannot turn the request into a retry (#640).
+        if (statusCode == 400 && io.github.nanomuse.net.ProviderReach.messageSaysUpstreamGaveNothing(body)) {
+            return withDiagnostics(LLMError.TransientError(message))
+        }
 
         val transientCodes = setOf(500, 502, 503, 504, 529)
         if (statusCode in transientCodes) {
             // 503 with permanent failure indicators → ProviderError (trigger group fallback)
-            if (statusCode == 503 && (safeBody.contains("no_available_providers") || safeBody.contains("model_not_found"))) {
+            if (statusCode == 503 && (body.contains("no_available_providers") || body.contains("model_not_found"))) {
                 return withDiagnostics(LLMError.ProviderError(message))
             }
             return withDiagnostics(LLMError.TransientError(message))

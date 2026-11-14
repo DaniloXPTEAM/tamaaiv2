@@ -1110,6 +1110,15 @@
     <string name="nm_reach_sign_in">Autentifică-te din nou</string>
     <string name="nm_reach_open_provider">Deschide furnizorii</string>
     <string name="nm_reach_own_key">Adaugă o cheie proprie</string>
+    <string name="nm_reach_retry_stale">Această eroare nu mai este cea mai recentă sau o sarcină este încă în desfășurare.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Detalii despre eroare</string>
+    <string name="nm_reach_sheet_message">Mesajul furnizorului</string>
+    <string name="nm_reach_sheet_unavailable">Indisponibil</string>
+    <string name="nm_reach_sheet_privacy">Mesajul poate fi scurtat și poate conține date private sau secrete nedetectate. Verifică înainte de copiere.</string>
+    <string name="nm_reach_sheet_change_model">Schimbă modelul</string>
+    <string name="nm_reach_sheet_provider_settings">Deschide setările furnizorului</string>
     <string name="nm_reach_details">Detalii</string>
     <string name="nm_reach_details_hide">Ascunde detaliile</string>
     <string name="nm_reach_hours_minutes">%1$d h %2$d min</string>

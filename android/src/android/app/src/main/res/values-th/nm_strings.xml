@@ -1102,6 +1102,15 @@
     <string name="nm_reach_sign_in">ลงชื่อเข้าใช้อีกครั้ง</string>
     <string name="nm_reach_open_provider">เปิดผู้ให้บริการ</string>
     <string name="nm_reach_own_key">เพิ่มคีย์ของคุณเอง</string>
+    <string name="nm_reach_retry_stale">ข้อผิดพลาดนี้ไม่ใช่รายการล่าสุดแล้ว หรือยังมีงานกำลังทำงานอยู่</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">รายละเอียดข้อผิดพลาด</string>
+    <string name="nm_reach_sheet_message">ข้อความจากผู้ให้บริการ</string>
+    <string name="nm_reach_sheet_unavailable">ไม่มีข้อมูล</string>
+    <string name="nm_reach_sheet_privacy">ข้อความอาจถูกย่อและอาจมีข้อมูลส่วนตัวหรือข้อมูลลับที่ตรวจไม่พบ โปรดตรวจสอบก่อนคัดลอก</string>
+    <string name="nm_reach_sheet_change_model">เปลี่ยนโมเดล</string>
+    <string name="nm_reach_sheet_provider_settings">เปิดการตั้งค่าผู้ให้บริการ</string>
     <string name="nm_reach_details">รายละเอียด</string>
     <string name="nm_reach_details_hide">ซ่อนรายละเอียด</string>
     <string name="nm_reach_hours_minutes">%1$d ชม. %2$d นาที</string>

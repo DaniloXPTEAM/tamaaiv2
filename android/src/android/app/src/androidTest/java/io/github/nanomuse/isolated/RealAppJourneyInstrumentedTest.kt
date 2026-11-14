@@ -18,6 +18,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -396,7 +397,14 @@ class RealAppJourneyInstrumentedTest {
             assertEquals(LocalOpenAiFixture.MODEL_ID, firstChats.single().optString("model"))
             capturePromptMetrics(firstChats.single())
             compose.onNodeWithText(text(R.string.nm_reach_request_large_body)).performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText(text(R.string.nm_reach_try_again)).performScrollTo().performClick()
+            // nanoMuse: the detail sheet must report the model on the failed wire request,
+            // not the current picker, and its retry must reach the same guarded action.
+            compose.onNodeWithText(text(R.string.nm_reach_details)).performScrollTo().performClick()
+            awaitText(text(R.string.nm_reach_sheet_title))
+            compose.onNodeWithText("413").assertIsDisplayed()
+            compose.onNodeWithText(LocalOpenAiFixture.MODEL_ID).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Request too large").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("provider-error-retry").performScrollTo().performClick()
             // nanoMuse: at least one visible countdown value must accompany the bounded wait.
             compose.waitUntil(90_000) {
                 (1..3).any { seconds ->

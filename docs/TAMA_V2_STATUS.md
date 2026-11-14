@@ -13,7 +13,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
-| T2: detalhes tocáveis | PENDENTE | Sem prova de painel completo. | Implementar e testar na interface. |
+| T2: detalhes tocáveis | EM ANDAMENTO | Painel e retry condicionado preparados; 43 testes Kotlin no host passaram com stubs de plataforma e catálogo. Android, MockWebServer e Compose ainda não verificados nesta alteração. | Executar CI do APK e dos testes instrumentados; testar a jornada e corrigir eventuais falhas. |
 | T3: metas medidas | BLOQUEADA | Depende da tabela real de T0b. | Recalibrar perfis depois da medição. |
 | T4: roteador e perfis | PENDENTE | Perfis e orçamento ainda não integrados. | Criar roteador e testes por intenção, continuidade e orçamento. |
 | T4b: auto-combo | PENDENTE | Failover existente limitado a grupos não comprova a seleção pedida. | Selecionar modelos elegíveis, avisar e testar recuperação com provedores falsos. |
@@ -25,6 +25,33 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; tracker e aviso sintético passaram no build e emulação `43608695720`. Isso não prova um turno em segundo plano nem o Poco. `mediaPlayback` permanece inalterado. | Testar turno lento e investigar o Poco com autorização. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, Python passou no host e em Linux/macOS no CI; Windows experimental ainda falhou. Arte e keystore dependem do dono. | Investigar Windows; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## T2: painel de erro preparado, execução Android pendente
+
+- O cartão `ProviderReach` abre detalhes com HTTP, host, modelo capturado do pedido, mensagem
+  redigida e limitada, cópia, troca de modelo, configurações e retry. Erros HTTP do cliente
+  OpenAI que não correspondem a um tipo específico recebem um cartão genérico; eventos de stream
+  sem código HTTP não inventam um. Uma falha antiga sem modelo ou status mostra que não foram
+  informados. Recusas do relay e de allowance mantêm seus cartões próprios, não este painel;
+  outros clientes de provedor e banners genéricos ainda não têm paridade comprovada.
+- O retry do painel conserva a identidade do objeto da falha, sessão e id, e recusa erros antigos,
+  duplicados ou um turno em andamento. A identidade promovida do chat fecha o painel quando a
+  conversa muda. Há teste puro para a situação ABA e testes Compose preparados para descarte da
+  linha, restauração do diagnóstico, troca de sessão e ação sobre uma falha posterior. Ainda não
+  foram executados no Android; os testes preparados com MockWebServer também aguardam CI.
+- As credenciais dos cabeçalhos conhecidos são redigidas após decodificação do JSON; respostas
+  opacas e SSE brutos deixaram de ser registrados nesse caminho. Os campos modelados de recusa e
+  orientação do relay também são sanitizados. A proteção é heurística: segredos transformados ou
+  em cabeçalhos desconhecidos podem escapar, e o log de debug ainda guarda URL e corpo do pedido.
+  O painel avisa para revisar antes de copiar; não é uma garantia de ausência de dados sensíveis.
+- No host, 43 testes JUnit passaram para classificação, recuperação, redação, retry e paridade de
+  strings, usando JSON real e stubs para plataforma e catálogo Android. O parser Kotlin encontrou
+  zero erros sintáticos em 21 arquivos alterados; isso não é compilação Android. Quatro testes
+  adicionais passaram sobre a função de mapeamento extraída do cliente, com stubs, sem executar
+  OpenAIProvider ou OkHttp. Também passaram 113 testes Python de smoke, resumo e publicação,
+  executados sem o `conftest` geral, mais Ruff e
+  `bash -n`. As novas chaves estão nas 17 locales, mas 15 usam texto em inglês: paridade técnica
+  **não** é tradução revisada.
 
 ## CI de `085dc82`: primeiro toque na raiz, segundo abriu o painel
 
