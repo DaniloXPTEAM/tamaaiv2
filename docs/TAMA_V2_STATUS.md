@@ -8,8 +8,8 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | [Android 43592023057](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43592023057): build passou e leitura do APK instalado correspondeu ao selado; Pet passou, mas jornada e PRoot falharam. | Investigar os diálogos do emulador e o PRoot sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: a jornada expirou ao esperar o relatório, sem tabela. `c0faef7` move o painel para fora da lista e dispensa o teclado; diálogos do Pixel Launcher e Messages impediram a jornada antes do chat em runs posteriores. | Confirmar o painel no APK e publicar a tabela do pedido real ao servidor falso. |
+| T0a: build, testes e hash | PARCIAL | [Android 43593761942](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43593761942): build passou e APK instalado correspondeu ao selado; Pet, WebView e política de ANR passaram, mas jornada e PRoot falharam. | Investigar o painel e o PRoot sem reduzir os gates. Release ainda não comprovado. |
+| T0b: medir prompt | EM ANDAMENTO | Em `43593761942`, a jornada alcançou o cartão `/prompt-size`, mas expirou após tocar nos detalhes; não há tabela. | Investigar a montagem do painel e publicar a tabela do pedido real ao servidor falso. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
@@ -23,8 +23,35 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
 | T8: imagem | PENDENTE | Consultar a configuração não equivale a gerar imagem. | Tool e mensagem de configuração ausente. |
 | T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
-| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de operação da tela revisados em 17 locales; testes de paridade e heurísticas passaram no host. O teste de WebView sintética foi preparado, ainda sem execução Android. Arte e keystore dependem do dono. | Validar as mudanças no CI; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
+| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de operação da tela em 17 locales; WebView sintética passou em `43593761942`. O ajuste de termos chineses passou nos testes direcionados no host. Arte e keystore dependem do dono. | Confirmar a suíte após a correção; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI de `ee68c6f`: recuperação diagnóstica e painel pendente
+
+- [Android 43593761942](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43593761942)
+  passou no build debug arm64, unitários, compilação de instrumentação e previews. O APK selado
+  e a leitura integral do APK instalado coincidiram em 70.658.680 bytes, SHA-256
+  `142414f97c34144d92f8370f2458034c48c4b76f1e260c2263dcf8c7cf51465a`; certificado
+  `d832e7bb728d098d43d6634c134943596d940e6366b6721753a7f9b716873de9`. Isso não comprova
+  compatibilidade com o aplicativo instalado no telefone; não desinstalar nem limpar dados.
+- Os oito testes de persistência Pet, dois de tela, o teste WebView sintético e a política de
+  reconhecimento de ANR passaram no emulador. A captura anterior à intervenção, reconstruída e
+  conferida pelo SHA-256 `933de3dbe592ad98b68393b325a7d25ba88b04f5f384af04f94be931e247fc0f`,
+  mostra **Pixel Launcher isn't responding**. A jornada prosseguiu após a recuperação diagnóstica,
+  mas o smoke permaneceu em falha, conforme planejado. Isso não estabelece a causa do ANR nem
+  equivale a uma jornada sem obstrução.
+- A jornada chegou ao `/prompt-size` e expirou após tocar nos detalhes: a asserção reportou um
+  título e nenhum controle de fechar. A captura final, SHA-256
+  `011364273db53b087a99bae8d0db17229f4ab236386f861d4a4089b69e09025a`, mostra o chat e o teclado,
+  sem painel visível. A causa exata ainda não foi demonstrada; a tabela, os pedidos de recuperação
+  e o restart não foram concluídos. O primeiro comando PRoot novamente expirou com processo vivo
+  e sem saída; continua sem causa comprovada e não pode ser extrapolado para ARM físico.
+- A [Test Suite 43593761986](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43593761986)
+  falhou em todas as cinco plataformas Python; os logs completos não puderam ser baixados. Em
+  reprodução no host, 1.659 testes passaram, nove foram pulados e um falhou por termos chineses
+  dos avisos de tela incompatíveis com `scripts/rebrand.py`. Os dois textos foram corrigidos sem
+  retirar o aviso de provedor remoto ou dados sensíveis; 14 testes direcionados passaram no host.
+  A correção ainda depende de nova execução completa. iOS, harness, Commits e Labels passaram.
 
 ## CI de `bb50bfb`: diálogo do emulador e sandbox
 
@@ -86,9 +113,9 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   sensíveis; o navegador também considera a etiqueta acessível do botão pai e recusa `click`/`type`
   quando não consegue inspecionar o alvo. Foram 21 testes Kotlin host e um DOM sintético no Node;
   cancelamento foi testado no nível da inspeção. Não equivalem a comportamento Android.
-- Foi acrescentado um teste instrumentado em WebView sem rede, com página e dados fictícios, para
-  uma digitação comum, alvo ausente, campo de cartão e pagamento negado. O teste ainda precisa
-  rodar no CI: não afirmar que passou. A guarda de `click`/`type` **não cobre JavaScript arbitrário**;
+- O teste instrumentado em WebView sem rede, com página e dados fictícios, para uma digitação
+  comum, alvo ausente, campo de cartão e pagamento negado passou em `43593761942`. A guarda de
+  `click`/`type` **não cobre JavaScript arbitrário**;
   rótulos podem ser ambíguos, a página pode mudar entre inspeção e ação e os controles de Hands
   também são heurísticos. Não se trata de proteção completa nem de `SECURITY_RELEASE`.
 

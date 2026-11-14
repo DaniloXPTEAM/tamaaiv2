@@ -64,3 +64,15 @@ def test_english_and_brazilian_portuguese_explain_the_actual_limits(
     assert all(phrase in pt for phrase in portuguese)
     assert "does not read the screen" not in en
     assert "não lê o conteúdo da tela" not in pt
+
+
+@pytest.mark.parametrize(
+    ("locale", "remote_provider", "sensitive"),
+    [("values-zh", "远程服务商", "敏感信息"), ("values-zh-rTW", "遠端服務商", "敏感資訊")],
+)
+def test_chinese_disclosures_still_warn_about_remote_and_sensitive_data(
+    locale: str, remote_provider: str, sensitive: str
+) -> None:
+    screenshot_notice = strings(locale)["nm_hands_rule_screenshots"]
+    assert remote_provider in screenshot_notice
+    assert sensitive in screenshot_notice

@@ -545,7 +545,7 @@
     <string name="nm_hands_rule_secrets">遇到密碼、驗證碼和銀行卡欄位時，應用程式會嘗試把控制權交給你。偵測可能遺漏欄位；不確定時請按停止。</string>
     <string name="nm_hands_rule_approvals">辨識出的付款、傳送、發布和刪除操作會檢查是否需要批准。之前的授權可能生效，偵測也可能遺漏操作。</string>
     <string name="nm_hands_rule_stop">「停止」會要求結束任務；已開始的動作可能仍會完成。</string>
-    <string name="nm_hands_rule_screenshots">截圖可能儲存在此手機上，並傳送給已設定的螢幕模型；該模型可能使用遠端服務供應商。截圖可能包含敏感資訊。</string>
+    <string name="nm_hands_rule_screenshots">截圖可能儲存在此手機上，並傳送給已設定的螢幕模型；該模型可能使用遠端服務商。截圖可能包含敏感資訊。</string>
     <!-- the capsule -->
     <string name="nm_hands_step">第 %1$d 步</string>
     <string name="nm_hands_looking">正在看螢幕…</string>

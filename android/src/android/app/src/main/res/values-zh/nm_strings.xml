@@ -550,7 +550,7 @@
     <string name="nm_hands_rule_secrets">遇到密码、验证码和银行卡字段时，应用会尝试把控制权交给你。检测可能遗漏字段；不确定时请按停止。</string>
     <string name="nm_hands_rule_approvals">识别出的付款、发送、发布和删除操作会检查是否需要批准。之前的授权可能生效，检测也可能遗漏操作。</string>
     <string name="nm_hands_rule_stop">“停止”会请求结束任务；已开始的操作可能仍会完成。</string>
-    <string name="nm_hands_rule_screenshots">截图可能保存在此手机上，并发送给已配置的屏幕模型；该模型可能使用远程服务提供商。截图可能包含敏感信息。</string>
+    <string name="nm_hands_rule_screenshots">截图可能保存在此手机上，并发送给已配置的屏幕模型；该模型可能使用远程服务商。截图可能包含敏感信息。</string>
     <!-- the capsule -->
     <string name="nm_hands_step">第 %1$d 步</string>
     <string name="nm_hands_looking">正在看屏幕…</string>
