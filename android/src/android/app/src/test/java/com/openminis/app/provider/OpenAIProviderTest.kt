@@ -584,7 +584,7 @@ class OpenAIProviderTest {
     }
 
     @Test
-    fun `relay refusal in a successful SSE response keeps guidance without a false HTTP status`() = runBlocking {
+    fun `relay refusal in a successful SSE response keeps guidance without a false HTTP status`(): Unit = runBlocking {
         server.enqueue(sse("""{"error":{"type":"nanomuse_cloud","code":413,"message":"Too large, test-key"}}"""))
         val thrown = runCatching {
             provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
@@ -599,6 +599,7 @@ class OpenAIProviderTest {
         assertEquals(refusal, io.github.nanomuse.cloud.RelayRefusal.fromCanonical(io.github.nanomuse.cloud.RelayRefusal.canonical(refusal)))
         assertNull(error.nmProviderReach)
         server.takeRequest()
+        Unit // JUnit 4 requires a void test method, not MockWebServer's RecordedRequest.
     }
 
     @Test

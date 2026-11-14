@@ -13,7 +13,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
-| T2: detalhes tocáveis | EM ANDAMENTO | [Android 43623510074](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43623510074): `assembleDebug` passou, mas um teste unitário falhou; instrumentação não executada. Correção preparada, ainda não validada no Android. | Executar CI do APK e dos testes instrumentados; testar a jornada e corrigir eventuais falhas. |
+| T2: detalhes tocáveis | EM ANDAMENTO | [Android 43624883873](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43624883873): `assembleDebug` passou, mas o JUnit rejeitou a assinatura de um teste; instrumentação não executada. Assinatura corrigida, ainda não validada no Android. | Executar CI do APK e dos testes instrumentados; testar a jornada e corrigir eventuais falhas. |
 | T3: metas medidas | BLOQUEADA | Depende da tabela real de T0b. | Recalibrar perfis depois da medição. |
 | T4: roteador e perfis | PENDENTE | Perfis e orçamento ainda não integrados. | Criar roteador e testes por intenção, continuidade e orçamento. |
 | T4b: auto-combo | PENDENTE | Failover existente limitado a grupos não comprova a seleção pedida. | Selecionar modelos elegíveis, avisar e testar recuperação com provedores falsos. |
@@ -23,7 +23,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
 | T8: imagem | PENDENTE | Consultar a configuração não equivale a gerar imagem. | Tool e mensagem de configuração ausente. |
 | T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; tracker e aviso sintético passaram no build e emulação `43608695720`. Isso não prova um turno em segundo plano nem o Poco. `mediaPlayback` permanece inalterado. | Testar turno lento e investigar o Poco com autorização. |
-| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos em 17 locales e WebView sintética passou em `43593761942`. Test Suite de `3a22b1c` falhou em todas as matrizes Python; a terminologia chinesa foi reproduzida e corrigida localmente, mas os logs remotos não puderam ser lidos. Arte e keystore dependem do dono. | Confirmar as correções no CI, investigar o Windows experimental e continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
+| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos em 17 locales e WebView sintética passou em `43593761942`. Após a correção de terminologia, Linux e macOS passaram na matriz Python de `20b44fa`; Windows experimental falhou. Arte e keystore dependem do dono. | Investigar Windows experimental e continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
 
 ## T2: painel de erro preparado, execução Android pendente
@@ -52,6 +52,25 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   incluindo os de terminologia, smoke e MCP, mais Ruff e `bash -n`. Os novos testes MockWebServer
   e Compose ainda dependem do CI. As novas chaves estão nas 17 locales, mas 15 usam texto em inglês:
   paridade técnica **não** é tradução revisada.
+
+## CI de `20b44fa`: JUnit bloqueou a instrumentação
+
+- [Android 43624883873](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43624883873)
+  compilou `assembleDebug`, mas a classe `OpenAIProviderTest` foi rejeitada antes dos seus testes:
+  o último comando de um teste retornava `RecordedRequest`, e o JUnit 4 exige método `void`.
+  A assinatura foi declarada `Unit` e o valor descartado. O método exato, compilado isoladamente
+  com stubs no host, tem assinatura JVM `()V`; isso não executa seu teste nem o cliente real.
+  A correção **ainda não foi executada no Android**; os testes MockWebServer daquela classe, a
+  instrumentação, o smoke e os previews não são prova deste run. O hash reportado da montagem foi
+  `ae1380a6faaedd7fa0c21f7f066d315f72a162e1f08b36ea334d5a0523df0a53` e o certificado
+  `1af4001ec20dde5fe9e51ace0f10b9e8bdd3487eadb5ce1d565e7a56cab44546`, diferente do artefato
+  anterior. Não desinstalar o app existente: a assinatura no telefone continua desconhecida.
+- [Test Suite 43624883938](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43624883938):
+  web, relay em Linux e Windows, Python Linux 3.11/3.12/3.13, Python macOS 3.12 e Docker passaram.
+  O workflow ficou verde no agregado, mas o job Python Windows experimental falhou; a anotação só
+  informa código 1, sem identificar o teste. iOS, harness e Commits passaram separadamente. A suíte
+  local completa, no interpretador do ambiente virtual e sem chamadas a modelos, teve **1.699 passed,
+  9 skipped, 2 deselected e 33 subtests passed**. Isso não substitui o resultado de todas as plataformas.
 
 ## CI de `8e7fede` e `3a22b1c`: cancelamento e correções preparadas
 
