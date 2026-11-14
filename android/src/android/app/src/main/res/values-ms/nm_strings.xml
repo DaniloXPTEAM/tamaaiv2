@@ -1360,4 +1360,17 @@
     <string name="nm_pet_archives">Generasi terdahulu</string>
     <string name="nm_pet_archive_entry">%1$s · generasi %2$d · %3$d XP</string>
     <string name="nm_pet_xp_rules">Kitaran berjaya memberi 10 XP, kitaran gagal memberi 3. Misi menambah bonus, sehingga 100 XP jumlah sehari mengikut masa tempatan.</string>
+    <!-- nanoMuse: local prompt-size report; section labels follow PromptSize.Section. -->
+    <string name="nm_prompt_size_title">Prompt size</string>
+    <string name="nm_prompt_size_subtitle">Measure locally, without a model request</string>
+    <string name="nm_prompt_size_details">Show prompt measurements</string>
+    <string name="nm_prompt_size_busy">Wait for the current reply or compacting to finish.</string>
+    <string name="nm_prompt_size_failed">Could not measure this prompt. Try again.</string>
+    <string name="nm_prompt_size_system">System prompt</string>
+    <string name="nm_prompt_size_tools">Tool schemas (OpenAI format)</string>
+    <string name="nm_prompt_size_explanation">Current configuration. Each line shows UTF-16 characters before and after the diet, then estimated tokens before and after (characters divided by 3.7). These are estimates, not a tokenizer or a bill. History, attachments, output and protocol overhead are not included.</string>
+    <string name="nm_prompt_size_image_yes">Image model resolved locally: yes. This does not test image generation.</string>
+    <string name="nm_prompt_size_image_no">Image model resolved locally: no. This does not test image generation.</string>
+    <string name="nm_prompt_size_image_unknown">Image model resolved locally: could not check. This does not test image generation.</string>
+    <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total</string>
 </resources>

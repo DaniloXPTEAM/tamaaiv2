@@ -229,6 +229,15 @@ task budgets.
 parameter, and condenses the `minis-*` paragraphs in the Android tools section. Each CLI's
 `--help` provides its full usage instructions.
 
+The local `/prompt-size` command reports fixed section names and schema sizes before and after
+that diet, without sending a model request or enabling general logging. Its character counts use
+UTF-16 units; estimated tokens are characters divided by 3.7, rounded up. History, attachments,
+output and request overhead are excluded. These numbers are neither exact tokenization nor a
+billing quote. The image-model indicator checks only whether an endpoint resolves locally; it
+does not generate an image or verify a provider. Results are snapshots of the current session.
+The isolated test compares the after counts with a loopback fixture's request and publishes only
+allowlisted labels and numbers, never prompt text, tool descriptions or credentials.
+
 With the default thinking rules, Qwen3.8-Max summary requests explicitly send `enable_thinking: false`. Omitting that
 field leaves the provider's default in control even though the app requested thinking off.
 The switch is documented in [Alibaba Cloud's thinking guide](https://help.aliyun.com/zh/model-studio/deep-thinking).

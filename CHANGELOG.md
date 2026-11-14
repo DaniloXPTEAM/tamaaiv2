@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Added a local Android `/prompt-size` diagnostic and isolated fixture for estimating prompt and tool sizes without sending private content to the model or general logs.
+
 - Kept Android's model-catalogue fallback from borrowing a different server's models when two endpoints share a hostname but use different ports or schemes.
 
 - Gave the Android app a warm TAMA palette across onboarding, chat, navigation and settings, and added a direct Pet shortcut beside the agent name without removing the profile route.

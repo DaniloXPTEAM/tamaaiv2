@@ -27,6 +27,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.openminis.app.MainActivity
 import com.openminis.app.MinisApp
 import com.openminis.app.R
+import com.openminis.app.tools.AgentTools
+import io.github.nanomuse.chat.PromptDiet
+import io.github.nanomuse.chat.PromptSize
+import io.github.nanomuse.chat.PromptSizeTrace
 import com.openminis.app.ui.settings.KEY_THEME_MODE
 import com.openminis.app.ui.settings.PREF_APPEARANCE
 import io.github.nanomuse.home.MainChat
@@ -36,6 +40,7 @@ import io.github.nanomuse.pet.PetStore
 import io.github.nanomuse.ui.chat.ChatBackground
 import io.github.nanomuse.ui.onboarding.FirstRunSetup
 import java.io.File
+import java.util.Collections
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -60,6 +65,7 @@ class RealAppJourneyInstrumentedTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val app get() = context.applicationContext as MinisApp
+    private val promptEvents = Collections.synchronizedList(mutableListOf<PromptSizeTrace.Event>())
 
     private fun text(id: Int) = context.getString(id)
     private fun awaitText(value: String, timeout: Long = 30_000) {
@@ -87,6 +93,8 @@ class RealAppJourneyInstrumentedTest {
     }
 
     @After fun captureLastScreenForDiagnosis() {
+        // Remove the in-process, count-only observer even when an assertion fails.
+        PromptSizeTrace.observer = null
         // The isolated-emulator guard prevents capturing a person's screen. Unlike the journey
         // previews, this full-display diagnostic deliberately includes Android system dialogs.
         if (InstrumentationRegistry.getArguments().getString("tama_isolated") == "true") {
@@ -205,6 +213,24 @@ class RealAppJourneyInstrumentedTest {
             back()
             awaitDescription(text(R.string.nm_tab_chat))
 
+            // The diagnostic command is local: it must not send anything to the model fixture.
+            val postsBeforeMeasure = synchronized(fixture.posts) { fixture.posts.size }
+            compose.waitUntil(30_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodes(hasSetTextAction())[0].performTextInput("/prompt-size")
+            compose.onNodeWithContentDescription("Send").performClick()
+            awaitDescription(text(R.string.nm_prompt_size_details), 45_000)
+            compose.onNodeWithContentDescription(text(R.string.nm_prompt_size_details)).performClick()
+            compose.waitUntil(30_000) {
+                compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isNotEmpty()
+            }
+            assertEquals(postsBeforeMeasure, synchronized(fixture.posts) { fixture.posts.size })
+            back()
+            compose.waitUntil(30_000) {
+                compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isEmpty()
+            }
+
+            // Subscribe only in this disposable, loopback-only run. General logging stays off.
+            PromptSizeTrace.observer = { event -> promptEvents.add(event) }
             compose.waitUntil(30_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
             compose.onAllNodes(hasSetTextAction())[0].performTextInput(LocalOpenAiFixture.PROMPT)
             compose.onNodeWithContentDescription("Send").performClick()
@@ -230,6 +256,43 @@ class RealAppJourneyInstrumentedTest {
             assertTrue("Unexpected chat model(s); requests=$summary", chats.all {
                 it.optString("model") == LocalOpenAiFixture.MODEL_ID
             })
+            // Check the actual request received by the local fixture, not just a source-level
+            // call site. Publish lengths only, never prompt text, model messages or keys.
+            val chat = chats.last()
+            val messages = chat.getJSONArray("messages")
+            val system = (0 until messages.length()).map { messages.getJSONObject(it) }
+                .single { it.optString("role") == "system" }.getString("content")
+            assertTrue(system.contains("\nAndroid-only tools (android-* CLIs):\n"))
+            assertEquals("The actual system prompt was not dieted", system, PromptDiet.prompt(system))
+            val tools = chat.getJSONArray("tools")
+            val browser = (0 until tools.length()).map { tools.getJSONObject(it).getJSONObject("function") }
+                .single { it.getString("name") == "browser_use" }
+            val expectedBrowser = PromptDiet.tools(AgentTools.makeAgentTools()).single { it.name == "browser_use" }
+            assertEquals(expectedBrowser.description, browser.getString("description"))
+            val events = synchronized(promptEvents) { promptEvents.toList() }
+            val systemEvent = events.filterIsInstance<PromptSizeTrace.Event.System>().last()
+            val toolEvent = events.filterIsInstance<PromptSizeTrace.Event.Tools>().last()
+            val requestEvent = events.filterIsInstance<PromptSizeTrace.Event.Request>().last()
+            val systemTotal = systemEvent.rows.single { it.label == PromptSize.Section.TOTAL }
+            val toolTotal = toolEvent.rows.single { it.label == PromptSize.Tool.TOTAL }
+            assertEquals("System metric differs from the fixture's actual request", system.length, systemTotal.afterChars)
+            assertEquals("Tool metric differs from the fixture's actual request", tools.toString().length, toolTotal.afterChars)
+            assertEquals("Request prompt differs from the fixture", system.length, requestEvent.systemChars)
+            assertTrue("The base diet did not reduce this fixture", systemTotal.beforeChars > systemTotal.afterChars)
+            val browserMetric = toolEvent.rows.single { it.label == PromptSize.Tool.BROWSER_USE }
+            assertTrue("The browser diet did not reduce this fixture", browserMetric.beforeChars > browserMetric.afterChars)
+            val metricLines = events.flatMap { event ->
+                when (event) {
+                    is PromptSizeTrace.Event.System -> PromptSize.logLines("system", event.rows) +
+                        "v1 image READY ${when (event.imageReady) { true -> 1; false -> 0; null -> -1 }}"
+                    is PromptSizeTrace.Event.Tools -> PromptSize.logLines("tool", event.rows)
+                    is PromptSizeTrace.Event.Request -> listOf("v1 request SYSTEM ${event.systemChars}")
+                }
+            }
+            File(context.cacheDir, "tama-prompt-size.log").writeText(
+                (metricLines + "v1 wire SYSTEM ${system.length}" + "v1 wire TOOLS ${tools.toString().length}")
+                    .joinToString("\n", postfix = "\n"),
+            )
             assertTrue("Fixture errors: ${fixture.errors}", fixture.errors.isEmpty())
             val session = checkNotNull(MainChat.persisted(context))
             val rows = runBlocking { app.chatRepository.dao.loadMessages(session) }

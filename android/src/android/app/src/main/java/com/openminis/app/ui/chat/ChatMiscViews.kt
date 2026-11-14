@@ -591,7 +591,8 @@ internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = 
                 if (hasDetail) {
                     Icon(
                         imageVector = Icons.Default.Info,
-                        contentDescription = "Show full summary",
+                        // nanoMuse: prompt measurements have their own accessible detail label.
+                        contentDescription = if (block.toolName == "prompt_size") stringResource(R.string.nm_prompt_size_details) else "Show full summary",
                         tint = fg,
                         modifier = Modifier
                             .size(14.dp)
@@ -634,6 +635,8 @@ internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = 
     if (showDetail && hasDetail) {
         CompactSummarySheet(
             summary = block.toolArgs,
+            // nanoMuse: reuse the scrollable, copyable sheet without calling it a compact summary.
+            title = if (block.toolName == "prompt_size") stringResource(R.string.nm_prompt_size_title) else "Compact Summary",
             onDismiss = { showDetail = false },
             onRevert = onRevert,
         )
@@ -648,6 +651,7 @@ internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = 
 @Composable
 private fun CompactSummarySheet(
     summary: String,
+    title: String, // nanoMuse: title is specific to the kind of local info.
     onDismiss: () -> Unit,
     onRevert: (() -> Unit)? = null,
 ) {
@@ -657,7 +661,7 @@ private fun CompactSummarySheet(
     val scope = rememberCoroutineScope()
 
     StandardChatSheet(
-        title = "Compact Summary",
+        title = title, // nanoMuse: compact and prompt diagnostics have different titles.
         onDismiss = onDismiss,
         leadingAction = {
             IconButton(onClick = {
@@ -670,7 +674,7 @@ private fun CompactSummarySheet(
             }) {
                 Icon(
                     imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                    contentDescription = "Copy",
+                    contentDescription = stringResource(R.string.common_copy), // nanoMuse: localized copy action.
                     tint = if (copied) Color(0xFF34C759) else ChatColors.secondaryText,
                 )
             }

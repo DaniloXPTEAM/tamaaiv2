@@ -126,6 +126,8 @@ internal fun ChatViewModel.filteredSlashCommands(): List<SlashCommand> {
             "clear" -> cmd.copy(
                 subtitle = context.getString(R.string.slash_clear_subtitle),
             )
+            // nanoMuse: this diagnostic never sends a message to a model.
+            "prompt-size" -> cmd.copy(subtitle = context.getString(R.string.nm_prompt_size_subtitle))
             else -> cmd
         }
     }

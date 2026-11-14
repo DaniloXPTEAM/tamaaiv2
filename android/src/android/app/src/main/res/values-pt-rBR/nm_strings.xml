@@ -1365,4 +1365,17 @@
     <string name="nm_pet_archives">Gerações anteriores</string>
     <string name="nm_pet_archive_entry">%1$s · geração %2$d · %3$d XP</string>
     <string name="nm_pet_xp_rules">Um ciclo bem-sucedido rende 10 XP, uma falha rende 3. Missões dão bônus, até 100 XP no total por dia no fuso do celular.</string>
+    <!-- nanoMuse: local prompt-size report; section labels follow PromptSize.Section. -->
+    <string name="nm_prompt_size_title">Tamanho do prompt</string>
+    <string name="nm_prompt_size_subtitle">Medir aqui sem chamar o modelo</string>
+    <string name="nm_prompt_size_details">Ver medidas do prompt</string>
+    <string name="nm_prompt_size_busy">Espere a resposta ou a compactação terminar.</string>
+    <string name="nm_prompt_size_failed">Não foi possível medir o prompt. Tente de novo.</string>
+    <string name="nm_prompt_size_system">Prompt de sistema</string>
+    <string name="nm_prompt_size_tools">Ferramentas (formato OpenAI)</string>
+    <string name="nm_prompt_size_explanation">Configuração atual. Cada linha mostra caracteres UTF-16 antes e depois da dieta, seguidos dos tokens estimados antes e depois (caracteres divididos por 3,7). É uma estimativa, não um contador exato nem uma cobrança. Histórico, anexos, resposta e outros campos do pedido não entram na conta.</string>
+    <string name="nm_prompt_size_image_yes">Modelo de imagem resolvido neste aparelho: sim. Isso não testa a geração de imagens.</string>
+    <string name="nm_prompt_size_image_no">Modelo de imagem resolvido neste aparelho: não. Isso não testa a geração de imagens.</string>
+    <string name="nm_prompt_size_image_unknown">Modelo de imagem resolvido neste aparelho: não foi possível verificar. Isso não testa a geração de imagens.</string>
+    <string name="nm_prompt_size_section_names">Identidade|Introdução|Ferramentas disponíveis|Sandbox|Links|Criação de arquivos|Estilo das chamadas|Tom|Ferramentas Android|Ambiente|Tarefas agendadas|Base sem divisão|Política de risco|Controle de tela|Habilidades|MCP|Nome inicial|Mídia|Computadores|Sessão|Objetivos|Feed|Ferramentas de memória|Orientação de memória|Memória global|Memória diária|Arquivo do usuário|Data e idioma|Separadores|Total</string>
 </resources>

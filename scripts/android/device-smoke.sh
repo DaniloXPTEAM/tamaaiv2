@@ -144,6 +144,15 @@ run_instrumentation io.github.nanomuse.pet.PetScreenInstrumentedTest pet-screen-
   'pet screen instrumentation' 2 'Android Compose Pet screen' || failed=1
 if run_instrumentation io.github.nanomuse.isolated.RealAppJourneyInstrumentedTest journey-instrumentation.log \
   'app journey instrumentation' 1 'First run, five tabs, Pet and local fake chat'; then
+  # The isolated fixture wrote only validated count lines, after comparing them to the actual
+  # loopback request. Retrieve them before force-stop; do not copy the general app log.
+  if adb exec-out run-as ai.tama.assistant cat cache/tama-prompt-size.log > prompt-size.log 2>/dev/null \
+    && grep -q '^v1 wire SYSTEM [0-9]' prompt-size.log; then
+    echo '::notice title=prompt-size::Count-only fixture measurements captured'
+  else
+    rm -f prompt-size.log
+    echo '::warning title=prompt-size::Fixture measurements were unavailable'
+  fi
   # This is a disposable emulator installed by this script, never the person's device. Do not
   # clear data. The verification test checks both the persisted rows and a changed process ID.
   if adb shell am force-stop ai.tama.assistant && [ -z "$(adb shell pidof ai.tama.assistant 2>/dev/null | tr -d '\r' || true)" ]; then

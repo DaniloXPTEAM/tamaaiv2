@@ -19,7 +19,11 @@ fails, is skipped, or reports no tests:
 - The real Activity's first-run setup, five navigation tabs, Pet feeding and a chat round trip.
   The model list and streaming answer come from a loopback-only fake OpenAI-compatible service,
   not a real provider or account. The journey also makes that server return a temporary 503 and
-  checks that the selected model and group survive the unsuccessful refresh.
+  checks that the selected model and group survive the unsuccessful refresh. It also checks the
+  local `/prompt-size` command makes no model request, and compares count-only prompt and tool
+  metrics with the real JSON posted to the loopback service. CI validates an allowlist before
+  publishing the metrics. The result is an estimate for that synthetic fixture, not a measurement
+  of a real person's conversation or the physical phone.
 - After the journey, a force-stop on the disposable emulator, then a new app process verifying
   the stored chat and its displayed answer, Pet state, provider and dark appearance settings.
   No app data is cleared between the two runs.

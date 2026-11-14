@@ -21,6 +21,7 @@ import io.github.nanomuse.chat.CompactSummaryIdleTimeoutException // nanoMuse
 import io.github.nanomuse.chat.CompactSummaryOutputException // nanoMuse
 import io.github.nanomuse.chat.ContextBudget // nanoMuse
 import io.github.nanomuse.chat.ContextEstimate // nanoMuse
+import io.github.nanomuse.chat.PromptSize // nanoMuse: count-only prompt diagnostics
 import io.github.nanomuse.chat.ContextCalibrationStore // nanoMuse
 import io.github.nanomuse.chat.ContextTrimming // nanoMuse
 import io.github.nanomuse.chat.ContextTrimStore // nanoMuse
@@ -1230,8 +1231,8 @@ class ChatViewModel(
      * The cost is negligible — [AgentTools.makeAgentTools] just builds a
      * fixed list of definition objects, no I/O.
      */
-    private val agentTools: List<AgentToolDefinition>
-        get() = io.github.nanomuse.chat.PromptDiet.tools(AgentTools.makeAgentTools( // nanoMuse: browser_use worded densely (PromptDiet)
+    // nanoMuse: keep the original definitions available for count-only before/after diagnostics.
+    private fun originalAgentTools(): List<AgentToolDefinition> = AgentTools.makeAgentTools(
             // [T-android-vision-group / GH#182] The main model's own vision
             // capability. When false but a Vision Group is configured, read_image
             // is still exposed and routes through the group (see
@@ -1245,7 +1246,11 @@ class ChatViewModel(
                 providerRepository, context,
             ),
             memoryEnabled = _memoryEnabled.value,
-        ))
+        )
+
+    // nanoMuse: preserve the existing diet for all non-streaming callers, too.
+    private val agentTools: List<AgentToolDefinition>
+        get() = io.github.nanomuse.chat.PromptDiet.tools(originalAgentTools())
 
     /**
      * Per-session loop detector. Reset alongside [agentHistory] whenever the
@@ -1816,6 +1821,13 @@ class ChatViewModel(
             title = "Thinking",
             subtitle = "",
         ),
+        // nanoMuse: a local, zero-request measurement of the current prompt and tools.
+        SlashCommand(
+            id = "prompt-size",
+            icon = Icons.Outlined.Build,
+            title = "prompt-size",
+            subtitle = "",
+        ),
     )
 
     // [T-android-split-chat] filteredSlashCommands / updateSlashMenuState /
@@ -1877,6 +1889,7 @@ class ChatViewModel(
             "memory" -> toggleMemoryEnabled()
             "thinking" -> toggleThinking()
             "clear" -> _clearChatConfirmRequested.value = true
+            "prompt-size" -> nmShowPromptSize() // nanoMuse: no model call, private text stays local.
             else -> AppLogger.info(TAG, "[Slash] unrecognized id=${cmd.id} — no dispatch")
         }
         // [T-android-slash-menu-align-ios-prepend] Action command: restore the
@@ -2005,6 +2018,53 @@ class ChatViewModel(
             content = "",
             toolBlocks = listOf(block),
         )
+    }
+
+    // nanoMuse: /prompt-size is a local snapshot, not a message to the model or a general log.
+    private fun nmShowPromptSize() {
+        if (_isStreaming.value || _isCompacting.value) {
+            appendSystemInfo(context.getString(R.string.nm_prompt_size_busy), "info")
+            return
+        }
+        val requestedSession = activeSessionId
+        viewModelScope.launch(Dispatchers.IO) {
+            val report = runCatching {
+                var sections: List<PromptSize.Measure<PromptSize.Section>>? = null
+                var imageReady: Boolean? = null
+                buildSystemPrompt { measured, image -> sections = measured; imageReady = image }
+                val before = originalAgentTools()
+                val tools = PromptSize.tools(before, io.github.nanomuse.chat.PromptDiet.tools(before))
+                val names = context.getString(R.string.nm_prompt_size_section_names).split('|')
+                buildString {
+                    appendLine(context.getString(R.string.nm_prompt_size_explanation))
+                    appendLine()
+                    appendLine(context.getString(R.string.nm_prompt_size_system))
+                    for (row in checkNotNull(sections)) {
+                        val label = names.getOrElse(row.label.ordinal) { row.label.name }
+                        appendLine("$label: ${row.beforeChars} → ${row.afterChars} (~${row.beforeTokens} → ~${row.afterTokens})")
+                    }
+                    appendLine()
+                    appendLine(context.getString(R.string.nm_prompt_size_tools))
+                    for (row in tools) {
+                        val label = row.label.name.lowercase(java.util.Locale.ROOT)
+                        appendLine("$label: ${row.beforeChars} → ${row.afterChars} (~${row.beforeTokens} → ~${row.afterTokens})")
+                    }
+                    appendLine()
+                    append(context.getString(when (imageReady) {
+                        true -> R.string.nm_prompt_size_image_yes
+                        false -> R.string.nm_prompt_size_image_no
+                        null -> R.string.nm_prompt_size_image_unknown
+                    }))
+                }
+            }
+            withContext(Dispatchers.Main) {
+                if (activeSessionId != requestedSession) return@withContext
+                report.fold(
+                    onSuccess = { appendSystemInfo(context.getString(R.string.nm_prompt_size_title), "prompt_size", payload = it) },
+                    onFailure = { appendSystemInfo(context.getString(R.string.nm_prompt_size_failed), "info") },
+                )
+            }
+        }
     }
 
     /**
@@ -8322,7 +8382,17 @@ class ChatViewModel(
                         }
                     }
                     val requestMessages = checkNotNull(preparedMessages)
-                    val requestTools = agentTools
+                    // nanoMuse: the debug test observer receives only counts for the exact
+                    // schemas and system string sent here. It is absent during ordinary use.
+                    val originalRequestTools = originalAgentTools()
+                    val requestTools = io.github.nanomuse.chat.PromptDiet.tools(originalRequestTools)
+                    val sizeObserver = if (com.openminis.app.BuildConfig.DEBUG) io.github.nanomuse.chat.PromptSizeTrace.observer else null
+                    if (sizeObserver != null) runCatching {
+                        sizeObserver(io.github.nanomuse.chat.PromptSizeTrace.Event.Tools(
+                            PromptSize.tools(originalRequestTools, requestTools),
+                        ))
+                        sizeObserver(io.github.nanomuse.chat.PromptSizeTrace.Event.Request(systemPrompt?.length ?: 0))
+                    }
                     var requestUsage: LLMUsage? = null
                     val requestSnapshot = usageSnapshot(requestMessages)
                     val requestEstimate = io.github.nanomuse.chat.ContextEstimate.request(
@@ -10567,7 +10637,10 @@ class ChatViewModel(
         return entity.id
     }
 
-    private fun buildSystemPrompt(): String? {
+    // nanoMuse: an optional local, count-only snapshot for /prompt-size.
+    private fun buildSystemPrompt(
+        onMeasured: ((List<PromptSize.Measure<PromptSize.Section>>, Boolean?) -> Unit)? = null,
+    ): String? {
         // Cache-friendly layout: keep `base` byte-stable by stripping out anything
         // that varies per request, then append a "Runtime context" suffix at the
         // very end with all the dynamic bits (date, timezone, locale, configured
@@ -10785,29 +10858,49 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         } else {
             null
         }
-        return io.github.nanomuse.chat.PromptCacheLayout.build(
-            stableSections = listOf(
-                io.github.nanomuse.chat.PromptDiet.prompt(base), // nanoMuse: the minis-* paragraphs condensed (PromptDiet)
-                io.github.nanomuse.guard.RiskPolicy.promptParagraph(),
-                io.github.nanomuse.hands.Hands.promptParagraph(context),
-            ),
-            volatileSections = listOf(
-                skillFragment,
-                mcpFragment,
-                namingAddendum,
-                io.github.nanomuse.media.MediaModels.promptParagraph(context),
-                io.github.nanomuse.reach.Computers.promptParagraph(context),
-                io.github.nanomuse.chat.SessionAddenda.forPrompt(sessionKey),
-                io.github.nanomuse.goals.GoalFlow.systemAddendum(context, sessionKey),
-                io.github.nanomuse.feed.FeedFlow.systemAddendum(context, sessionKey),
-                toolListMemoryBullets,
-                memorySystemSection,
-                globalMemoryFragment,
-                dailyMemoryFragment,
-                io.github.nanomuse.sysfiles.UserFile.promptFragment(context),
-            ),
+        // nanoMuse: label each actual section once, so diagnostics cannot change its contents
+        // or order. A local command or isolated debug test receives counts, never fragments.
+        val dietedBase = io.github.nanomuse.chat.PromptDiet.prompt(base)
+        val stable: List<Pair<PromptSize.Section, String?>> = listOf(
+            PromptSize.Section.RISK_POLICY to io.github.nanomuse.guard.RiskPolicy.promptParagraph(),
+            PromptSize.Section.HANDS to io.github.nanomuse.hands.Hands.promptParagraph(context),
+        )
+        val volatile: List<Pair<PromptSize.Section, String?>> = listOf(
+            PromptSize.Section.SKILLS to skillFragment,
+            PromptSize.Section.MCP to mcpFragment,
+            PromptSize.Section.NAMING to namingAddendum,
+            PromptSize.Section.MEDIA to io.github.nanomuse.media.MediaModels.promptParagraph(context),
+            PromptSize.Section.COMPUTERS to io.github.nanomuse.reach.Computers.promptParagraph(context),
+            PromptSize.Section.SESSION to io.github.nanomuse.chat.SessionAddenda.forPrompt(sessionKey),
+            PromptSize.Section.GOALS to io.github.nanomuse.goals.GoalFlow.systemAddendum(context, sessionKey),
+            PromptSize.Section.FEED to io.github.nanomuse.feed.FeedFlow.systemAddendum(context, sessionKey),
+            PromptSize.Section.MEMORY_TOOLS to toolListMemoryBullets,
+            PromptSize.Section.MEMORY_GUIDANCE to memorySystemSection,
+            PromptSize.Section.GLOBAL_MEMORY to globalMemoryFragment,
+            PromptSize.Section.DAILY_MEMORY to dailyMemoryFragment,
+            PromptSize.Section.USER_FILE to io.github.nanomuse.sysfiles.UserFile.promptFragment(context),
+        )
+        val prompt = io.github.nanomuse.chat.PromptCacheLayout.build(
+            stableSections = listOf(dietedBase) + stable.mapNotNull { it.second },
+            volatileSections = volatile.map { it.second },
             runtimeContext = runtimeContext,
         ).prompt
+        val sizeObserver = if (com.openminis.app.BuildConfig.DEBUG) io.github.nanomuse.chat.PromptSizeTrace.observer else null
+        if (onMeasured != null || sizeObserver != null) runCatching {
+            val rows = PromptSize.system(
+                beforeBase = base,
+                afterBase = dietedBase,
+                identityLength = identitySection.length,
+                stable = stable,
+                volatile = volatile,
+                runtime = runtimeContext,
+            )
+            // nanoMuse: resolving a configured image endpoint is local; no image is generated.
+            val imageReady = runCatching { io.github.nanomuse.media.MediaModels.imageEndpoint(context) != null }.getOrNull()
+            onMeasured?.invoke(rows, imageReady)
+            sizeObserver?.invoke(io.github.nanomuse.chat.PromptSizeTrace.Event.System(rows, imageReady))
+        }
+        return prompt
     }
 
     // ─── Legacy tool execution methods (kept for compatibility) ───────────
