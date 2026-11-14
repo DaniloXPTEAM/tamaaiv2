@@ -326,6 +326,7 @@ jobs:
             journey-instrumentation.log
             restart-instrumentation.log
             sandbox-instrumentation.log
+            sandbox-process-snapshot.txt
             browser-guard-instrumentation.log
             system-anr-policy-instrumentation.log
             android-runtime.log

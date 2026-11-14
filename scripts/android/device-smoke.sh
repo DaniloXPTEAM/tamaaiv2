@@ -3,6 +3,7 @@
 # so keep this as one Bash script: variables, conditionals, and pipefail need one shell.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must point to the checkout}"
 shopt -s nullglob
 apks=("$GITHUB_WORKSPACE"/android/src/android/app/build/outputs/apk/debug/*.apk)
@@ -58,7 +59,8 @@ if [[ "$installed" != /data/app/*.apk ]] || [[ "$installed" == *$'\n'* ]]; then
   exit 1
 fi
 copy="$(mktemp)"
-trap 'rm -f "$copy"' EXIT
+snapshot_tmp="$(mktemp)"
+trap 'rm -f "$copy" "$snapshot_tmp"' EXIT
 expected_bytes="$(wc -c < "$APK" | tr -d '[:space:]')"
 INSTALLED=""
 verified=false
@@ -211,8 +213,23 @@ if $journey_ok; then
 else
   echo '::error title=process restart::Journey did not finish, so persisted-state verification was not run'
 fi
-run_instrumentation io.github.nanomuse.isolated.StrictSandboxInstrumentedTest sandbox-instrumentation.log \
-  'sandbox instrumentation' 1 'Packaged PRoot and persistent shell' || failed=1
+rm -f sandbox-process-snapshot.txt
+if run_instrumentation io.github.nanomuse.isolated.StrictSandboxInstrumentedTest sandbox-instrumentation.log \
+  'sandbox instrumentation' 2 'Packaged PRoot, persistent shell and bounded process diagnostics'; then
+  : # A passing sandbox does not need a failure snapshot.
+else
+  failed=1
+  # Read at most 4097 bytes into a temporary file, then retain it only after strict validation.
+  # The validator accepts only the app-rooted process tree and categorical, allowlisted fields.
+  if adb exec-out run-as ai.tama.assistant cat cache/sandbox-process-snapshot.txt 2>/dev/null \
+    | head -c 4097 > "$snapshot_tmp" && \
+    python3 "$SCRIPT_DIR/publish-test-summary.py" --check-sandbox-snapshot "$snapshot_tmp"; then
+    mv "$snapshot_tmp" sandbox-process-snapshot.txt
+    echo '::notice title=sandbox processes::Bounded process-state snapshot captured'
+  else
+    echo '::warning title=sandbox processes::Process-state snapshot unavailable or invalid'
+  fi
+fi
 # nanoMuse: exercise the browser guard against an inline page with networking disabled.
 run_instrumentation io.github.nanomuse.isolated.BrowserGuardInstrumentedTest browser-guard-instrumentation.log \
   'browser guard instrumentation' 1 'Synthetic WebView and approval gate' || failed=1

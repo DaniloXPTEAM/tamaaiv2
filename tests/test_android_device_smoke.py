@@ -101,6 +101,17 @@ elif args[:2] == ["exec-out", "run-as"]:
             print("v1 wire SYSTEM 123")
         else:
             sys.exit(1)
+    elif path.endswith("sandbox-process-snapshot.txt"):
+        if mode == "sandbox-failure":
+            print("v1 root=123 truncated=0\nv1 process pid=123 ppid=1 state=S wait=zero_or_hidden kind=app tracer=unknown")
+        elif mode == "sandbox-snapshot-unavailable":
+            print("v1 root=123 truncated=unknown\nv1 unavailable")
+        elif mode == "sandbox-snapshot-invalid":
+            print("v1 root=123 truncated=0\nfake-private-data")
+        elif mode == "sandbox-snapshot-too-large":
+            print("fake-private-data" * 1000)
+        else:
+            sys.exit(1)
     elif path.endswith(".png"):
         if mode == "pet-screenshot":
             sys.exit(1)
@@ -130,7 +141,8 @@ elif args[:3] == ["shell", "am", "instrument"]:
             or (mode == "journey-empty" and is_journey)):
         print("OK (0 tests)")
     elif ((mode == "instrument-failure" and is_pet) or (mode in ("journey-failure", "journey-failure-with-metrics") and is_journey)
-            or (mode == "restart-failure" and is_restart) or (mode == "sandbox-failure" and is_sandbox)
+            or (mode == "restart-failure" and is_restart)
+            or (mode.startswith("sandbox-") and mode != "sandbox-skipped" and is_sandbox)
             or (mode == "browser-failure" and is_browser) or (mode == "anr-policy-failure" and is_anr_policy)):
         print("FAILURES!!!")
     elif ((mode == "journey-skipped" and is_journey) or (mode == "sandbox-skipped" and is_sandbox)
@@ -140,7 +152,7 @@ elif args[:3] == ["shell", "am", "instrument"]:
     elif mode == "few-screen-tests" and is_screen:
         print("OK (1 test)")
     else:
-        print("OK (8 tests)" if is_pet else "OK (2 tests)" if is_screen else "OK (1 test)")
+        print("OK (8 tests)" if is_pet else "OK (2 tests)" if is_screen or is_sandbox else "OK (1 test)")
 
 """
 
@@ -232,7 +244,13 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     )
     assert "::notice title=app journey instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=process restart instrumentation::OK (1 test);" in result.stdout
-    assert "::notice title=sandbox instrumentation::OK (1 test);" in result.stdout
+    assert "::notice title=sandbox instrumentation::OK (2 tests);" in result.stdout
+    assert not (checkout / "sandbox-process-snapshot.txt").exists()
+    assert not any(
+        name == "adb" and args[-1].endswith("sandbox-process-snapshot.txt")
+        for name, args in calls
+        if args
+    )
     assert "::notice title=browser guard instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=system ANR policy instrumentation::OK (1 test);" in result.stdout
     assert (checkout / "journey-system-anr-recovery.txt").read_text().strip() == "none"
@@ -446,12 +464,37 @@ def test_partial_count_evidence_is_preserved_without_claiming_a_passing_journey(
 
 
 def test_failed_sandbox_does_not_erase_independent_journey_evidence(smoke) -> None:
-    _, run = smoke
-    result, _ = run("sandbox-failure")
+    checkout, run = smoke
+    result, calls = run("sandbox-failure")
     assert result.returncode != 0
     assert "::notice title=app journey instrumentation::OK (1 test)" in result.stdout
     assert "::notice title=process restart instrumentation::OK (1 test)" in result.stdout
     assert "::error title=sandbox instrumentation::" in result.stdout
+    assert (
+        "::notice title=sandbox processes::Bounded process-state snapshot captured" in result.stdout
+    )
+    assert "v1 process pid=123" in (checkout / "sandbox-process-snapshot.txt").read_text()
+    assert any(
+        name == "adb" and "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args
+        for name, args in calls
+    )
+
+
+def test_unavailable_process_snapshot_is_retained_without_passing_the_sandbox(smoke) -> None:
+    checkout, run = smoke
+    result, _ = run("sandbox-snapshot-unavailable")
+    assert result.returncode != 0
+    assert (checkout / "sandbox-process-snapshot.txt").read_text().endswith("v1 unavailable\n")
+
+
+@pytest.mark.parametrize("mode", ["sandbox-snapshot-invalid", "sandbox-snapshot-too-large"])
+def test_invalid_process_snapshot_is_not_retained_or_echoed(smoke, mode: str) -> None:
+    checkout, run = smoke
+    result, _ = run(mode)
+    assert result.returncode != 0
+    assert not (checkout / "sandbox-process-snapshot.txt").exists()
+    assert "Process-state snapshot unavailable or invalid" in result.stdout
+    assert "fake-private-data" not in result.stdout + result.stderr
 
 
 def test_adb_remote_error_text_is_not_saved_as_a_screenshot(smoke) -> None:

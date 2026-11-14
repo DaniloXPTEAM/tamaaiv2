@@ -23,8 +23,24 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
 | T8: imagem | PENDENTE | Consultar a configuração não equivale a gerar imagem. | Tool e mensagem de configuração ausente. |
 | T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
-| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de operação da tela em 17 locales; WebView sintética passou em `43593761942`. O ajuste de termos chineses passou nos testes direcionados no host. Arte e keystore dependem do dono. | Confirmar a suíte após a correção; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
+| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de operação da tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, a suíte Python não-live passou no host. Arte e keystore dependem do dono. | Confirmar a suíte no CI; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## Próximo diagnóstico do sandbox
+
+- Foi preparado um retrato somente para o emulador descartável: em falha do teste PRoot,
+  antes de encerrar o shell, ele tenta registrar até 24 processos da árvore do próprio app,
+  PIDs, estado, categoria de espera, categoria do executável e PID do tracer. Nomes, caminhos,
+  argumentos, ambiente e saída de comandos não são persistidos no retrato. A leitura bruta de
+  `ps` e `/proc` é temporária e limitada; captura expira em dez segundos, indica truncamento e
+  retorna `unknown`/`unavailable` se necessário. Um validador único recusa campos fora da
+  lista, árvore desconectada, ciclos e arquivos grandes antes de guardar ou publicar o artefato.
+- Os casos sintéticos Kotlin passaram no host com Android substituído, incluindo erro, entrada
+  grande e timeout de 10.005 ms; isso **não** prova compatibilidade de `ps`/`/proc` no Android.
+  A suíte Python não-live no host, já com a correção `f2f3a77` e este diagnóstico, teve **1.663
+  passed, 9 skipped, 2 deselected e 33 subtests**; Ruff direcionado, formato, `bash -n` e
+  `git diff --check` passaram. O retrato não altera o resultado do smoke nem é uma correção do
+  PRoot. Sua execução no Android e a causa do timeout continuam não verificadas.
 
 ## CI de `ee68c6f`: recuperação diagnóstica e painel pendente
 

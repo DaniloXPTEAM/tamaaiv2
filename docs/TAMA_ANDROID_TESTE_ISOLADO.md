@@ -34,7 +34,15 @@ fails, is skipped, or reports no tests:
   the stored chat and its displayed answer, Pet state, provider and dark appearance settings.
   No app data is cleared between the two runs.
 - The packaged PRoot sandbox executing commands, writing and rereading a session workspace file,
-  and reporting a failed shell command's exit code.
+  and reporting a failed shell command's exit code. On a failure, before stopping the shell, the
+  isolated test attempts a bounded snapshot of the app's process tree. It transiently inspects
+  `ps` and `/proc` only inside the disposable emulator and saves at most 24 app-descendant rows:
+  numeric PIDs, process state, categorical wait location and executable kind, and tracer PID.
+  Paths, process names, arguments, environment and command output are not saved in the snapshot.
+  A ten-second deadline, input limits and a truncation flag keep the diagnostic bounded; missing
+  permissions or an unsupported `ps` format are recorded as unknown/unavailable. The smoke
+  validates the complete allowlisted tree before retaining or publishing it. This snapshot is a
+  diagnostic, not a fix or proof of the cause, and its Android execution remains to be checked.
 - A network-blocked WebView on an inline synthetic page: ordinary typing, a refused unknown
   selector, a refused fake card field and a denied payment-labeled tap. This checks specific
   click/type cases only; it does not establish comprehensive detection or guard JavaScript.

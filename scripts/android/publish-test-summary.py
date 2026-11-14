@@ -8,6 +8,7 @@ one failing test exhausts the emulator step's annotation quota before later test
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 CHECKS = (
@@ -15,7 +16,7 @@ CHECKS = (
     ("pet-screen-instrumentation.log", "Pet screen", 2),
     ("journey-instrumentation.log", "Real app journey", 1),
     ("restart-instrumentation.log", "Process restart", 1),
-    ("sandbox-instrumentation.log", "Packaged sandbox", 1),
+    ("sandbox-instrumentation.log", "Packaged sandbox", 2),
     ("browser-guard-instrumentation.log", "Browser guard", 1),
     ("system-anr-policy-instrumentation.log", "System ANR dialog policy", 1),
 )
@@ -25,6 +26,62 @@ FAILED = re.compile(
     r"^INSTRUMENTATION_STATUS_CODE: -[34](?:\s|$)",
     re.MULTILINE,
 )
+PROCESS_ROOT = re.compile(r"v1 root=([1-9][0-9]{0,9}) truncated=(0|1|unknown)\Z")
+PROCESS_ROW = re.compile(
+    r"v1 process pid=([1-9][0-9]{0,9}) ppid=([0-9]{1,10}) state=[a-zA-Z?] "
+    r"wait=(?:zero_or_hidden|ptrace|futex|pipe|poll|wait|other|unknown) "
+    r"kind=(app|proot|busybox|loader|translation|sh|other) "
+    r"tracer=([0-9]{1,10}|unknown)\Z"
+)
+
+
+def read_process_snapshot(path: Path) -> list[str] | None:
+    """Read only a bounded, allowlisted app-process tree; never echo invalid input."""
+    try:
+        with path.open("rb") as source:
+            data = source.read(4097)
+        if not data.endswith(b"\n") or len(data) > 4096 or b"\r" in data:
+            return None
+        lines = data[:-1].decode("ascii").split("\n")
+    except (OSError, UnicodeError):
+        return None
+    if not 2 <= len(lines) <= 25 or not (header := PROCESS_ROOT.fullmatch(lines[0])):
+        return None
+    root, truncated = int(header.group(1)), header.group(2)
+    if root > 2_147_483_647:
+        return None
+    if lines[1:] == ["v1 unavailable"]:
+        return lines if truncated == "unknown" else None
+    if truncated == "unknown" or (truncated == "1" and len(lines) != 25):
+        return None
+
+    parents: dict[int, int] = {}
+    for line in lines[1:]:
+        match = PROCESS_ROW.fullmatch(line)
+        if not match:
+            return None
+        pid, parent, kind, tracer = match.groups()
+        pid_num, parent_num = int(pid), int(parent)
+        if (
+            pid_num > 2_147_483_647
+            or parent_num > 2_147_483_647
+            or (tracer != "unknown" and int(tracer) > 2_147_483_647)
+            or pid_num in parents
+            or (pid_num == root) != (kind == "app")
+        ):
+            return None
+        parents[pid_num] = parent_num
+    if root not in parents or parents[root] in parents:
+        return None
+    # Reject unrelated processes, missing ancestors and cycles, regardless of row order.
+    for pid in parents:
+        current, visited = pid, set()
+        while current != root:
+            if current in visited or current not in parents:
+                return None
+            visited.add(current)
+            current = parents[current]
+    return lines
 
 
 def main() -> int:
@@ -62,6 +119,14 @@ def main() -> int:
         elif log.is_file() and SUMMARY.search(log.read_text(encoding="utf-8", errors="replace")):
             print(f"::error title=Emulator health::{phase} system-ANR status was not captured")
 
+    snapshot = Path("sandbox-process-snapshot.txt")
+    if snapshot.is_file():
+        if lines := read_process_snapshot(snapshot):
+            print(f"::notice title=Sandbox process snapshot::{' | '.join(lines)}")
+        else:
+            # Never repeat unexpected content: it might contain user data or workflow commands.
+            print("::warning title=Sandbox process snapshot::Invalid snapshot omitted")
+
     process = Path("journey-process.txt")
     if process.is_file():
         facts = " ".join(process.read_text(encoding="utf-8", errors="replace").splitlines())
@@ -95,4 +160,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if len(sys.argv) == 1:
+        raise SystemExit(main())
+    if len(sys.argv) == 3 and sys.argv[1] == "--check-sandbox-snapshot":
+        raise SystemExit(0 if read_process_snapshot(Path(sys.argv[2])) else 1)
+    raise SystemExit(2)
