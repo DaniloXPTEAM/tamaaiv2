@@ -130,6 +130,7 @@ elif args[:3] == ["shell", "am", "instrument"]:
     is_journey = "io.github.nanomuse.isolated.RealAppJourneyInstrumentedTest" in args
     is_restart = "io.github.nanomuse.isolated.AfterProcessStopInstrumentedTest" in args
     is_sandbox = "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args
+    is_prompt_detail = "io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest" in args
     is_browser = "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args
     is_anr_policy = "io.github.nanomuse.isolated.EmulatorAnrPolicyInstrumentedTest" in args
     assert ["-e", "tama_isolated", "true"] == args[5:8]
@@ -143,16 +144,18 @@ elif args[:3] == ["shell", "am", "instrument"]:
     elif ((mode == "instrument-failure" and is_pet) or (mode in ("journey-failure", "journey-failure-with-metrics") and is_journey)
             or (mode == "restart-failure" and is_restart)
             or (mode.startswith("sandbox-") and mode != "sandbox-skipped" and is_sandbox)
+            or (mode == "prompt-detail-failure" and is_prompt_detail)
             or (mode == "browser-failure" and is_browser) or (mode == "anr-policy-failure" and is_anr_policy)):
         print("FAILURES!!!")
     elif ((mode == "journey-skipped" and is_journey) or (mode == "sandbox-skipped" and is_sandbox)
+            or (mode == "prompt-detail-skipped" and is_prompt_detail)
             or (mode == "browser-skipped" and is_browser) or (mode == "anr-policy-skipped" and is_anr_policy)):
         print("INSTRUMENTATION_STATUS_CODE: -4")
         print("OK (1 test)")
-    elif mode == "few-screen-tests" and is_screen:
+    elif (mode == "few-screen-tests" and is_screen) or (mode == "few-prompt-detail-tests" and is_prompt_detail):
         print("OK (1 test)")
     else:
-        print("OK (8 tests)" if is_pet else "OK (2 tests)" if is_screen or is_sandbox else "OK (1 test)")
+        print("OK (8 tests)" if is_pet else "OK (2 tests)" if is_screen or is_sandbox or is_prompt_detail else "OK (1 test)")
 
 """
 
@@ -220,7 +223,7 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     invocations = [
         args for name, args in calls if name == "adb" and args[:3] == ["shell", "am", "instrument"]
     ]
-    assert len(invocations) == 7
+    assert len(invocations) == 8
     assert any(
         "io.github.nanomuse.pet.PetPersistenceInstrumentedTest" in args for args in invocations
     )
@@ -236,6 +239,10 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
         "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args for args in invocations
     )
     assert any(
+        "io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest" in args
+        for args in invocations
+    )
+    assert any(
         "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args for args in invocations
     )
     assert any(
@@ -245,6 +252,8 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     assert "::notice title=app journey instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=process restart instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=sandbox instrumentation::OK (2 tests);" in result.stdout
+    assert "::notice title=prompt detail instrumentation::OK (2 tests);" in result.stdout
+    assert (checkout / "prompt-detail-instrumentation.log").read_text().strip() == "OK (2 tests)"
     assert not (checkout / "sandbox-process-snapshot.txt").exists()
     assert not any(
         name == "adb" and args[-1].endswith("sandbox-process-snapshot.txt")
@@ -290,6 +299,9 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
         ("restart-failure", "title=process restart instrumentation"),
         ("sandbox-failure", "title=sandbox instrumentation"),
         ("sandbox-skipped", "title=sandbox instrumentation"),
+        ("prompt-detail-failure", "title=prompt detail instrumentation"),
+        ("prompt-detail-skipped", "title=prompt detail instrumentation"),
+        ("few-prompt-detail-tests", "title=prompt detail instrumentation"),
         ("browser-failure", "title=browser guard instrumentation"),
         ("browser-skipped", "title=browser guard instrumentation"),
         ("anr-policy-failure", "title=system ANR policy instrumentation"),
@@ -427,6 +439,10 @@ def test_failed_journey_does_not_claim_restart_but_still_runs_sandbox(smoke) -> 
     assert any(
         "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args for args in invocations
     )
+    assert any(
+        "io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest" in args
+        for args in invocations
+    )
 
 
 @pytest.mark.parametrize("mode", ["anr-attempted", "anr-recovered", "restart-anr-recovered"])
@@ -474,6 +490,10 @@ def test_failed_sandbox_does_not_erase_independent_journey_evidence(smoke) -> No
         "::notice title=sandbox processes::Bounded process-state snapshot captured" in result.stdout
     )
     assert "v1 process pid=123" in (checkout / "sandbox-process-snapshot.txt").read_text()
+    assert any(
+        name == "adb" and "io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest" in args
+        for name, args in calls
+    )
     assert any(
         name == "adb" and "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args
         for name, args in calls

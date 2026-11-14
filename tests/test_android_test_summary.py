@@ -23,6 +23,7 @@ def test_summary_distinguishes_pass_fail_skip_and_missing(tmp_path, monkeypatch,
     (tmp_path / "sandbox-instrumentation.log").write_text(
         "INSTRUMENTATION_STATUS_CODE: -4\nOK (1 test)\n"
     )
+    (tmp_path / "prompt-detail-instrumentation.log").write_text("OK (2 tests)\n")
     (tmp_path / "browser-guard-instrumentation.log").write_text("OK (1 test)\n")
     assert summary.main() == 0
     output = capsys.readouterr().out
@@ -32,6 +33,7 @@ def test_summary_distinguishes_pass_fail_skip_and_missing(tmp_path, monkeypatch,
     assert "::warning title=Process restart::Not run" in output
     assert "::error title=Packaged sandbox::Failed, skipped, or no tests reported" in output
     assert "::notice title=Packaged sandbox" not in output
+    assert "::notice title=Prompt detail::OK (2 tests)" in output
     assert "::notice title=Browser guard::OK (1 test)" in output
 
 
@@ -42,6 +44,13 @@ def test_sandbox_summary_requires_both_shell_and_snapshot_policy_tests(
     (tmp_path / "sandbox-instrumentation.log").write_text("OK (1 test)\n")
     assert summary.main() == 0
     assert "::error title=Packaged sandbox::" in capsys.readouterr().out
+
+
+def test_prompt_detail_summary_requires_both_interface_tests(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "prompt-detail-instrumentation.log").write_text("OK (1 test)\n")
+    assert summary.main() == 0
+    assert "::error title=Prompt detail::" in capsys.readouterr().out
 
 
 def test_summary_reports_process_evidence_only_if_present(tmp_path, monkeypatch, capsys) -> None:

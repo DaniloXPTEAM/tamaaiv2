@@ -9,7 +9,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
 | T0a: build, testes e hash | PARCIAL | [Android 43593761942](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43593761942): build passou e APK instalado correspondeu ao selado; Pet, WebView e política de ANR passaram, mas jornada e PRoot falharam. | Investigar o painel e o PRoot sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | Em `43593761942`, a jornada alcançou o cartão `/prompt-size`, mas expirou após tocar nos detalhes; não há tabela. | Investigar a montagem do painel e publicar a tabela do pedido real ao servidor falso. |
+| T0b: medir prompt | EM ANDAMENTO | Em `43593761942`, a jornada alcançou o cartão `/prompt-size`, mas expirou após tocar nos detalhes; não há tabela. O proprietário do painel foi movido para fora do layout medido, com novos testes de interface preparados. | Validar o painel e publicar a tabela do pedido real ao servidor falso no Android. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
@@ -25,6 +25,20 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de operação da tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, a suíte Python não-live passou no host. Arte e keystore dependem do dono. | Confirmar a suíte no CI; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## Painel de medição: mudança preparada
+
+- O dono do relatório `/prompt-size` foi movido para fora do `SubcomposeLayout` do rodapé e da
+  lista reciclável. Fechar o painel remove o relatório; trocar de conversa reinicia seu estado.
+  Isso aborda uma hipótese sobre o ciclo de vida da interface, **não** prova a causa do timeout
+  de `43593761942`. O relatório continua local, apenas com contagens e sem chamada ao modelo.
+- Foram preparados dois testes Compose independentes: abrir o painel enquanto a linha de origem
+  é removida e fechar; trocar de sessão e abrir outro relatório. O smoke exige ambos e continua
+  executando-os mesmo se jornada ou sandbox falharem. No host passaram 92 testes Python
+  direcionados (um pulado), Ruff, formato e sintaxe Bash; o parser Kotlin não encontrou erros
+  nas três fontes alteradas. A compilação e um exercício simples do proprietário usaram stubs de
+  Android/Compose, não uma interface Android real. O resultado dos novos testes instrumentados
+  e da jornada completa ainda precisa de CI.
 
 ## Próximo diagnóstico do sandbox
 

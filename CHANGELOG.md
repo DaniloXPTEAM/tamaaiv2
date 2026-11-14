@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Moved the Android prompt-size detail host outside the measured chat layout and added isolated report-sheet checks.
+
 - Added a bounded, app-tree-only process snapshot for diagnosing failed packaged-sandbox checks on the disposable Android emulator.
 
 - Added fail-closed emulator-health reporting and a narrowly scoped system-ANR diagnostic so later synthetic checks can run without treating an interrupted journey as a clean smoke.

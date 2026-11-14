@@ -230,6 +230,9 @@ else
     echo '::warning title=sandbox processes::Process-state snapshot unavailable or invalid'
   fi
 fi
+# Exercise the report host independently even if the full journey or the sandbox fails.
+run_instrumentation io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest prompt-detail-instrumentation.log \
+  'prompt detail instrumentation' 2 'Synthetic report, recycled row and session change' || failed=1
 # nanoMuse: exercise the browser guard against an inline page with networking disabled.
 run_instrumentation io.github.nanomuse.isolated.BrowserGuardInstrumentedTest browser-guard-instrumentation.log \
   'browser guard instrumentation' 1 'Synthetic WebView and approval gate' || failed=1

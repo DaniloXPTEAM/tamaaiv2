@@ -2422,6 +2422,8 @@ fun ChatScreen(
         // map (which is last-writer-wins across sessions).
         LocalMarkdownSessionId provides sessionId,
     ) {
+    // nanoMuse: keep prompt details outside the footer's SubcomposeLayout and recycled rows.
+    io.github.nanomuse.ui.chat.PromptSizeDetailHost(sessionId) { openPromptSizeDetail ->
     Scaffold(
         containerColor = nmChatBackground, // nanoMuse: chat-only canvas
         contentWindowInsets = WindowInsets(0),
@@ -3290,8 +3292,6 @@ fun ChatScreen(
             // pill bar so the haze has content to blur. Bottom contentPadding
             // keeps the last message clear of the composer + pill.
             Box(modifier = Modifier.fillMaxSize()) {
-                // nanoMuse: a report opened from a recycled row must outlive keyboard and list relayout.
-                var nmPromptSizeDetail by remember(sessionId) { mutableStateOf<String?>(null) }
                 // nanoMuse: the measured footer already includes the tool preview,
                 // approval cards, composer and pill inset. Only breathing room is extra.
                 val bottomReserve = if (nmToolBarShown) 14.dp else 20.dp
@@ -4301,7 +4301,7 @@ fun ChatScreen(
                                     {
                                         keyboardController?.hide()
                                         focusManager.clearFocus()
-                                        nmPromptSizeDetail = item.block.toolArgs
+                                        openPromptSizeDetail(item.block.toolArgs)
                                     }
                                 } else null,
                                 // Only the compact-divider info block should
@@ -4584,15 +4584,6 @@ fun ChatScreen(
                         },
                     )
                 }
-                // nanoMuse: the report stays mounted even if the source row is recycled.
-                nmPromptSizeDetail?.let { report ->
-                    CompactSummarySheet(
-                        summary = report,
-                        title = stringResource(R.string.nm_prompt_size_title),
-                        onDismiss = { nmPromptSizeDetail = null },
-                    )
-                }
-
                 // [T-android-scroll-fab-content-inset] Keep the two scroll
                 // buttons on the conversation's right edge, not the pane's.
                 //
@@ -7023,6 +7014,7 @@ fun ChatScreen(
         )
         }
     }
+    } // nanoMuse: PromptSizeDetailHost outlives footer measurement and lazy-row disposal.
 
     // Browser bottom sheet
     if (showBrowserSheet) {
