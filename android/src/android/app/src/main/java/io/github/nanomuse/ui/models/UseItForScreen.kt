@@ -132,7 +132,7 @@ fun UseItForScreen(instanceId: String, onDone: () -> Unit) {
                 }
             }
             MinisTextButton(onClick = onDone, enabled = !busy, modifier = Modifier.padding(top = 4.dp)) {
-                Text(stringResource(R.string.nm_useit_not_now), color = MuseTones.action)
+                Text(stringResource(R.string.nm_useit_not_now), color = MuseTones.accent)
             }
             Text(
                 text = stringResource(R.string.nm_useit_footnote),

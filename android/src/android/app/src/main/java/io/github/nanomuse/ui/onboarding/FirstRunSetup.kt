@@ -91,7 +91,7 @@ import io.github.nanomuse.ui.avatar.AgentMood
 import io.github.nanomuse.ui.home.MuseTones
 
 /**
- * nanoMuse's first run: a few full pages in Muse's shape, one blue pill each.
+ * nanoMuse's first run, using TAMA's warm surfaces and the existing setup flow.
  *
  * 1. **Welcome** — the face, what it is, and the notice that matters most: free, open-source,
  *    non-profit, and what signing in gives. *Sign in — free* (a phone number or an e-mail) is the door most people take
@@ -201,7 +201,7 @@ fun FirstRunSetupScreen(
     )
     val onSurface = MaterialTheme.colorScheme.onSurface
 
-    Surface(color = MuseTones.surface, modifier = Modifier.fillMaxSize()) {
+    Surface(color = MuseTones.canvas, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -252,14 +252,14 @@ fun FirstRunSetupScreen(
 // ── the pages ──────────────────────────────────────────────────────────────
 
 /**
- * The first page: the app's icon, one line on what it is, the notice, and two doors: the
+ * The first page: the companion, one line on what it is, the notice, and two doors: the
  * account, or a key of one's own (the provider screen; the sign-in can come later).
  */
 @Composable
 private fun WelcomePage(onSignIn: () -> Unit, onOwnKey: () -> Unit) {
     val context = LocalContext.current
     Page(
-        hero = { io.github.nanomuse.ui.muse.NmBrandMark(size = 104.dp) }, // the face comes with the conversation, on the last page
+        hero = { AgentAvatarDisc(mood = AgentMood.IDLE, discSize = 104.dp) },
         title = stringResource(R.string.nm_setup_title),
         subtitle = stringResource(R.string.nm_welcome_tagline),
         primaryLabel = stringResource(R.string.nm_welcome_email),
@@ -316,9 +316,9 @@ private fun PasswordPage(onDone: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = MuseTones.action,
-        cursorColor = MuseTones.action,
-        focusedLabelColor = MuseTones.action,
+        focusedBorderColor = MuseTones.accent,
+        cursorColor = MuseTones.accent,
+        focusedLabelColor = MuseTones.accent,
     )
     val transformation = if (show) VisualTransformation.None else PasswordVisualTransformation()
     Page(
@@ -535,7 +535,7 @@ private fun Page(
                 Text(primaryLabel, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
             if (secondaryLabel != null) {
-                TextButton(onClick = onSecondary) { Text(secondaryLabel, color = MuseTones.action, fontSize = 14.sp) }
+                TextButton(onClick = onSecondary) { Text(secondaryLabel, color = MuseTones.accent, fontSize = 14.sp) }
             } else {
                 Spacer(Modifier.height(12.dp))
             }
@@ -555,14 +555,14 @@ private fun Page(
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     modifier = Modifier.height(28.dp),
                 ) {
-                    Text(stringResource(R.string.nm_setup_learn_more), color = MuseTones.action, fontSize = 12.sp)
+                    Text(stringResource(R.string.nm_setup_learn_more), color = MuseTones.accent, fontSize = 12.sp)
                 }
             }
         }
     }
 }
 
-/** The page indicator: three small dots, the current one in the action blue and a little longer. */
+/** The page indicator: three small dots, the current one longer. */
 @Composable
 private fun Dots(current: Int, total: Int, modifier: Modifier = Modifier) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -585,7 +585,7 @@ private fun HeroGlyph(icon: ImageVector) {
         modifier = Modifier.size(104.dp).clip(CircleShape).background(MuseTones.disc),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = MuseTones.action, modifier = Modifier.size(44.dp))
+        Icon(icon, contentDescription = null, tint = MuseTones.accent, modifier = Modifier.size(44.dp))
     }
 }
 
@@ -639,7 +639,7 @@ private fun PermissionRow(icon: ImageVector, title: String, subtitle: String, ok
                     Text(okLabel, fontSize = 13.sp, color = muted)
                 }
             } else {
-                Text(stringResource(R.string.nm_hands_need_set_up), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MuseTones.action)
+                Text(stringResource(R.string.nm_hands_need_set_up), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MuseTones.accent)
             }
         }
     }

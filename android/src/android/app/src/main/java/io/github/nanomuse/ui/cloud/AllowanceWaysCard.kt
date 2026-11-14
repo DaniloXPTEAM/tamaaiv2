@@ -184,10 +184,10 @@ fun AllowanceWaysCard(
                     }
                     Spacer(Modifier.width(6.dp))
                     TextButton(onClick = { openUrl(context, first.keyUrl(mainland)) }) {
-                        Text(stringResource(R.string.nm_ways_get_key), fontSize = 13.sp, color = MuseTones.action)
+                        Text(stringResource(R.string.nm_ways_get_key), fontSize = 13.sp, color = MuseTones.accent)
                     }
                 }
-                TextButton(onClick = { openUrl(context, guideUrl) }) { Text(stringResource(R.string.nm_ways_key_guide), fontSize = 13.sp, color = MuseTones.action) }
+                TextButton(onClick = { openUrl(context, guideUrl) }) { Text(stringResource(R.string.nm_ways_key_guide), fontSize = 13.sp, color = MuseTones.accent) }
             }
             val listed = if (more) vendors else vendors.take(SHOWN_FIRST)
             listed.forEach { v -> VendorRow(v, covers = Capabilities.covers(context, v.capabilities), chinese = chinese, mainland = mainland, signIn = false) }
@@ -228,7 +228,7 @@ fun AllowanceWaysCard(
                 ) {
                     locals.forEach { v ->
                         TextButton(onClick = { openPreset(context, v.id) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
-                            Text(stringResource(R.string.nm_ways_add_named, v.displayName(chinese)), fontSize = 13.sp, color = MuseTones.action)
+                            Text(stringResource(R.string.nm_ways_add_named, v.displayName(chinese)), fontSize = 13.sp, color = MuseTones.accent)
                         }
                     }
                 }
@@ -238,7 +238,7 @@ fun AllowanceWaysCard(
             if (signedIn) {
                 Way(Icons.Outlined.Devices, Color(0xFF2E9E6B), stringResource(R.string.nm_ways_computer_title), stringResource(R.string.nm_ways_computer_body)) {
                     TextButton(onClick = { com.openminis.app.ui.chat.ChatLinkResolver.dispatchDeepLink(context, "minis://settings/devices") }) {
-                        Text(stringResource(R.string.nm_ways_devices), fontSize = 13.sp, color = MuseTones.action)
+                        Text(stringResource(R.string.nm_ways_devices), fontSize = 13.sp, color = MuseTones.accent)
                     }
                 }
             }
@@ -252,14 +252,14 @@ fun AllowanceWaysCard(
                         context.startActivity(Intent.createChooser(send, context.getString(R.string.nm_cloud_invite_share)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     }
                 }) {
-                    Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.action)
+                    Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
                     Spacer(Modifier.width(5.dp))
-                    Text(stringResource(R.string.nm_ways_invite_share), fontSize = 13.sp, color = MuseTones.action)
+                    Text(stringResource(R.string.nm_ways_invite_share), fontSize = 13.sp, color = MuseTones.accent)
                 }
                 TextButton(onClick = { clipboard.setPlainText("TAMA AI", link); copied = true }) {
-                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.action)
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
                     Spacer(Modifier.width(5.dp))
-                    Text(stringResource(if (copied) R.string.nm_cloud_invite_copied else R.string.nm_ways_invite_copy), fontSize = 13.sp, color = MuseTones.action)
+                    Text(stringResource(if (copied) R.string.nm_cloud_invite_copied else R.string.nm_ways_invite_copy), fontSize = 13.sp, color = MuseTones.accent)
                 }
             }
 
@@ -267,9 +267,9 @@ fun AllowanceWaysCard(
             if (starAsk && !starred) {
                 Way(Icons.Outlined.StarOutline, Color(0xFFF5A623), remember { io.github.nanomuse.community.StarPrompt.text(context, io.github.nanomuse.community.StarPrompt.Ask(io.github.nanomuse.community.StarPrompt.Moment.EXHAUSTED)) }, null) {
                     TextButton(onClick = { io.github.nanomuse.community.StarPrompt.open(context); starred = true }) {
-                        Icon(Icons.Outlined.StarOutline, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.action)
+                        Icon(Icons.Outlined.StarOutline, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
                         Spacer(Modifier.width(5.dp))
-                        Text(stringResource(R.string.nm_star_action), fontSize = 13.sp, color = MuseTones.action)
+                        Text(stringResource(R.string.nm_star_action), fontSize = 13.sp, color = MuseTones.accent)
                     }
                     TextButton(onClick = { io.github.nanomuse.community.StarPrompt.markStarred(context); starred = true }) {
                         Text(stringResource(R.string.nm_star_done), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -308,15 +308,15 @@ private fun VendorRow(v: CatalogueProvider, covers: String, chinese: Boolean, ma
         FlowRow(horizontalArrangement = Arrangement.End, verticalArrangement = Arrangement.Center) {
             if (signIn) {
                 TextButton(onClick = { openPreset(context, v.id, signIn = true) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
-                    Text(stringResource(R.string.nm_ways_sign_in), fontSize = 13.sp, color = MuseTones.action)
+                    Text(stringResource(R.string.nm_ways_sign_in), fontSize = 13.sp, color = MuseTones.accent)
                 }
             } else {
                 TextButton(onClick = { openPreset(context, v.id) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
-                    Text(stringResource(R.string.nm_ways_add), fontSize = 13.sp, color = MuseTones.action)
+                    Text(stringResource(R.string.nm_ways_add), fontSize = 13.sp, color = MuseTones.accent)
                 }
                 if (v.keyUrl(mainland).isNotBlank()) {
                     TextButton(onClick = { openUrl(context, v.keyUrl(mainland)) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
-                        Text(stringResource(R.string.nm_ways_get_key), fontSize = 13.sp, color = MuseTones.action)
+                        Text(stringResource(R.string.nm_ways_get_key), fontSize = 13.sp, color = MuseTones.accent)
                     }
                 }
             }

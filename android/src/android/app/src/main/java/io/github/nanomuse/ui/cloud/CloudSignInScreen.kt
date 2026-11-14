@@ -270,9 +270,9 @@ fun CloudSignInScreen(
                 keyboardActions = KeyboardActions(onSend = { sendCode() }),
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MuseTones.action,
-                    cursorColor = MuseTones.action,
-                    focusedLabelColor = MuseTones.action,
+                    focusedBorderColor = MuseTones.accent,
+                    cursorColor = MuseTones.accent,
+                    focusedLabelColor = MuseTones.accent,
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -310,15 +310,15 @@ fun CloudSignInScreen(
                     },
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MuseTones.action,
-                        cursorColor = MuseTones.action,
-                        focusedLabelColor = MuseTones.action,
+                        focusedBorderColor = MuseTones.accent,
+                        cursorColor = MuseTones.accent,
+                        focusedLabelColor = MuseTones.accent,
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(6.dp))
                 TextButton(onClick = { byPassword = false; error = null }, modifier = Modifier.align(Alignment.End)) {
-                    Text(stringResource(R.string.nm_cloud_forgot_password), color = MuseTones.action, fontSize = 13.sp)
+                    Text(stringResource(R.string.nm_cloud_forgot_password), color = MuseTones.accent, fontSize = 13.sp)
                 }
             } else Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
@@ -331,9 +331,9 @@ fun CloudSignInScreen(
                     keyboardActions = KeyboardActions(onDone = { verify() }),
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MuseTones.action,
-                        cursorColor = MuseTones.action,
-                        focusedLabelColor = MuseTones.action,
+                        focusedBorderColor = MuseTones.accent,
+                        cursorColor = MuseTones.accent,
+                        focusedLabelColor = MuseTones.accent,
                     ),
                     modifier = Modifier
                         .weight(1f)
@@ -364,7 +364,7 @@ fun CloudSignInScreen(
                 Spacer(Modifier.height(6.dp))
                 if (!inviteOpen) {
                     TextButton(onClick = { inviteOpen = true }, modifier = Modifier.align(Alignment.End)) {
-                        Text(stringResource(R.string.nm_cloud_invite_have), color = MuseTones.action, fontSize = 13.sp)
+                        Text(stringResource(R.string.nm_cloud_invite_have), color = MuseTones.accent, fontSize = 13.sp)
                     }
                 } else {
                     OutlinedTextField(
@@ -376,9 +376,9 @@ fun CloudSignInScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
                         shape = RoundedCornerShape(14.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MuseTones.action,
-                            cursorColor = MuseTones.action,
-                            focusedLabelColor = MuseTones.action,
+                            focusedBorderColor = MuseTones.accent,
+                            cursorColor = MuseTones.accent,
+                            focusedLabelColor = MuseTones.accent,
                         ),
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -389,7 +389,7 @@ fun CloudSignInScreen(
             Spacer(Modifier.height(6.dp))
             if (!serverOpen) {
                 TextButton(onClick = { serverOpen = true }, modifier = Modifier.align(Alignment.End)) {
-                    Text(stringResource(R.string.nm_cloud_other_server), color = MuseTones.action, fontSize = 13.sp)
+                    Text(stringResource(R.string.nm_cloud_other_server), color = MuseTones.accent, fontSize = 13.sp)
                 }
             } else {
                 RelayServerForm(enabled = !verifying && !sending, onClose = { serverOpen = false })
@@ -433,7 +433,7 @@ fun CloudSignInScreen(
                 textAlign = TextAlign.Center,
             )
             TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(CLOUD_DOC_URL))) } }) {
-                Text(stringResource(R.string.nm_setup_learn_more), color = MuseTones.action, fontSize = 12.sp)
+                Text(stringResource(R.string.nm_setup_learn_more), color = MuseTones.accent, fontSize = 12.sp)
             }
             // What signing in is, and is not: free, community, non-profit — said where the
             // decision is made, not only on the account page afterwards.
@@ -502,9 +502,9 @@ private fun RelayServerForm(enabled: Boolean, onClose: () -> Unit) {
             keyboardActions = KeyboardActions(onDone = { check() }),
             shape = RoundedCornerShape(14.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MuseTones.action,
-                cursorColor = MuseTones.action,
-                focusedLabelColor = MuseTones.action,
+                focusedBorderColor = MuseTones.accent,
+                cursorColor = MuseTones.accent,
+                focusedLabelColor = MuseTones.accent,
             ),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -517,7 +517,7 @@ private fun RelayServerForm(enabled: Boolean, onClose: () -> Unit) {
             )
             TextButton(onClick = { check() }, enabled = enabled && !checking && text.isNotBlank()) {
                 if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MuseTones.action)
-                else Text(stringResource(R.string.nm_cloud_server_check), color = MuseTones.action, fontSize = 13.sp)
+                else Text(stringResource(R.string.nm_cloud_server_check), color = MuseTones.accent, fontSize = 13.sp)
             }
             TextButton(
                 onClick = {
@@ -527,7 +527,7 @@ private fun RelayServerForm(enabled: Boolean, onClose: () -> Unit) {
                     }
                 },
                 enabled = enabled && !checking && text.isNotBlank(),
-            ) { Text(stringResource(R.string.nm_cloud_server_use), color = MuseTones.action, fontSize = 13.sp) }
+            ) { Text(stringResource(R.string.nm_cloud_server_use), color = MuseTones.accent, fontSize = 13.sp) }
         }
         line?.let {
             Text(
@@ -549,7 +549,7 @@ private fun RelayServerForm(enabled: Boolean, onClose: () -> Unit) {
                 },
                 enabled = enabled && !checking,
                 modifier = Modifier.align(Alignment.End),
-            ) { Text(stringResource(R.string.nm_cloud_server_default), color = MuseTones.action, fontSize = 13.sp) }
+            ) { Text(stringResource(R.string.nm_cloud_server_default), color = MuseTones.accent, fontSize = 13.sp) }
         }
     }
 }

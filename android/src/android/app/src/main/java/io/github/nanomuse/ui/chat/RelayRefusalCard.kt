@@ -141,5 +141,5 @@ private fun Primary(label: String, onClick: () -> Unit) {
 
 @Composable
 private fun Secondary(label: String, onClick: () -> Unit) {
-    TextButton(onClick = onClick) { Text(label, fontSize = 13.sp, color = MuseTones.action) }
+    TextButton(onClick = onClick) { Text(label, fontSize = 13.sp, color = MuseTones.accent) }
 }

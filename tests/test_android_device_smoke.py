@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -30,12 +31,27 @@ if name == "sleep":
 if name == "stat":
     print(Path(args[-1]).stat().st_size)
     sys.exit(0)
-if args[:3] == ["install", "-r", "-t"]:
+if args[:2] == ["install", "-t"]:
     is_test = "androidTest" in args[-1]
     if mode == ("test-install" if is_test else "install"):
         print("INSTALL_FAILED", file=sys.stderr)
         sys.exit(1)
+    if not is_test:
+        Path(os.environ["SMOKE_INSTALLED"]).write_text("yes")
     print("Success")
+elif args[:2] == ["shell", "getprop"]:
+    prop = args[2]
+    if prop == "ro.kernel.qemu":
+        print("0" if mode == "real-device" else "1")
+    elif prop == "ro.dalvik.vm.native.bridge":
+        print("libndk_translation.so")
+    else:
+        print("x86_64,arm64-v8a")
+elif args[:3] == ["shell", "pm", "path"]:
+    if mode == "existing" or Path(os.environ["SMOKE_INSTALLED"]).exists():
+        print("package:/data/app/fake/base.apk")
+elif args[:2] == ["exec-out", "cat"]:
+    sys.stdout.buffer.write(b"other" if mode == "installed-mismatch" else b"arm64-apk")
 elif args[:3] == ["shell", "pm", "list"]:
     if mode != "missing-package":
         print("package:ai.tama.assistant\r" if mode == "crlf" else "package:ai.tama.assistant")
@@ -79,7 +95,9 @@ def smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     test_dir = checkout / "android/src/android/app/build/outputs/apk/androidTest/debug"
     app_dir.mkdir(parents=True)
     test_dir.mkdir(parents=True)
-    (app_dir / "app-debug.apk").touch()
+    apk = b"arm64-apk"
+    (app_dir / "app-debug.apk").write_bytes(apk)
+    (app_dir / "phone-apk.sha256").write_text(hashlib.sha256(apk).hexdigest() + "\n")
     (test_dir / "app-debug-androidTest.apk").touch()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -91,9 +109,12 @@ def smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("GITHUB_WORKSPACE", str(checkout))
     monkeypatch.setenv("SMOKE_CALLS", str(calls))
+    installed = tmp_path / "installed"
+    monkeypatch.setenv("SMOKE_INSTALLED", str(installed))
 
     def run(failure: str = ""):
         calls.write_text("")
+        installed.unlink(missing_ok=True)
         monkeypatch.setenv("SMOKE_FAILURE", failure)
         result = subprocess.run(
             ["bash", str(SCRIPT)], text=True, capture_output=True, timeout=15, check=False
@@ -108,6 +129,8 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     checkout, run = smoke
     result, calls = run()
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "::notice title=installed-apk-sha256::" in result.stdout
+    assert (checkout / "installed-apk-sha256.txt").read_text().strip() == hashlib.sha256(b"arm64-apk").hexdigest()
     assert "::notice title=pet instrumentation::OK (8 tests);" in result.stdout
     assert "Android SharedPreferences and tracker tests passed" in result.stdout
     assert "::notice title=pet screen instrumentation::OK (2 tests);" in result.stdout
@@ -130,6 +153,9 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
 @pytest.mark.parametrize(
     ("failure", "message"),
     [
+        ("real-device", "title=isolation"),
+        ("existing", "title=isolation"),
+        ("installed-mismatch", "title=apk-integrity"),
         ("install", "title=install"),
         ("missing-package", "title=install"),
         ("start", "title=am start"),
@@ -182,7 +208,7 @@ def test_missing_application_apk_fails_before_adb(smoke) -> None:
     (checkout / "android/src/android/app/build/outputs/apk/debug/app-debug.apk").unlink()
     result, calls = run()
     assert result.returncode != 0
-    assert "no APK" in result.stdout
+    assert "exactly one phone APK" in result.stdout
     assert calls == []
 
 
@@ -193,3 +219,20 @@ def test_missing_instrumentation_apk_reports_the_reason(smoke) -> None:
     result, _ = run()
     assert result.returncode != 0
     assert "test APK missing" in result.stdout
+
+
+def test_modified_download_fails_before_adb(smoke) -> None:
+    checkout, run = smoke
+    (checkout / "android/src/android/app/build/outputs/apk/debug/app-debug.apk").write_bytes(b"wrong")
+    result, calls = run()
+    assert result.returncode != 0
+    assert "title=apk-integrity" in result.stdout
+    assert calls == []
+
+
+def test_existing_app_and_real_device_are_never_installed_over(smoke) -> None:
+    _, run = smoke
+    for failure in ("existing", "real-device"):
+        result, calls = run(failure)
+        assert result.returncode != 0
+        assert not any(name == "adb" and args[:1] == ["install"] for name, args in calls)

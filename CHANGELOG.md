@@ -4,6 +4,10 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Gave the Android app a warm TAMA palette across onboarding, chat, navigation and settings, and added a direct Pet shortcut beside the agent name without removing the profile route.
+
+- Prepared an isolated emulator check that installs the sealed arm64 phone APK rather than a separate x86 build, and compares the installed APK's hash with the artifact.
+
 - Prevented cancelled Android chat waits and overlapping runs from leaving or releasing the wrong concurrency slot.
 
 - Preserved the Android Pet's care history and corrected its needs, local-day streaks and chat-cycle rewards when returning to the app.

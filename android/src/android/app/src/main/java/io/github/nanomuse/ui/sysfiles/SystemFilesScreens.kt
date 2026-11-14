@@ -459,7 +459,7 @@ fun MemoryImportScreen(onBack: () -> Unit) {
                 singleLine = true,
                 placeholder = { Text(stringResource(R.string.nm_import_from_hint)) },
                 shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(10.dp))
@@ -468,7 +468,7 @@ fun MemoryImportScreen(onBack: () -> Unit) {
                 onValueChange = { pasted = it },
                 placeholder = { Text(stringResource(R.string.nm_import_paste_hint)) },
                 shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp),
             )
             Spacer(Modifier.height(18.dp))

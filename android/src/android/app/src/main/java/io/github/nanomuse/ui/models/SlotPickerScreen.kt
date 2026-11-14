@@ -174,7 +174,7 @@ fun SlotPickerScreen(slot: Slot, onBack: () -> Unit, onAddProvider: () -> Unit) 
                 if (shown.hidden > 0) {
                     SettingsRow(
                         title = stringResource(R.string.nm_models_show_more, shown.hidden),
-                        titleColor = MuseTones.action,
+                        titleColor = MuseTones.accent,
                         onClick = { expanded = expanded + group.instance.id },
                         showChevron = false,
                         showDivider = false,
@@ -196,7 +196,7 @@ fun SlotPickerScreen(slot: Slot, onBack: () -> Unit, onAddProvider: () -> Unit) 
         ) {
             SettingsRow(
                 title = stringResource(R.string.nm_media_add_provider),
-                titleColor = MuseTones.action,
+                titleColor = MuseTones.accent,
                 onClick = onAddProvider,
                 showChevron = false,
                 showDivider = false,

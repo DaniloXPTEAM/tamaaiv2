@@ -108,13 +108,16 @@ jobs:
           path: /tmp/tama-baseline-apk
 
       - name: Compare debug APK signatures
+        id: phone-signature
         shell: bash
         run: |
           # Use the explicitly installed version, not an arbitrary preinstalled SDK directory.
           signer="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           new=android/src/android/app/build/outputs/apk/debug/app-debug.apk
           old=/tmp/tama-baseline-apk/app-debug.apk
-          echo "::notice title=apk-sha256::$(sha256sum "$new" | cut -d' ' -f1)"
+          phone_sha="$(sha256sum "$new" | cut -d' ' -f1)"
+          echo "sha256=$phone_sha" >> "$GITHUB_OUTPUT"
+          echo "::notice title=apk-sha256::$phone_sha"
           if [ ! -x "$signer" ]; then
             echo "::warning title=apk-signature::apksigner 35.0.0 is unavailable; update compatibility is unverified. Do not uninstall the existing app."
             exit 0
@@ -158,13 +161,13 @@ jobs:
             --console=plain --no-daemon 2>&1 | tee /tmp/gradle-unit.log
           exit "${PIPESTATUS[0]}"
 
-      # The on-device tests cannot run here (no emulator), but the source set must keep
-      # compiling or io.github.nanomuse.reach.ReachHubInstrumentedTest never runs anywhere (#332).
-      - name: androidTest compiles
+      # Build the test APK in the SAME job and with the SAME debug key as the phone APK.
+      # The emulator installs the original phone artifact, never an x86 rebuild.
+      - name: Assemble instrumentation APK
         working-directory: android/src/android
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          ./gradlew :app:compileDebugAndroidTestKotlin --console=plain --no-daemon 2>&1 | tee /tmp/gradle-androidtest.log
+          ./gradlew :app:assembleDebugAndroidTest --console=plain --no-daemon 2>&1 | tee /tmp/gradle-androidtest.log
           exit "${PIPESTATUS[0]}"
 
       # TAMA: Actions logs may be hosted where this checkout cannot reach them. Publish compile
@@ -194,78 +197,84 @@ jobs:
           bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           "$bt/aapt" dump badging android/src/android/app/build/outputs/apk/debug/app-debug.apk | grep -E "^package:|application-label:|native-code"
 
+      - name: Seal the exact phone APK after all builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=android/src/android/app/build/outputs/apk/debug/app-debug.apk
+          actual="$(sha256sum "$apk" | cut -d' ' -f1)"
+          expected="${{ steps.phone-signature.outputs.sha256 }}"
+          if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+            echo "::error title=apk-integrity::Phone APK changed after signature verification"
+            exit 1
+          fi
+          printf '%s\n' "$actual" > android/src/android/app/build/outputs/apk/debug/phone-apk.sha256
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" \
+            > android/src/android/app/build/outputs/apk/debug/phone-apk-signature.txt
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nanoMuse-debug-apk
-          path: android/src/android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            android/src/android/app/build/outputs/apk/debug/app-debug.apk
+            android/src/android/app/build/outputs/apk/debug/phone-apk.sha256
+            android/src/android/app/build/outputs/apk/debug/phone-apk-signature.txt
           retention-days: 14
           if-no-files-found: error
 
-      # Upload the phone APK first: a later emulator-only artifact failure must not hide it.
-      # The separate x86 job needs rclone's Java binding even though its arm64 native payload
-      # is excluded by the emulator ABI filter. The generated AAR is otherwise git-ignored.
-      - name: Stage rclone binding for emulator build
+      - name: Upload the matching instrumentation APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tama-smoke-rclone
-          path: android/src/android/app/libs/rclone.aar
-          retention-days: 2
+          name: tama-arm64-instrumentation
+          path: android/src/android/app/build/outputs/apk/androidTest/debug/*.apk
+          retention-days: 14
           if-no-files-found: error
 
-  # TAMA: the APK the job above builds was never *run* - only assembled, unit-tested and dumped.
-  # assembleDebug proves it compiles; it says nothing about whether the app opens. This installs
-  # it on a real Android runtime, starts the launcher activity, and fails if the process dies.
-  # Everything it learns is published as an annotation, because the Actions log is not readable
-  # from every checkout (see the debug-apk job).
+  # A fresh Google APIs x86_64 emulator with an ARM native bridge installs the *same*
+  # arm64 APK uploaded above. A successful translation is evidence about that runtime,
+  # not a substitute for testing an actual ARM phone or its existing signing key.
   device-smoke:
-    name: device smoke · emulator
+    name: device smoke · arm64 APK on emulator
     needs: debug-apk
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v4
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "21"
 
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
-          packages: platforms;android-36 build-tools;35.0.0 cmake;3.22.1 ndk;${{ env.NDK_VERSION }}
+          packages: platforms;android-36 build-tools;35.0.0
 
-      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-
-      - name: Fetch the generated rclone binding
+      - name: Fetch the exact phone APK and its hash
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: tama-smoke-rclone
-          path: android/src/android/app/libs
+          name: nanoMuse-debug-apk
+          path: android/src/android/app/build/outputs/apk/debug
 
-      - name: Build the emulator's own APKs (x86_64)
-        working-directory: android/src/android
-        run: |
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          # Gradle preserves underscores in ORG_GRADLE_PROJECT_* names; nm_abi is not nm.abi.
-          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest -Pnm.abi=x86_64 --console=plain --no-daemon 2>&1 | tee /tmp/gradle-emulator.log
-          exit "${PIPESTATUS[0]}"
+      - name: Fetch the matching instrumentation APK
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: tama-arm64-instrumentation
+          path: android/src/android/app/build/outputs/apk/androidTest/debug
 
-      - name: Verify the emulator APK ABI
+      - name: Verify the phone APK ABI, hash and signature
+        shell: bash
         run: |
-          bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          badging="$("$bt/aapt" dump badging android/src/android/app/build/outputs/apk/debug/app-debug.apk)"
-          echo "$badging" | grep -E '^package:|^native-code:'
-          if ! echo "$badging" | grep '^native-code:' | grep -Fq "'x86_64'"; then
-            echo '::error title=emulator ABI::The smoke APK does not contain x86_64 native code.'
+          set -euo pipefail
+          apk=android/src/android/app/build/outputs/apk/debug/app-debug.apk
+          hash=android/src/android/app/build/outputs/apk/debug/phone-apk.sha256
+          test "$(sha256sum "$apk" | cut -d' ' -f1)" = "$(tr -d '\r\n' < "$hash")"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk"
+          badging="$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk")"
+          printf '%s\n' "$badging" | grep -E '^package:|^native-code:'
+          if ! printf '%s\n' "$badging" | grep -F "native-code: 'arm64-v8a'"; then
+            echo '::error title=phone ABI::The tested APK does not contain arm64-v8a native code.'
             exit 1
-          fi
-
-      - name: Publish emulator build errors
-        if: failure()
-        run: |
-          if [ -f /tmp/gradle-emulator.log ]; then
-            grep -E '^e: |^> Task .*FAILED|error: |AAPT2|Execution failed for task|Could not find |Could not resolve ' /tmp/gradle-emulator.log \
-              | head -40 | while IFS= read -r line; do echo "::error title=emulator build::${line}"; done || true
           fi
 
       - name: Enable KVM
@@ -275,10 +284,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Install, launch, and check the process is alive
+      - name: Install and test the exact arm64 APK in an isolated emulator
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
-          api-level: 34
+          api-level: 35
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -286,6 +295,12 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           # The action splits multi-line inputs and runs each line under sh.
           script: bash scripts/android/device-smoke.sh
+
+      # Tiny previews contain fresh-emulator data only. They are useful where Actions artifact
+      # storage cannot be reached; the original PNGs are still uploaded below.
+      - name: Publish isolated visual previews
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py launch.png pet-alive.png pet-memorial.png
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -300,5 +315,7 @@ jobs:
             pet-install.log
             pet-instrumentation.log
             pet-screen-instrumentation.log
+            arm-runtime.txt
+            installed-apk-sha256.txt
           retention-days: 14
           if-no-files-found: warn

@@ -20,6 +20,8 @@ What it changes, and only this:
 - Every GitHub / download-index address the app used to check for its own updates: the TAMA
   candidate is not published from nano-muse/nanoMuse, and must never offer the upstream APK
   as an update for this package.
+- The Android Material and chat palettes are warm TAMA colours, applied by named properties
+  so rerunning rebrand.py followed by this script does not revert the TAMA presentation.
 - The signing key's property set is left alone; the TAMA candidate uses its own keystore, or
   the debug key, and never upstream's.
 
@@ -185,6 +187,8 @@ def brand_in_kotlin(text: str) -> str:
 
 
 def _brand_in_literal(body: str) -> str:
+    if body in LEGACY_LITERALS:
+        return body  # persisted group names must keep matching existing accounts
     if "://" in body or "github.com" in body:
         return body  # an address; links() rewrites those whole
     body = WIRE_TAG.sub(lambda m: "\x00wire\x00", body)
@@ -358,6 +362,91 @@ def prompt_name() -> None:
     )
 
 
+# The Material values live in an upstream file. Set each named colour rather than replacing
+# a literal globally: the same blue or grey can have unrelated meanings elsewhere. This runs
+# after rebrand.py, and is safe to repeat. A missing property is a build-time maintenance error.
+TAMA_THEME_COLOURS = {
+    "TealPrimary": "9B4508", "TealOnPrimary": "FFFFFF",
+    "TealPrimaryContainer": "FFDBA1", "TealOnPrimaryContainer": "3A1900",
+    "TealSecondary": "6E563B", "TealOnSecondary": "FFFFFF",
+    "TealSecondaryContainer": "F4E1BF", "TealOnSecondaryContainer": "281908",
+    "TealTertiary": "506641", "TealOnTertiary": "FFFFFF",
+    "TealTertiaryContainer": "D2E8B7", "TealOnTertiaryContainer": "0F2107",
+    "TealBackground": "FFF8E9", "TealOnBackground": "281B12",
+    "TealSurface": "FFF8E9", "TealOnSurface": "281B12",
+    "TealSurfaceVariant": "F9EBD4", "TealOnSurfaceVariant": "514335",
+    "TealOutline": "827363",
+    "TealDarkPrimary": "FFCA74", "TealDarkOnPrimary": "4B2500",
+    "TealDarkPrimaryContainer": "713500", "TealDarkOnPrimaryContainer": "FFDBA1",
+    "TealDarkSecondary": "D9C2A2", "TealDarkOnSecondary": "3D2E1C",
+    "TealDarkSecondaryContainer": "55432F", "TealDarkOnSecondaryContainer": "F4E1BF",
+    "TealDarkTertiary": "B7D2A1", "TealDarkOnTertiary": "24361A",
+    "TealDarkTertiaryContainer": "3B4D30", "TealDarkOnTertiaryContainer": "D2E8B7",
+    "TealDarkBackground": "19130F", "TealDarkOnBackground": "F3E4D6",
+    "TealDarkSurface": "19130F", "TealDarkOnSurface": "F3E4D6",
+    "TealDarkSurfaceVariant": "514538", "TealDarkOnSurfaceVariant": "D7C5B2",
+    "TealDarkOutline": "A59583",
+    "NeutralGroupedBg": "FFF8E9", "NeutralGroupedCard": "FFFCF5",
+    "NeutralGroupedCardElevated": "FFF1DC", "NeutralOutline": "E6D5B8",
+    "NeutralDarkGroupedBg": "19130F", "NeutralDarkGroupedCard": "30251D",
+    "NeutralDarkGroupedCardElevated": "43352A", "NeutralDarkOutline": "5C4C3C",
+}
+TAMA_CHAT_COLOURS = {
+    "LightChatPalette": {
+        "background": "FFF8E9", "secondaryBg": "F8EBD7", "inputBg": "FFFCF5",
+        "inputIconBg": "F5E5CA", "inputBorder": "D8BFA0", "primaryText": "281B12",
+        "secondaryText": "705943", "tertiaryText": "8C755E", "disabledText": "AD9A87",
+        "userBubble": "87410B", "onUserBubble": "FFFFFF", "assistantBubble": "F7E7C9",
+        "toolBg": "F8EBD7", "toolCapsuleBg": "F5E5CA", "separator": "E6D5B8",
+        "sendButton": "87410B", "codeBlockBg": "30251D", "inlineCodeBg": "F3E2C8",
+        "inlineCodeText": "87410B", "link": "87410B", "blockquoteBar": "B56B27",
+        "thinking": "87410B", "toastBg": "F4D8A8", "sheetHeaderBg": "FFFCF5",
+        "fabAccent": "9B4508",
+    },
+    "DarkChatPalette": {
+        "background": "19130F", "secondaryBg": "30251D", "inputBg": "392C22",
+        "inputIconBg": "49372A", "inputIconBorder": "705744", "inputBorder": "705744",
+        "primaryText": "F3E4D6", "secondaryText": "D7C5B2", "tertiaryText": "B5A28D",
+        "disabledText": "8D7D6D", "userBubble": "FFCA74", "onUserBubble": "4B2500",
+        "assistantBubble": "3A2A1E", "toolBg": "49372A", "toolBorder": "705744",
+        "toolCapsuleBg": "392C22", "separator": "705744", "sendButton": "FFCA74",
+        "codeBlockBg": "30251D", "inlineCodeBg": "49372A", "inlineCodeText": "FFCA74",
+        "link": "FFCA74", "blockquoteBar": "C99040", "thinking": "FFCA74",
+        "toastBg": "594024", "sheetHeaderBg": "392C22", "fabAccent": "FFCA74",
+    },
+}
+
+
+def tama_colours() -> None:
+    theme = JAVA / "ui" / "theme" / "Theme.kt"
+    original = theme.read_text(encoding="utf-8")
+    result = original
+    for name, rgb in TAMA_THEME_COLOURS.items():
+        pattern = rf"(private val {name} = Color\()0x[0-9A-Fa-f]{{8}}(\))"
+        result, count = re.subn(pattern, rf"\g<1>0xFF{rgb}\g<2>", result)
+        if count != 1:
+            raise ValueError(f"{theme}: expected one colour {name}, got {count}")
+    note(theme, original, result)
+
+    chat = JAVA / "ui" / "theme" / "ChatColors.kt"
+    original = chat.read_text(encoding="utf-8")
+    result = original
+    for palette, colours in TAMA_CHAT_COLOURS.items():
+        pattern = rf"(val {palette} = ChatPalette\(\n)(.*?)(\n\))"
+        match = re.search(pattern, result, re.S)
+        if not match:
+            raise ValueError(f"{chat}: missing {palette}")
+        body = match.group(2)
+        for name, rgb in colours.items():
+            value = rf"(    {name} = )(?:Color\(0x[0-9A-Fa-f]{{8}}\)|Color\.White)"
+            body, count = re.subn(value, rf"\g<1>Color(0xFF{rgb})", body)
+            if count != 1:
+                raise ValueError(f"{chat}: expected one {palette}.{name}, got {count}")
+        result = result[:match.start(2)] + body + result[match.end(2):]
+    note(chat, original, result)
+    edit(RES / "values" / "colors.xml", [(r'(<color name="seed">)#[0-9A-Fa-f]+', r"\g<1>#9B4508")])
+
+
 #: links() runs before product_name(): an address is rewritten whole, then the brand
 #: replacement sees no URL at all.
 APPLY = (
@@ -369,6 +458,7 @@ APPLY = (
     scheme,
     drop_dead_links,
     prompt_name,
+    tama_colours,
 )
 
 

@@ -7,10 +7,9 @@ Bundled skills in Settings → Skills can be read, exported and switched off. Th
 browser, MCP servers, skills and scheduled tasks inside the APK, with nanoMuse's own
 identity, design and features on top. Everything of nanoMuse's lives in
 `io.github.nanomuse.*`; edits inside OpenMinis files are marked `// nanoMuse:`. The
-application id is `io.github.nanomuse.app` and the URL scheme the system knows the app by is
-`nanomuse://`, so a phone that also has OpenMinis installed never has two apps claiming one
-scheme; inside the app, links stay `minis://…` (upstream's vocabulary, shared with the sandbox,
-the system prompt and the model), a `nanomuse://` link arriving from the system is read as its
+TAMA Android application id is `ai.tama.assistant` and the system URL scheme is `tama://`.
+Inside the app, links stay `minis://…` (upstream's vocabulary, shared with the sandbox,
+the system prompt and the model), a `tama://` link arriving from the system is read as its
 `minis://` form, and every link of the app's own that the app opens itself is addressed to
 `MainActivity` by name, never resolved by the system
 (`io.github.nanomuse.deeplink.OwnScheme`). The sandbox's offload socket, the abstract socket
@@ -24,16 +23,25 @@ around a Python server, two APK flavours) is kept as a design record in
 [archive/android-python-line.md](archive/android-python-line.md) and is not what you
 download today.
 
-One APK, one architecture: `nanoMuse-<version>-arm64.apk` (arm64-v8a, Android 8.0 / API 26
-or newer, `targetSdk` 35). Every release is signed with the same key, so a newer APK
-installs over the old one and keeps its data. No Play Store listing: *Settings → Version* shows
-the installed build next to the newest release (`nanomuse.cn/dl/index.json` first, this
-repository's GitHub Releases second: *Latest 0.1.x, you have it* / *0.1.x is out, tap to
-update*) and offers the download.
+The CI candidate is a debug-signed `arm64-v8a` APK for Android 8.0 / API 26 or newer,
+`targetSdk` 35. It is not a production release. Different runners can create different debug
+signing certificates, so an update over an installed build is **not guaranteed**. Check the
+installed certificate and the new APK before attempting an update; do not uninstall or clear
+the existing app to work around a mismatch, because the local Pet data is not in backup.
+
+## Appearance
+
+TAMA uses warm cream, amber and cocoa colours across onboarding, chat, navigation, settings and
+the Pet, with a matching dark palette. The five home destinations and their functions stay the
+same. The current tab carries its label, and the paw beside the agent name opens the Pet directly;
+tapping the face or name still opens the agent profile. Appearance settings, including a custom
+avatar, theme override and chat background, remain in place. The isolated test procedure and its
+limits are in [TAMA_ANDROID_TESTE_ISOLADO.md](TAMA_ANDROID_TESTE_ISOLADO.md).
 
 ## Pet
 
-Open the agent profile, tap the pen on its face and choose the Pet. Feeding, resting and playing
+Tap the paw beside the agent's name, or open the agent profile, tap the pen on its face and
+choose the Pet. Feeding, resting and playing
 change its needs. The built-in character has six stages at levels 1, 5, 10, 20, 35 and 50. The
 existing XP-to-level formula stays the same. A custom picture, emoji or clip is kept and gets a
 stage silhouette; it is not replaced or sent to an image generator.
@@ -61,10 +69,13 @@ around a signing mismatch.
 
 ## Install
 
-1. Download `nanoMuse-<version>-arm64.apk` from the
-   [latest release](https://github.com/nano-muse/nanoMuse/releases/latest). Verify with
-   `sha256sum -c nanoMuse-<version>-arm64.apk.sha256` if you like.
-2. Open it. Android asks once to allow installs from your browser or file manager.
+1. For a debug candidate, use the `nanoMuse-debug-apk` artifact from this repository's
+   [Android workflow](https://github.com/DaniloXPTEAM/tamaaiv2/actions/workflows/android.yml).
+   Compare its SHA-256 with the accompanying `phone-apk.sha256`, and verify its signing
+   certificate against the one actually installed. CI builds are not interchangeable if their
+   certificates differ. Do not remove the installed app to make a debug APK install.
+2. Only after the candidate and update compatibility have been verified, open the APK. Android
+   asks once to allow installs from your browser or file manager.
 3. **Sign in.** The first screen is the account: a phone number or an e-mail address,
    a code, or a password once you have set one. It is what lets your devices work as one
    ([hub.md](hub.md)) and brings a model to start with ([cloud.md](cloud.md): a free pool per

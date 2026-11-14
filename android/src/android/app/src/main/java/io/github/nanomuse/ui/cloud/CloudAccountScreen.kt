@@ -197,7 +197,7 @@ fun CloudAccountScreen(
                         }
                     }
                     MuseRowDivider(inset = 16.dp)
-                    MuseRow(title = stringResource(R.string.nm_cloud_sign_in), onClick = onSignIn, titleColor = MuseTones.action)
+                    MuseRow(title = stringResource(R.string.nm_cloud_sign_in), onClick = onSignIn, titleColor = MuseTones.accent)
                     val base = NanoMuseCloud.baseUrl(context)
                     if (!RelayAddress.isDefault(base)) {
                         // pointed at someone's own relay: say which, so a sign-in that fails is understood
@@ -264,7 +264,7 @@ fun CloudAccountScreen(
                         chevron = false,
                         trailing = {
                             TextButton(onClick = { changeServer = true }) {
-                                Text(stringResource(R.string.nm_cloud_server_change), color = MuseTones.action, fontSize = 13.sp)
+                                Text(stringResource(R.string.nm_cloud_server_change), color = MuseTones.accent, fontSize = 13.sp)
                             }
                         },
                         onClick = { changeServer = true },
@@ -843,9 +843,9 @@ private fun PasswordDialog(hasPassword: Boolean, onDismiss: () -> Unit, onSaved:
     var error by remember { mutableStateOf<String?>(null) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = MuseTones.action,
-        cursorColor = MuseTones.action,
-        focusedLabelColor = MuseTones.action,
+        focusedBorderColor = MuseTones.accent,
+        cursorColor = MuseTones.accent,
+        focusedLabelColor = MuseTones.accent,
     )
     val transformation = if (show) VisualTransformation.None else PasswordVisualTransformation()
 
@@ -939,7 +939,7 @@ private fun PasswordDialog(hasPassword: Boolean, onDismiss: () -> Unit, onSaved:
         },
         confirmButton = {
             TextButton(onClick = { save(remove = false) }, enabled = !busy && next.isNotEmpty()) {
-                Text(stringResource(R.string.save), color = MuseTones.action)
+                Text(stringResource(R.string.save), color = MuseTones.accent)
             }
         },
         dismissButton = {
@@ -1130,7 +1130,7 @@ fun CommunityNoticeCard(inset: Dp = 16.dp) {
                 verticalAlignment = Alignment.Top,
                 modifier = Modifier.fillMaxWidth().clickable { openExternalUrl(context, NOTICE_URL) },
             ) {
-                Icon(Icons.Outlined.Code, contentDescription = null, tint = MuseTones.action, modifier = Modifier.padding(top = 2.dp).size(18.dp))
+                Icon(Icons.Outlined.Code, contentDescription = null, tint = MuseTones.accent, modifier = Modifier.padding(top = 2.dp).size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.nm_cloud_notice_title), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(6.dp))

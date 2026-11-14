@@ -131,7 +131,7 @@ fun ComputersScreen(onBack: () -> Unit, onOpenAccount: () -> Unit = {}) {
                     title = d.name,
                     subtitle = checks[d.id] ?: listOf(d.os.ifBlank { "?" }, state, stringResource(R.string.nm_pc_last_seen, seen)).joinToString(" · "),
                     icon = Icons.Outlined.Computer,
-                    iconColor = if (d.online) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+                    iconColor = if (d.online) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                     onClick = {
                         checks[d.id] = context.getString(R.string.nm_pc_checking)
                         scope.launch {

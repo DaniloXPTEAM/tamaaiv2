@@ -2557,6 +2557,8 @@ fun ChatScreen(
                                         statusLine = nmStatusLine,
                                         statusColor = if (nmMood == io.github.nanomuse.ui.avatar.AgentMood.WAITING) ChatColors.sendButton else ChatColors.secondaryText,
                                         onClick = { io.github.nanomuse.ui.header.openAgentProfile(context) },
+                                        // nanoMuse: open Pet without hiding the existing profile action.
+                                        onPetClick = nmHome?.onOpenPet,
                                     )
                                 }
                             } else if (!nmSideChat) Text(
@@ -6795,9 +6797,7 @@ fun ChatScreen(
                             // Streaming with content → Send-into-queue; Idle with content → Send.
                             // Idle without text or attachments → disabled.
                             val canActivate = hasContent
-                            // nanoMuse: monochrome send. The palette's sendButton is
-                            // white in the dark theme and black in the light one, the
-                            // arrow takes the canvas colour; no blue accent.
+                            // nanoMuse: the arrow uses the canvas against the TAMA send colour.
                             val nmSendBg = if (canActivate) {
                                 ChatColors.sendButton
                             } else {

@@ -6,25 +6,72 @@ set -euo pipefail
 cd "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must point to the checkout}"
 shopt -s nullglob
 apks=("$GITHUB_WORKSPACE"/android/src/android/app/build/outputs/apk/debug/*.apk)
-if [ "${#apks[@]}" -eq 0 ]; then
-  echo '::error title=build::no APK under the debug output path'
+if [ "${#apks[@]}" -ne 1 ]; then
+  echo '::error title=build::expected exactly one phone APK under the debug output path'
   exit 1
 fi
 APK="${apks[0]}"
-echo "::notice title=apk::$APK"
-echo "installing $APK"
-if ! adb install -r -t "$APK" > install.log 2>&1; then
+HASH_FILE="$GITHUB_WORKSPACE/android/src/android/app/build/outputs/apk/debug/phone-apk.sha256"
+if [ ! -f "$HASH_FILE" ]; then
+  echo '::error title=apk-integrity::the phone APK hash is missing'
+  exit 1
+fi
+EXPECTED="$(tr -d '\r\n' < "$HASH_FILE")"
+ACTUAL="$(sha256sum "$APK" | cut -d' ' -f1)"
+if [[ ! "$EXPECTED" =~ ^[0-9a-f]{64}$ ]] || [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo '::error title=apk-integrity::the downloaded phone APK does not match the sealed hash'
+  exit 1
+fi
+# Never use this script against a real phone or an existing emulator install. In particular,
+# it must not clear, replace or uninstall a person's app. The action starts a fresh AVD.
+if [ "$(adb shell getprop ro.kernel.qemu | tr -d '\r\n')" != 1 ]; then
+  echo '::error title=isolation::refusing to install outside an Android emulator'
+  exit 1
+fi
+existing="$(adb shell pm path ai.tama.assistant 2>/dev/null | tr -d '\r' || true)"
+if printf '%s\n' "$existing" | grep -q '^package:'; then
+  echo '::error title=isolation::the app already exists; refusing to replace its data'
+  exit 1
+fi
+{
+  printf 'Emulator: '; adb shell getprop ro.kernel.qemu | tr -d '\r'
+  printf 'ABIs: '; adb shell getprop ro.product.cpu.abilist | tr -d '\r'
+  printf '64-bit ABIs: '; adb shell getprop ro.product.cpu.abilist64 | tr -d '\r'
+  printf 'Native bridge: '; adb shell getprop ro.dalvik.vm.native.bridge | tr -d '\r'
+} | tee arm-runtime.txt
+printf '::notice title=phone-apk-sha256::%s\n' "$ACTUAL"
+echo "installing sealed phone APK $APK on a fresh emulator"
+if ! adb install -t "$APK" > install.log 2>&1; then
   tr '\n' ' ' < install.log | cut -c1-900 | sed 's/^/::error title=install::/'
   exit 1
 fi
 cat install.log
-# Normalize adb's possible CRLF and consume the whole list (grep -q can SIGPIPE adb).
 if ! packages="$(adb shell pm list packages | tr -d '\r')" || \
   ! printf '%s\n' "$packages" | grep -Fx 'package:ai.tama.assistant' > /dev/null; then
   echo '::error title=install::ai.tama.assistant was not listed after installation'
   exit 1
 fi
-echo '::notice title=installed::ai.tama.assistant is installed'
+# Hash the installed base.apk itself, not just the input to adb install.
+installed="$(adb shell pm path ai.tama.assistant | tr -d '\r' | sed -n 's/^package://p')"
+if [[ "$installed" != /data/app/*.apk ]] || [[ "$installed" == *$'\n'* ]]; then
+  echo '::error title=apk-integrity::could not identify a single installed base APK'
+  exit 1
+fi
+copy="$(mktemp)"
+trap 'rm -f "$copy"' EXIT
+if ! adb exec-out cat "$installed" > "$copy"; then
+  echo '::error title=apk-integrity::could not read the installed base APK'
+  exit 1
+fi
+INSTALLED="$(sha256sum "$copy" | cut -d' ' -f1)"
+printf '%s\n' "$INSTALLED" > installed-apk-sha256.txt
+if [ "$INSTALLED" != "$EXPECTED" ]; then
+  echo '::error title=apk-integrity::the installed APK differs from the sealed phone APK'
+  exit 1
+fi
+echo "::notice title=installed-apk-sha256::$INSTALLED"
+adb shell dumpsys package ai.tama.assistant | grep -E 'primaryCpuAbi=|secondaryCpuAbi=' >> arm-runtime.txt || true
+echo '::notice title=installed::ai.tama.assistant matches the phone artifact'
 if ! adb shell am start -W -n ai.tama.assistant/com.openminis.app.MainActivity 2>&1 | tee am.log; then
   tr '\n' ' ' < am.log | cut -c1-900 | sed 's/^/::error title=am start::/'
   exit 1
@@ -57,7 +104,7 @@ TEST_APK=""
 if [ -d "$TEST_DIR" ]; then
   TEST_APK="$(find "$TEST_DIR" -name '*.apk' -print -quit)"
 fi
-if [ -z "$TEST_APK" ] || ! adb install -r -t "$TEST_APK" > pet-install.log 2>&1; then
+if [ -z "$TEST_APK" ] || ! adb install -t "$TEST_APK" > pet-install.log 2>&1; then
   echo '::error title=pet instrumentation::test APK missing or could not be installed'
   [ ! -f pet-install.log ] || cat pet-install.log
   exit 1

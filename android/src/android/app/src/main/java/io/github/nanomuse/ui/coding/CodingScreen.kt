@@ -413,7 +413,7 @@ private fun NewConversationDialog(agent: Agent, workspaces: List<String>, onDism
                     label = { Text(stringResource(R.string.nm_coding_workspace)) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, cursorColor = MuseTones.action, focusedLabelColor = MuseTones.action),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, cursorColor = MuseTones.accent, focusedLabelColor = MuseTones.accent),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (workspaces.size > 1) {
@@ -439,7 +439,7 @@ private fun NewConversationDialog(agent: Agent, workspaces: List<String>, onDism
             }
         },
         confirmButton = {
-            TextButton(onClick = { onStart(workspace.trim()) }) { Text(stringResource(R.string.nm_coding_start), color = MuseTones.action) }
+            TextButton(onClick = { onStart(workspace.trim()) }) { Text(stringResource(R.string.nm_coding_start), color = MuseTones.accent) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
@@ -685,11 +685,11 @@ private fun Composer(draft: String, onDraft: (String) -> Unit, hint: String, run
             shape = RoundedCornerShape(22.dp),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MuseTones.action,
+                focusedBorderColor = MuseTones.accent,
                 unfocusedBorderColor = MuseTones.hairline,
                 focusedContainerColor = MuseTones.surface,
                 unfocusedContainerColor = MuseTones.surface,
-                cursorColor = MuseTones.action,
+                cursorColor = MuseTones.accent,
             ),
             modifier = Modifier.weight(1f),
         )

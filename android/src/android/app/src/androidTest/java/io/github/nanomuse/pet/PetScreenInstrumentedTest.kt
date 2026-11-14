@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.graphics.Bitmap
-import androidx.compose.material3.MaterialTheme
+import com.openminis.app.ui.theme.MinisTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.assertIsDisplayed
@@ -55,7 +55,7 @@ class PetScreenInstrumentedTest {
     private fun showPet() {
         compose.setContent {
             CompositionLocalProvider(LocalContext provides context) {
-                MaterialTheme { PetScreen(onBack = {}) }
+                MinisTheme { PetScreen(onBack = {}) }
             }
         }
     }

@@ -89,7 +89,7 @@ fun HandsScreen(onBack: () -> Unit, onOpenProviders: () -> Unit, onOpenHandsMode
                 checked = enabled,
                 onCheckedChange = { Hands.setEnabled(context, it) },
                 icon = Icons.Outlined.PhoneAndroid,
-                iconColor = if (enabled) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+                iconColor = if (enabled) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                 showDivider = active,
             )
             if (active) {
@@ -183,7 +183,7 @@ private fun NeedRow(
         title = title,
         subtitle = if (ok) okText else fixText,
         icon = icon,
-        iconColor = if (ok) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+        iconColor = if (ok) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
         onClick = if (ok) null else onFix,
         showChevron = false,
         showDivider = showDivider,

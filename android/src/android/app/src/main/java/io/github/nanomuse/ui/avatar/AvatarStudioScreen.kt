@@ -336,7 +336,7 @@ fun AvatarStudioScreen(onBack: () -> Unit, onOpenSoul: () -> Unit, onOpenMediaMo
                         maxLines = 4,
                         placeholder = { Text(stringResource(R.string.nm_avatar_default_description), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)) },
                         shape = RoundedCornerShape(16.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
                     )
                     Spacer(Modifier.height(12.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -385,7 +385,7 @@ fun AvatarStudioScreen(onBack: () -> Unit, onOpenSoul: () -> Unit, onOpenMediaMo
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
                         )
-                        Text(stringResource(R.string.nm_avatar_change), fontSize = 12.sp, color = MuseTones.action, fontWeight = FontWeight.Medium)
+                        Text(stringResource(R.string.nm_avatar_change), fontSize = 12.sp, color = MuseTones.accent, fontWeight = FontWeight.Medium)
                     }
                     if (error != null) {
                         Spacer(Modifier.height(6.dp))
@@ -569,7 +569,7 @@ private fun CandidateTile(slot: AvatarStudio.Slot, index: Int, selected: Boolean
                 Spacer(Modifier.height(6.dp))
                 Text(slot.message, fontSize = 11.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 3)
                 Spacer(Modifier.height(4.dp))
-                Text(stringResource(R.string.nm_avatar_retry), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MuseTones.action)
+                Text(stringResource(R.string.nm_avatar_retry), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MuseTones.accent)
             }
             AvatarStudio.Slot.Empty -> {}
         }

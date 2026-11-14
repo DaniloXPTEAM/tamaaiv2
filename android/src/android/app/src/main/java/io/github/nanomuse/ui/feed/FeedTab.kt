@@ -445,7 +445,7 @@ private fun FeedSettingsSheet(onDismiss: () -> Unit, onEditRoutine: (String) -> 
                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MuseTones.action,
+                    focusedBorderColor = MuseTones.accent,
                     unfocusedBorderColor = MuseTones.hairline,
                 ),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),

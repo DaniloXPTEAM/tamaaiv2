@@ -93,9 +93,9 @@ fun NmProviderErrorOrBanner(error: String, onRetry: () -> Unit, onRetryOnCloud: 
 @Composable
 fun CloudThisTimeButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     TextButton(onClick = onClick, modifier = modifier) {
-        Icon(Icons.Outlined.CloudQueue, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.action)
+        Icon(Icons.Outlined.CloudQueue, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
         Spacer(Modifier.width(5.dp))
-        Text(stringResource(R.string.nm_retry_on_cloud), fontSize = 13.sp, color = MuseTones.action)
+        Text(stringResource(R.string.nm_retry_on_cloud), fontSize = 13.sp, color = MuseTones.accent)
     }
 }
 
@@ -230,7 +230,7 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                             Text(stringResource(if (signIn) R.string.nm_reach_sign_in else R.string.nm_reach_open_provider), fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                         Spacer(Modifier.width(6.dp))
-                        TextButton(onClick = onRetry) { Text(stringResource(R.string.nm_reach_try_again), fontSize = 13.sp, color = MuseTones.action) }
+                        TextButton(onClick = onRetry) { Text(stringResource(R.string.nm_reach_try_again), fontSize = 13.sp, color = MuseTones.accent) }
                     }
                     else -> {
                         Button(
@@ -244,16 +244,16 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                         Spacer(Modifier.width(6.dp))
                         if (reach.kind == ProviderReach.Kind.UNREACHABLE || reach.kind == ProviderReach.Kind.REGION_BLOCKED) {
                             TextButton(onClick = { ChatLinkResolver.dispatchDeepLink(context, NETWORK_DEEP_LINK) }) {
-                                Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.action)
+                                Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
                                 Spacer(Modifier.width(5.dp))
-                                Text(stringResource(R.string.nm_reach_network), fontSize = 13.sp, color = MuseTones.action)
+                                Text(stringResource(R.string.nm_reach_network), fontSize = 13.sp, color = MuseTones.accent)
                             }
                         }
                         if (reach.kind != ProviderReach.Kind.RATE_LIMITED) {
                             TextButton(onClick = { ChatLinkResolver.dispatchDeepLink(context, OwnKeyPresets.deepLink(firstKeyVendor(context))) }) {
-                                Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.action)
+                                Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
                                 Spacer(Modifier.width(5.dp))
-                                Text(stringResource(R.string.nm_reach_own_key), fontSize = 13.sp, color = MuseTones.action)
+                                Text(stringResource(R.string.nm_reach_own_key), fontSize = 13.sp, color = MuseTones.accent)
                             }
                         }
                     }

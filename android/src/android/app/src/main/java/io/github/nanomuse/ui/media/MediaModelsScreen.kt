@@ -283,7 +283,7 @@ private fun StatusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, rea
         title = line,
         subtitle = if (ready) stringResource(R.string.nm_media_ready) else offLine,
         icon = icon,
-        iconColor = if (ready) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+        iconColor = if (ready) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
         minHeight = 72.dp,
     )
 }
@@ -344,7 +344,7 @@ private fun ModelList(
         )
         else -> SettingsRow(
             title = stringResource(R.string.nm_media_recheck),
-            titleColor = MuseTones.action,
+            titleColor = MuseTones.accent,
             onClick = onCheck,
             showChevron = false,
             showDivider = false,
@@ -364,7 +364,7 @@ private fun ModelField(value: String, placeholder: String, onChange: (String) ->
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
         )
     }
 }

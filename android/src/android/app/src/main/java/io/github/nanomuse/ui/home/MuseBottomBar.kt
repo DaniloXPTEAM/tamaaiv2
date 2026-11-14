@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -32,20 +34,22 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.hazeEffect
 import io.github.nanomuse.ui.chat.NM_CHAT_COMPOSER_BOTTOM_GAP
 
 /**
- * nanoMuse's bottom bar: a floating frosted-glass pill, five glyphs, icons only. The pill blurs
- * whatever is behind it (Haze, in the Pixel taskbar's manner) and carries a hairline edge. The
- * current tab shows a filled glyph on a soft indicator pill that springs in; the others are
- * outlined. No labels: the fill and the indicator are the state.
+ * TAMA's floating five-tab bar keeps the same destinations and glass treatment. The active
+ * destination uses a warm indicator and a short label; every icon stays named for TalkBack.
  */
 @Composable
 fun MuseBottomBar(
@@ -57,14 +61,12 @@ fun MuseBottomBar(
     // Hoisted out of the hazeEffect block: Haze 1.x's block is not a @Composable scope,
     // so MaterialTheme lookups cannot happen inside it.
     val barBackground = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f)
-    // The selected tab: a white disc with a black glyph in the dark theme,
-    // inverted in light. Follows the chat background, not the system setting,
-    // since the app has its own theme override.
+    // The selected colour follows the app's own light/dark override.
     val nmDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val chatBackground by io.github.nanomuse.ui.chat.rememberChatBackground()
     val chatCanvas = chatBackground.color(com.openminis.app.ui.theme.ChatColors)
-    val nmSelectedBg = if (nmDark) Color.White else Color.Black
-    val nmSelectedFg = if (nmDark) Color.Black else Color.White
+    val nmSelectedBg = MaterialTheme.colorScheme.primary
+    val nmSelectedFg = MaterialTheme.colorScheme.onPrimary
     val window = LocalConfiguration.current
     val surroundExtent = maxOf(window.screenWidthDp, window.screenHeightDp).dp
     Box(
@@ -148,13 +150,26 @@ fun MuseBottomBar(
                             .background(indicator),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            imageVector = if (isSelected) tab.selectedIcon else tab.icon,
-                            contentDescription = stringResource(tab.label),
-                            tint = if (isSelected) nmSelectedFg
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(26.dp),
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = if (isSelected) tab.selectedIcon else tab.icon,
+                                contentDescription = stringResource(tab.label),
+                                tint = if (isSelected) nmSelectedFg else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(if (isSelected) 20.dp else 25.dp),
+                            )
+                            if (isSelected) {
+                                Text(
+                                    text = stringResource(tab.label),
+                                    color = nmSelectedFg,
+                                    fontSize = 9.sp,
+                                    lineHeight = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.clearAndSetSemantics { },
+                                )
+                            }
+                        }
                     }
                 }
             }

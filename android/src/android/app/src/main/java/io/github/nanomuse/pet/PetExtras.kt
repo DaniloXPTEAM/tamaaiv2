@@ -164,7 +164,7 @@ internal fun PetActivitiesCard(state: PetState) {
             Text(stringResource(R.string.nm_pet_diary_entry, entry.level, entry.energy, entry.bond),
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        message?.let { Text(stringResource(it), fontSize = 12.sp, color = MuseTones.action) }
+        message?.let { Text(stringResource(it), fontSize = 12.sp, color = MuseTones.accent) }
     }
 }
 
@@ -180,7 +180,7 @@ internal fun PetGamesCard(generation: Long) {
             SmallAction(stringResource(R.string.nm_pet_game_colors), Modifier.weight(1f)) { selected = PetMiniGame.COLOR_ECHO }
             SmallAction(stringResource(R.string.nm_pet_game_numbers), Modifier.weight(1f)) { selected = PetMiniGame.STEP_PATTERN }
         }
-        message?.let { Text(stringResource(it), fontSize = 12.sp, color = MuseTones.action, modifier = Modifier.padding(top = 8.dp)) }
+        message?.let { Text(stringResource(it), fontSize = 12.sp, color = MuseTones.accent, modifier = Modifier.padding(top = 8.dp)) }
     }
     selected?.let { game ->
         PetGameDialog(game, generation, onClose = { result -> selected = null; message = result })

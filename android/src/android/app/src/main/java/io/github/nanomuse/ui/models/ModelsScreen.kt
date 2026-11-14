@@ -121,7 +121,7 @@ fun ModelsScreen(
                     checked = cloudOn,
                     onCheckedChange = { refused = !NanoMuseCloud.setModelsOn(context, it) },
                     icon = Icons.Outlined.CloudQueue,
-                    iconColor = if (cloudOn) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+                    iconColor = if (cloudOn) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                     showDivider = false,
                 )
                 if (refused) {
@@ -153,7 +153,7 @@ fun ModelsScreen(
                         else -> Capabilities.unavailableLine(context, slot.capability)
                     },
                     icon = slotIcon(slot),
-                    iconColor = if (value != null) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+                    iconColor = if (value != null) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                     onClick = if (hasOptions || videoOff) ({ onPick(slot) }) else null,
                     showDivider = !hasOptions,
                     minHeight = 72.dp,
@@ -161,7 +161,7 @@ fun ModelsScreen(
                 if (!hasOptions) {
                     SettingsRow(
                         title = stringResource(R.string.nm_media_add_provider),
-                        titleColor = MuseTones.action,
+                        titleColor = MuseTones.accent,
                         onClick = onAddProvider,
                         showChevron = false,
                         showDivider = false,
