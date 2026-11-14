@@ -161,6 +161,12 @@ jobs:
             --console=plain --no-daemon 2>&1 | tee /tmp/gradle-unit.log
           exit "${PIPESTATUS[0]}"
 
+      # Publish only enum labels and counts from the synthetic host fixture; never prompt text.
+      - name: Publish host prompt profile measurements
+        run: |
+          python3 scripts/android/publish-profile-sizes.py \
+            android/src/android/app/build/test-results/testDebugUnitTest/TEST-io.github.nanomuse.chat.PromptProfileMeasurementTest.xml
+
       # Build the test APK in the SAME job and with the SAME debug key as the phone APK.
       # The emulator installs the original phone artifact, never an x86 rebuild.
       - name: Assemble instrumentation APK

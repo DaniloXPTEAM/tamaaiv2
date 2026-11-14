@@ -109,6 +109,27 @@ object PromptSize {
         return result
     }
 
+    /** Measure a profiled layout by its fixed labels; never retain the section contents. */
+    fun fragments(
+        stable: List<Pair<Section, String?>>,
+        volatile: List<Pair<Section, String?>>,
+        runtime: String?,
+    ): List<Measure<Section>> {
+        val result = (stable + volatile + (Section.RUNTIME to runtime)).map { (label, value) ->
+            val chars = value?.trim()?.length ?: 0
+            Measure(label, chars, chars)
+        }.toMutableList()
+        val total = PromptCacheLayout.build(
+            stableSections = stable.mapNotNull { it.second },
+            volatileSections = volatile.map { it.second },
+            runtimeContext = runtime,
+        ).prompt.length
+        val separators = total - result.sumOf { it.afterChars }
+        result += Measure(Section.SEPARATORS, separators, separators)
+        result += Measure(Section.TOTAL, total, total)
+        return result
+    }
+
     private fun toolLabel(name: String): Tool = when (name) {
         "shell_execute" -> Tool.SHELL_EXECUTE
         "file_read" -> Tool.FILE_READ

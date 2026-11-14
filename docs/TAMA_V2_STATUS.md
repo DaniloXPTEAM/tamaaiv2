@@ -4,18 +4,26 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 `arena/4f0fb56f-tamaaiv2`; não houve sincronização com nanoMuse nem OpenMinis. Estados possíveis:
 **PENDENTE**, **EM ANDAMENTO**, **PARCIAL**, **BLOQUEADA** e **CONCLUÍDA COM PROVA**.
 
+## Prioridade atual
+
+O dono pediu para parar a investigação do emulador. O primeiro toque não entregue, timeout de
+PRoot e diálogos ANR do Pixel Launcher/Messages permanecem **não verificados no emulador**; os
+diagnósticos e gates ficam preservados. Após duas falhas da mesma jornada pela mesma causa, ela
+fica pendente e não bloqueia commits ou tarefas seguintes. Prioridade: medição host, T4, T4b,
+depois T5, T6, T8 e T7; T9 aguarda o Poco e T12 fica na leitura estática já feita.
+
 ## Tarefas
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | [Android 43626037252](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43626037252): build, unitários e hash do APK instalado no emulador passaram; jornada e PRoot falharam. | Investigar sem reduzir os gates. Release e telefone ainda não comprovados. |
-| T0b: medir prompt | PARCIAL | `43626037252`: tabela real registrada abaixo e conferida com o primeiro pedido da fixture; o primeiro toque físico falhou. | Corrigir e comprovar o primeiro toque e a jornada inteira, sem aceitar o segundo toque diagnóstico como gate. |
-| T0c: verificar dieta | PARCIAL | `43626037252`: a fixture conferiu o sistema dietado e a descrição de `browser_use` no pedido; a tabela mostra as contagens. | Preservar paridade e concluir os gates da jornada; não extrapolar esta sessão. |
+| T0a: build, testes e hash | PARCIAL | [Android 43626037252](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43626037252): build, unitários e hash do APK instalado no emulador passaram; jornada e PRoot falharam. | Não investigar mais o emulador agora; manter os gates e registrar aparelho físico como não verificado. |
+| T0b: medir prompt | PARCIAL | `43626037252`: tabela conferida com o primeiro pedido da fixture. Fixture host por perfil e log count-only adicionados; CI Android desta alteração pendente. | Toque inicial, jornada e aparelho físico não verificados; não bloqueiam a tarefa seguinte. |
+| T0c: verificar dieta | PARCIAL | `43626037252`: a fixture conferiu o sistema dietado e a descrição de `browser_use` no pedido; a tabela mostra as contagens. | Preservar paridade; a jornada não verificada não impede continuar. |
 | T0d: modelo de imagem resolvido | PARCIAL | `43626037252`: a medição instrumentada reportou **não** nesta configuração isolada. | Verificar configuração autorizada quando disponível; não implica teste de geração de imagem. |
-| T1: erros e recuperação | EM ANDAMENTO | `43626037252`: 413 terminal e painel com status/modelo/mensagem foram observados; após o toque em retry, a espera pelo contador expirou. | Diagnosticar o retry e provar 400 → 429 → 200, teto e espera no CI; não repetir 413 sem redução. |
-| T2: detalhes tocáveis | EM ANDAMENTO | `43626037252`: cinco testes Compose instrumentados passaram isoladamente; a jornada abriu os detalhes de 413, mas não comprovou a recuperação após o retry. | Investigar a jornada real e validar paridade dos outros provedores antes de concluir. |
-| T3: metas medidas | BLOQUEADA | A tabela real existe, mas os gates anteriores permanecem parciais. | Recalibrar perfis somente depois das provas exigidas; não promover fases antecipadamente. |
-| T4: roteador e perfis | PENDENTE | Perfis e orçamento ainda não integrados. | Criar roteador e testes por intenção, continuidade e orçamento. |
+| T1: erros e recuperação | PARCIAL | `43626037252`: 413 terminal e painel com status/modelo/mensagem foram observados; após o toque em retry, a espera pelo contador expirou. | 400 → 429 → 200, teto e espera não verificados no emulador; não repetir investigação agora. |
+| T2: detalhes tocáveis | PARCIAL | `43626037252`: cinco testes Compose instrumentados passaram isoladamente; a jornada abriu os detalhes de 413, mas não comprovou a recuperação após o retry. | Jornada não verificada no emulador; paridade dos outros provedores continua pendente. |
+| T3: metas medidas | EM ANDAMENTO | Fixture host medida; tetos propostos abaixo ainda não aplicados como gate. | Acrescentar e testar os limites de regressão; CI Android pendente. |
+| T4: roteador e perfis | EM ANDAMENTO | Templates e schemas dos perfis compartilhados com medição host; envio ainda não usa os perfis. | Integrar roteador, continuidade, orçamento e queda no 413; testar sem API paga. |
 | T4b: auto-combo | PENDENTE | Failover existente limitado a grupos não comprova a seleção pedida. | Selecionar modelos elegíveis, avisar e testar recuperação com provedores falsos. |
 | T12: subagentes | PARCIAL | `84436db`: investigação estática em [TAMA_V2_SUBAGENTES.md](TAMA_V2_SUBAGENTES.md): não foi encontrada no Android examinado uma orquestração conversa/executor independente; `minis-model-use`, fila e slots não bastam. Há um plano de implementação e testes. | Primeiro concluir T4b sequencial; não declarar execução paralela sem teste dinâmico. |
 | T5: atalhos sem modelo | PENDENTE | Nenhum atalho novo foi adicionado nesta etapa. | Reusar handlers e preservar `RiskGate` e `OffloadGate`. |
@@ -25,6 +33,93 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; tracker e aviso sintético passaram no build e emulação `43608695720`. Isso não prova um turno em segundo plano nem o Poco. `mediaPlayback` permanece inalterado. | Testar turno lento e investigar o Poco com autorização. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos em 17 locales e WebView sintética passou em `43593761942`. Após a correção de terminologia, Linux e macOS passaram na matriz Python de `20b44fa`; Windows experimental falhou. Arte e keystore dependem do dono. | Investigar Windows experimental e continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## T0b/T3: fixture host por perfil, antes da integração no envio
+
+A fixture usa os **mesmos** templates de identidade padrão do SOUL, base do agente, dieta,
+política de risco, Hands, orientação de memória, mídia e dispositivos, além de `AgentTools` e a
+serialização OpenAI reais. O estado é sintético: memória ligada mas arquivos vazios, uma skill
+inventada, Hands desligado, sem MCP, sem modelos de imagem/vídeo, sem outros dispositivos e sem o
+adendo da primeira conversa. `LEAN`/`BASIC` são montados pela mesma função preparada para T4,
+**ainda não ligada ao envio neste ponto**; `FULL` foi comparado ao layout anterior. Nenhuma API foi
+chamada. Um teste confere os totais contra as strings e schemas produzidos e imprime somente nomes
+fixos e contagens em `testDebugUnitTest`; o workflow publica os números do XML, sem texto de prompt.
+
+A execução local usou Kotlin 2.1, JSON-java 20231013 e JUnit 4.13.2 compilados das fontes oficiais,
+com stubs para tipos Android e dependências das ferramentas, sem executá-las; os **7 testes host**
+passaram. Não é
+build Android, instrumentação nem prova no Poco. O JSON-java do host difere da serialização Android
+observada na fixture anterior, e aqui `read_image` está habilitado; por isso os valores não devem ser
+confundidos com a tabela instrumentada mais abaixo. Não há dado pessoal na fixture nem no log.
+
+Caracteres são unidades UTF-16; a coluna de tokens usa `ceil(caracteres × 10 / 37)` sobre o total
+combinado. As seções individuais são arredondadas separadamente. Os tetos propostos serão **gates de regressão
+apenas desta fixture**, não limites para SOUL, memória, MCP ou histórico reais; histórico, imagens,
+overhead e resposta ficam fora. O CI Android desta alteração ainda não foi executado.
+
+| Cenário | Sistema: chars / ~tokens | Tools: chars / ~tokens | Soma chars / ~tokens | Teto fixture (~tokens) | 3 × soma estimada |
+|---|---:|---:|---:|---:|---:|
+| LEAN | 1.214 / ~329 | 0 / ~0 | 1.214 / ~329 | 400 | ~987 |
+| BASIC | 4.967 / ~1.343 | 6.795 / ~1.837 | 11.762 / ~3.179 | 3.400 | ~9.537 |
+| BASIC_WEB | 4.967 / ~1.343 | 12.074 / ~3.264 | 17.041 / ~4.606 | 4.800 | ~13.818 |
+| BASIC_ANDROID | 6.072 / ~1.642 | 6.795 / ~1.837 | 12.867 / ~3.478 | 3.700 | ~10.434 |
+| FULL | 27.330 / ~7.387 | 13.691 / ~3.701 | 41.021 / ~11.087 | 11.500 | ~33.261 |
+
+A regra de planejamento `3 × estimativa ≤ TPM` é conservadora para chamadas repetidas, mas não
+mede uma janela real nem substitui o controle por chamada: histórico, saídas e concorrência podem
+estourar o limite mesmo com o prefixo abaixo. Usando **8.000 apenas como limite observado no relato
+anterior**, a fixture LEAN cabe nessa multiplicação; BASIC, WEB, ANDROID e FULL não. Isso não prova
+que uma conta, outro modelo ou outra cota tenha esse limite. Não se atribuiu o teto 16.384 a um ID
+Qwen específico: o relato não identifica o ID com segurança.
+
+### Sistema por seção: caracteres / ~tokens depois da dieta
+
+| Seção | LEAN | BASIC | BASIC_WEB | BASIC_ANDROID | FULL |
+|---|---:|---:|---:|---:|---:|
+| IDENTITY | 886 / ~240 | 886 / ~240 | 886 / ~240 | 886 / ~240 | 888 / ~240 |
+| TONE | 212 / ~58 | 60 / ~17 | 60 / ~17 | 60 / ~17 | 254 / ~69 |
+| NAMING | 0 / ~0 | 0 / ~0 | 0 / ~0 | 0 / ~0 | 0 / ~0 |
+| RUNTIME | 112 / ~31 | 112 / ~31 | 112 / ~31 | 112 / ~31 | 112 / ~31 |
+| SEPARATORS | 4 / ~2 | 12 / ~4 | 12 / ~4 | 16 / ~5 | 16 / ~5 |
+| TOTAL | 1.214 / ~329 | 4.967 / ~1.343 | 4.967 / ~1.343 | 6.072 / ~1.642 | 27.330 / ~7.387 |
+| TOOL_STYLE | — | 372 / ~101 | 372 / ~101 | 372 / ~101 | 632 / ~171 |
+| RISK_POLICY | — | 1.678 / ~454 | 1.678 / ~454 | 1.678 / ~454 | 1.678 / ~454 |
+| SKILLS | — | 317 / ~86 | 317 / ~86 | 317 / ~86 | 358 / ~97 |
+| MCP | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 0 / ~0 |
+| MEDIA | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 1.554 / ~420 |
+| COMPUTERS | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 489 / ~133 |
+| SESSION | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 0 / ~0 |
+| GOALS | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 0 / ~0 |
+| FEED | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 0 / ~0 |
+| MEMORY_TOOLS | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 275 / ~75 |
+| MEMORY_GUIDANCE | — | 1.530 / ~414 | 1.530 / ~414 | 1.530 / ~414 | 1.530 / ~414 |
+| GLOBAL_MEMORY | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 0 / ~0 |
+| DAILY_MEMORY | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 0 / ~0 |
+| USER_FILE | — | 0 / ~0 | 0 / ~0 | 0 / ~0 | 0 / ~0 |
+| HANDS | — | — | — | 689 / ~187 | 689 / ~187 |
+| ANDROID_TOOLS | — | — | — | 412 / ~112 | 6.655 / ~1.799 |
+| INTRODUCTION | — | — | — | — | 217 / ~59 |
+| AVAILABLE_TOOLS | — | — | — | — | 2.899 / ~784 |
+| SANDBOX | — | — | — | — | 1.369 / ~370 |
+| URLS | — | — | — | — | 2.967 / ~802 |
+| FILES | — | — | — | — | 2.511 / ~679 |
+| ENVIRONMENT | — | — | — | — | 1.748 / ~473 |
+| SCHEDULED | — | — | — | — | 489 / ~133 |
+
+### Tools por schema: caracteres / ~tokens depois da dieta
+
+| Tool | LEAN | BASIC | BASIC_WEB | BASIC_ANDROID | FULL |
+|---|---:|---:|---:|---:|---:|
+| ARRAY_SEPARATORS | 0 / ~0 | 7 / ~2 | 8 / ~3 | 7 / ~2 | 9 / ~3 |
+| TOTAL | 0 / ~0 | 6.795 / ~1.837 | 12.074 / ~3.264 | 6.795 / ~1.837 | 13.691 / ~3.701 |
+| SHELL_EXECUTE | — | 1.295 / ~350 | 1.295 / ~350 | 1.295 / ~350 | 1.295 / ~350 |
+| FILE_READ | — | 1.259 / ~341 | 1.259 / ~341 | 1.259 / ~341 | 1.259 / ~341 |
+| FILE_WRITE | — | 970 / ~263 | 970 / ~263 | 970 / ~263 | 970 / ~263 |
+| FILE_EDIT | — | 1.296 / ~351 | 1.296 / ~351 | 1.296 / ~351 | 1.296 / ~351 |
+| MEMORY_WRITE | — | 991 / ~268 | 991 / ~268 | 991 / ~268 | 991 / ~268 |
+| MEMORY_GET | — | 977 / ~265 | 977 / ~265 | 977 / ~265 | 977 / ~265 |
+| BROWSER_USE | — | — | 5.278 / ~1.427 | — | 5.278 / ~1.427 |
+| READ_IMAGE | — | — | — | — | 1.616 / ~437 |
 
 ## CI de `ef368e6`: medições reais, jornada e sandbox ainda falham
 
