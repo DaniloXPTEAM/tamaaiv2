@@ -59,14 +59,35 @@ if [[ "$installed" != /data/app/*.apk ]] || [[ "$installed" == *$'\n'* ]]; then
 fi
 copy="$(mktemp)"
 trap 'rm -f "$copy"' EXIT
-if ! adb exec-out cat "$installed" > "$copy"; then
-  echo '::error title=apk-integrity::could not read the installed base APK'
-  exit 1
-fi
-INSTALLED="$(sha256sum "$copy" | cut -d' ' -f1)"
+expected_bytes="$(wc -c < "$APK" | tr -d '[:space:]')"
+INSTALLED=""
+verified=false
+# An interrupted adb transfer may report success with incomplete output. Retry the read once,
+# but never proceed unless both the complete length and hash match the sealed phone artifact.
+for attempt in 1 2; do
+  read_status=0
+  adb exec-out cat "$installed" > "$copy" 2>/dev/null || read_status=$?
+  bytes="$(wc -c < "$copy" | tr -d '[:space:]')"
+  INSTALLED="$(sha256sum "$copy" | cut -d' ' -f1)"
+  echo "::notice title=installed-apk-read::$attempt status=$read_status bytes=$bytes expected=$expected_bytes sha256=$INSTALLED"
+  if [ "$read_status" -eq 0 ] && [ "$bytes" = "$expected_bytes" ] && [ "$INSTALLED" = "$EXPECTED" ]; then
+    verified=true
+    break
+  fi
+  if [ "$attempt" -eq 1 ]; then
+    echo '::warning title=apk-integrity-read::Installed APK read did not match; retrying the read once'
+  fi
+done
 printf '%s\n' "$INSTALLED" > installed-apk-sha256.txt
-if [ "$INSTALLED" != "$EXPECTED" ]; then
-  echo '::error title=apk-integrity::the installed APK differs from the sealed phone APK'
+if ! $verified; then
+  # Diagnostic only: never use this second method to bypass the verified transfer above.
+  device_hash="$(adb shell sha256sum "$installed" 2>/dev/null | tr -d '\r' | cut -d' ' -f1 || true)"
+  if [[ "$device_hash" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "::notice title=installed-device-sha256::$device_hash"
+  else
+    echo '::warning title=installed-device-sha256::Device-side hash was unavailable'
+  fi
+  echo '::error title=apk-integrity::the installed APK could not be verified against the sealed phone APK'
   exit 1
 fi
 echo "::notice title=installed-apk-sha256::$INSTALLED"

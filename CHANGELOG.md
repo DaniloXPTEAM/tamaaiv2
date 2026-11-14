@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Added bounded readback diagnostics to the isolated Android APK integrity check without bypassing a mismatch.
+
 - Kept the Android prompt-size report outside the recycled message row and dismissed the keyboard when opening it.
 
 - Distinguished Android provider size and output-limit refusals, and added bounded retries for an explicit output limit and short rate-limit waits.

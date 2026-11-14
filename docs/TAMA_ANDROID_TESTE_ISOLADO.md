@@ -27,6 +27,9 @@ fails, is skipped, or reports no tests:
   a 413, followed after a manual retry by a 400 output-cap error, a 429 with `Retry-After`, and an
   answer. The journey checks the refusal card, no blind 413 resend, the smaller request, countdown
   and elapsed wait. This updated recovery scenario has not yet been run on Android.
+- The installed `base.apk` is read back and compared with the sealed file by both byte length
+  and SHA-256. A failed or incomplete transfer is retried once; a second mismatch stops the
+  smoke. A device-side hash is diagnostic only and cannot override that check.
 - After the journey, a force-stop on the disposable emulator, then a new app process verifying
   the stored chat and its displayed answer, Pet state, provider and dark appearance settings.
   No app data is cleared between the two runs.

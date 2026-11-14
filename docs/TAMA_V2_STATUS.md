@@ -8,16 +8,16 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | `0bdb919`: [Android 43587360354](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43587360354), build debug e unitários passaram; APK instalado com hash conferido. Smoke falhou na jornada e no PRoot. Test Suite, iOS, harness e Commits passaram. | Repetir o CI após correções; investigar PRoot. Release e hash de release ainda não comprovados. |
-| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: build Android passou; a jornada atingiu o botão do relatório, mas expirou ao esperar o conteúdo, então não há tabela. `c0faef7` move o painel para fora da lista e dispensa o teclado, ainda sem prova Android. Os testes de host usam substitutos para dependências Android. | Confirmar a correção no APK e publicar a tabela do pedido real ao servidor falso. |
+| T0a: build, testes e hash | PARCIAL | `0bdb919`: APK instalado teve hash conferido, mas smoke falhou. `262b822`: [Android 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294), build e unitários passaram; smoke parou porque a leitura do APK instalado não correspondeu ao hash selado. | Diagnosticar leitura e repetir CI sem reduzir o gate de integridade; investigar PRoot. Release ainda não comprovado. |
+| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: a jornada expirou ao esperar o relatório, sem tabela. `c0faef7` move o painel para fora da lista e dispensa o teclado; a alteração compilou em `262b822`, mas o smoke não chegou à jornada. | Confirmar o painel no APK e publicar a tabela do pedido real ao servidor falso. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
-| T1: erros e recuperação | EM ANDAMENTO | Classificação 413, 400 por tamanho ou teto de saída, 429 e 5xx; 20 testes de classificação/recuperação passaram no host com substitutos, e uma fixture loopback foi preparada. Build Android e jornada com as novas falhas ainda não foram verificados. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
+| T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). A jornada instrumentada não rodou por falha prévia na conferência do APK. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
 | T2: detalhes tocáveis | PENDENTE | Sem prova de painel completo. | Implementar e testar na interface. |
 | T3: metas medidas | BLOQUEADA | Depende da tabela real de T0b. | Recalibrar perfis depois da medição. |
 | T4: roteador e perfis | PENDENTE | Perfis e orçamento ainda não integrados. | Criar roteador e testes por intenção, continuidade e orçamento. |
 | T4b: auto-combo | PENDENTE | Failover existente limitado a grupos não comprova a seleção pedida. | Selecionar modelos elegíveis, avisar e testar recuperação com provedores falsos. |
-| T12: subagentes | PARCIAL | Investigação estática em [TAMA_V2_SUBAGENTES.md](TAMA_V2_SUBAGENTES.md): não foi encontrada no Android examinado uma orquestração conversa/executor independente; `minis-model-use`, fila e slots não bastam. Há um plano de implementação e testes. | Primeiro concluir T4b sequencial; não declarar execução paralela sem teste dinâmico. |
+| T12: subagentes | PARCIAL | `84436db`: investigação estática em [TAMA_V2_SUBAGENTES.md](TAMA_V2_SUBAGENTES.md): não foi encontrada no Android examinado uma orquestração conversa/executor independente; `minis-model-use`, fila e slots não bastam. Há um plano de implementação e testes. | Primeiro concluir T4b sequencial; não declarar execução paralela sem teste dinâmico. |
 | T5: atalhos sem modelo | PENDENTE | Nenhum atalho novo foi adicionado nesta etapa. | Reusar handlers e preservar `RiskGate` e `OffloadGate`. |
 | T6: tools sob demanda | PENDENTE | Sem `load_tools` nesta alteração. | Carregar grupos sem alterar o prefixo estável. |
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
@@ -25,6 +25,23 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | As novas strings do medidor têm pt-BR e paridade; os demais textos não foram revisados. Arte de origem e keystore dependem do dono. | Continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI de `262b822`: build passou, smoke interrompido
+
+- [Android 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294):
+  `assembleDebug`, unitários de `io.github.nanomuse.*` e dos pacotes de provider/sandbox,
+  compilação do APK de instrumentação e os dois jobs de previews passaram. O APK arm64 selado
+  teve SHA-256 `a46ca8fdbe6a6c18353b3e015e1395c6e9e1f5c6c811d4609017b0bdab752fde` e certificado
+  `d77f454cee96e67acde41448f92c17fbffbea4d044d0e8d33090a1b52ca8582b`, conforme as anotações.
+- O smoke instalou no emulador descartável, mas parou ao comparar a leitura do `base.apk` com
+  o hash selado. O valor divergente e o número de bytes não foram publicados; não se sabe se a
+  divergência é do APK instalado ou da transferência `adb`. Nenhum teste instrumentado rodou,
+  inclusive Pet, jornada e sandbox; não há tabela. O workflow terminou em falha. Test Suite,
+  iOS, harness e Commits passaram separadamente.
+- A nova verificação proposta registra status, tamanho e hash de cada leitura, tenta a leitura
+  uma vez mais e coleta, só para diagnóstico, o hash calculado no emulador. **Continua exigindo
+  leitura completa e hash exato do arquivo instalado**; resultado incorreto nunca é aceito pelo
+  hash alternativo. Ainda aguarda execução no CI. Os testes com `adb` falso passaram no host.
 
 ## CI de `0bdb919`: linha de base parcial
 
@@ -66,7 +83,8 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   teste, sem afetar a chamada de título. O armazenamento isolado passou com preferências falsas.
   O teste de interface preparado exige uma única chamada para o 413, retry manual, redução do
   teto, contagem regressiva e intervalo monotônico de pelo menos 2,9 s antes da resposta local.
-  O teste HTTP do provider e toda essa jornada ainda precisam rodar no CI Android.
+  Os testes HTTP e de armazenamento passaram no job de unitários do CI; a jornada Android ainda
+  não foi executada porque o smoke parou antes dela.
 - 19 testes Python direcionados passaram e um foi pulado; `git diff --check`, Ruff direcionado e
   sintaxe do script de smoke passaram. O teste instrumentado do relatório recebeu um diagnóstico
   de contagem de controles, sem registrar conteúdo da conversa, caso volte a expirar.

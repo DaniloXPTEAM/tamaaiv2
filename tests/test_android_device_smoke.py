@@ -16,6 +16,7 @@ SCRIPT = ROOT / "scripts/android/device-smoke.sh"
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the CI smoke script runs in Bash")
 
 FAKE_COMMAND = r"""
+import hashlib
 import json
 import os
 import sys
@@ -51,7 +52,18 @@ elif args[:3] == ["shell", "pm", "path"]:
     if mode == "existing" or Path(os.environ["SMOKE_INSTALLED"]).exists():
         print("package:/data/app/fake/base.apk")
 elif args[:2] == ["exec-out", "cat"]:
-    sys.stdout.buffer.write(b"other" if mode == "installed-mismatch" else b"arm64-apk")
+    count_path = Path(os.environ["SMOKE_APK_READS"])
+    count = int(count_path.read_text()) if count_path.exists() else 0
+    count_path.write_text(str(count + 1))
+    if mode == "installed-mismatch" or (mode == "installed-truncated-once" and count == 0):
+        sys.stdout.buffer.write(b"other")
+    else:
+        sys.stdout.buffer.write(b"arm64-apk")
+    if mode == "installed-read-error" or (mode == "installed-read-error-once" and count == 0):
+        sys.exit(1)
+elif args[:2] == ["shell", "sha256sum"]:
+    digest = hashlib.sha256(b"other" if mode == "installed-mismatch" else b"arm64-apk").hexdigest()
+    print(digest + "  " + args[2])
 elif args[:3] == ["shell", "pm", "list"]:
     if mode != "missing-package":
         print("package:ai.tama.assistant\r" if mode == "crlf" else "package:ai.tama.assistant")
@@ -133,11 +145,14 @@ def smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SMOKE_INSTALLED", str(installed))
     stopped = tmp_path / "stopped"
     monkeypatch.setenv("SMOKE_STOPPED", str(stopped))
+    apk_reads = tmp_path / "apk-reads"
+    monkeypatch.setenv("SMOKE_APK_READS", str(apk_reads))
 
     def run(failure: str = ""):
         calls.write_text("")
         installed.unlink(missing_ok=True)
         stopped.unlink(missing_ok=True)
+        apk_reads.unlink(missing_ok=True)
         monkeypatch.setenv("SMOKE_FAILURE", failure)
         result = subprocess.run(
             ["bash", str(SCRIPT)], text=True, capture_output=True, timeout=15, check=False
@@ -202,6 +217,7 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
         ("real-device", "title=isolation"),
         ("existing", "title=isolation"),
         ("installed-mismatch", "title=apk-integrity"),
+        ("installed-read-error", "title=apk-integrity"),
         ("install", "title=install"),
         ("missing-package", "title=install"),
         ("start", "title=am start"),
@@ -231,12 +247,43 @@ def test_smoke_fails_honestly_when_a_required_step_fails(smoke, failure: str, me
         "real-device",
         "existing",
         "installed-mismatch",
+        "installed-read-error",
         "install",
         "missing-package",
         "start",
         "process",
         "test-install",
     }
+
+
+@pytest.mark.parametrize("failure", ["installed-truncated-once", "installed-read-error-once"])
+def test_installed_apk_read_is_retried_only_until_hash_and_length_match(
+    smoke, failure: str
+) -> None:
+    checkout, run = smoke
+    result, calls = run(failure)
+    assert result.returncode == 0, result.stdout + result.stderr
+    reads = [args for name, args in calls if name == "adb" and args[:2] == ["exec-out", "cat"]]
+    assert len(reads) == 2
+    assert "::warning title=apk-integrity-read::" in result.stdout
+    assert "::notice title=installed-apk-sha256::" in result.stdout
+    assert (checkout / "installed-apk-sha256.txt").read_text().strip() == hashlib.sha256(
+        b"arm64-apk"
+    ).hexdigest()
+
+
+@pytest.mark.parametrize("failure", ["installed-mismatch", "installed-read-error"])
+def test_failed_apk_read_never_uses_device_hash_to_bypass_integrity(smoke, failure: str) -> None:
+    _, run = smoke
+    result, calls = run(failure)
+    assert result.returncode != 0
+    reads = [args for name, args in calls if name == "adb" and args[:2] == ["exec-out", "cat"]]
+    assert len(reads) == 2
+    assert "::notice title=installed-device-sha256::" in result.stdout
+    assert "::error title=apk-integrity::" in result.stdout
+    assert not any(
+        name == "adb" and args[:3] == ["shell", "am", "instrument"] for name, args in calls
+    )
 
 
 def test_package_list_with_crlf_is_accepted(smoke) -> None:
