@@ -296,6 +296,12 @@ Under **Settings → Appearance**, the font-size labels for **Chat Input**, **Me
 
 ## Your own key
 
+If a provider's model-list endpoint is unavailable, Android may use the public models.dev
+catalogue as a fallback. A host fallback must match the configured URL's scheme, hostname and
+effective port; `http` and `https`, or two servers on different ports, are not interchangeable.
+Paths can still differ, and hostnames are not resolved to compare aliases. When no catalogue
+entry matches, the existing model list is kept.
+
 The vendors the app knows are one file, `assets/nanomuse/providers.json`, a copy of the
 runtime's `nanomuse/llm/providers.json` written by `node scripts/providers-json.mjs`, the same
 catalogue every client reads ([own-key.md](own-key.md)). Each entry says where the endpoint is,

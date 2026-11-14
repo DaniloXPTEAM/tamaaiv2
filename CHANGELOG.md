@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Kept Android's model-catalogue fallback from borrowing a different server's models when two endpoints share a hostname but use different ports or schemes.
+
 - Gave the Android app a warm TAMA palette across onboarding, chat, navigation and settings, and added a direct Pet shortcut beside the agent name without removing the profile route.
 
 - Prepared an isolated emulator check that installs the sealed arm64 phone APK rather than a separate x86 build, and compares the installed APK's hash with the artifact.

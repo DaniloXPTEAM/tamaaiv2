@@ -3,9 +3,11 @@ package io.github.nanomuse.isolated
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Process
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -15,6 +17,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -36,7 +39,6 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
 import org.junit.Rule
@@ -70,8 +72,10 @@ class RealAppJourneyInstrumentedTest {
     private fun back() = compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
 
     private fun capture(name: String) {
+        // Capture the tested Compose root after its frame is idle, not a possibly stale
+        // emulator display frame. This omits Android's system bars.
         compose.waitForIdle()
-        val screenshot = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+        val screenshot = compose.onRoot().captureToImage().asAndroidBitmap()
         File(context.cacheDir, name).outputStream().use { assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, it)) }
         screenshot.recycle()
     }
@@ -127,6 +131,29 @@ class RealAppJourneyInstrumentedTest {
             compose.onNodeWithText(LocalOpenAiFixture.MODEL_NAME).performClick()
             compose.onNodeWithText(context.getString(R.string.onboarding_done_count, 1)).performClick()
             awaitText(text(R.string.nm_welcome_hands_title))
+
+            // A temporary outage of a local server must not replace its selected model with
+            // another local product's catalog merely because both use 127.0.0.1.
+            val configured = app.providerRepository.config.value
+            val instance = configured.instances.single { it.customBaseURL == fixture.baseUrl }
+            val selected = configured.modelEntries.single {
+                it.providerInstanceId == instance.id && it.model.id == LocalOpenAiFixture.MODEL_ID
+            }
+            val groupId = checkNotNull(configured.defaultPrimaryGroupId)
+            assertTrue(configured.modelGroups.single { it.id == groupId }.memberEntryIds.contains(selected.id))
+            val beforeGets = synchronized(fixture.requests) { fixture.requests.count { it == "GET /v1/models" } }
+            fixture.failModelList = true
+            try {
+                runBlocking { app.providerRepository.refreshModels(instance) }
+                val afterGets = synchronized(fixture.requests) { fixture.requests.count { it == "GET /v1/models" } }
+                assertTrue("The unavailable endpoint was not queried", afterGets > beforeGets)
+                val after = app.providerRepository.config.value
+                assertTrue("The selected local model was replaced", after.modelEntries.any { it.id == selected.id })
+                assertTrue("The selected group was changed", after.modelGroups.single { it.id == groupId }.memberEntryIds.contains(selected.id))
+            } finally {
+                fixture.failModelList = false
+            }
+
             compose.onNodeWithText(text(R.string.nm_welcome_skip)).performClick()
             awaitText(text(R.string.nm_setup_start))
             compose.onNodeWithText(text(R.string.nm_setup_start)).performClick()
@@ -176,10 +203,21 @@ class RealAppJourneyInstrumentedTest {
                 pet.daily.count(PetMission.CONVERSATION) == 1 && pet.daily.completed(PetMission.TASK)
             }
             val requests = synchronized(fixture.posts) { fixture.posts.toList() }
-            val request = requests.firstOrNull { it.optJSONArray("messages")?.toString()?.contains(LocalOpenAiFixture.PROMPT) == true }
-            assertNotNull("The fixture did not receive the person's message", request)
-            assertEquals(LocalOpenAiFixture.MODEL_ID, request!!.getString("model"))
-            assertTrue("Expected Chat Completions streaming", request.optBoolean("stream"))
+            // Title generation also streams and quotes the prompt. Match the actual user
+            // message exactly, not an auxiliary request that merely contains its text.
+            val chats = requests.filter { request ->
+                val messages = request.optJSONArray("messages") ?: return@filter false
+                (0 until messages.length()).any { index ->
+                    val message = messages.optJSONObject(index)
+                    message?.optString("role") == "user" && message.optString("content") == LocalOpenAiFixture.PROMPT
+                }
+            }
+            val summary = requests.map { "${it.optString("model")}:stream=${it.optBoolean("stream")}" }
+            assertTrue("The fixture did not receive the person's message; requests=$summary", chats.isNotEmpty())
+            assertTrue("Expected streaming chat; requests=$summary", chats.all { it.optBoolean("stream") })
+            assertTrue("Unexpected chat model(s); requests=$summary", chats.all {
+                it.optString("model") == LocalOpenAiFixture.MODEL_ID
+            })
             assertTrue("Fixture errors: ${fixture.errors}", fixture.errors.isEmpty())
             val session = checkNotNull(MainChat.persisted(context))
             val rows = runBlocking { app.chatRepository.dao.loadMessages(session) }

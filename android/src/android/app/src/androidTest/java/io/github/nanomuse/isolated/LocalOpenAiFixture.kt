@@ -28,6 +28,7 @@ internal class LocalOpenAiFixture : AutoCloseable {
     val posts: MutableList<JSONObject> = Collections.synchronizedList(mutableListOf())
     val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())
     val errors: MutableList<String> = Collections.synchronizedList(mutableListOf())
+    @Volatile var failModelList = false
     @Volatile private var running = true
     private val acceptThread = thread(name = "tama-fixture-accept", isDaemon = true) {
         while (running) {
@@ -82,6 +83,9 @@ internal class LocalOpenAiFixture : AutoCloseable {
                 val path = request.getOrNull(1)?.substringBefore('?')
                 requests.add("${request.firstOrNull()} $path")
                 val (status, contentType, payload) = when {
+                    request.firstOrNull() == "GET" && path == "/v1/models" && failModelList -> Triple(
+                        "503 Service Unavailable", "application/json", "{\"error\":\"temporary fixture outage\"}",
+                    )
                     request.firstOrNull() == "GET" && path == "/v1/models" -> Triple(
                         "200 OK", "application/json",
                         JSONObject().put("object", "list").put("data", JSONArray().put(

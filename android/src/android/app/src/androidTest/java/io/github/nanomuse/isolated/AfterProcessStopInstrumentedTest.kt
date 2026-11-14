@@ -3,11 +3,14 @@ package io.github.nanomuse.isolated
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Process
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.openminis.app.MainActivity
@@ -74,7 +77,7 @@ class AfterProcessStopInstrumentedTest {
         assertTrue(app.providerRepository.config.value.instances.any { it.customBaseURL?.startsWith("http://127.0.0.1:") == true })
         File(context.cacheDir, "journey-process.txt").writeText("writer_pid=$previousPid\nrestored_pid=${Process.myPid()}\nchat_rows=${rows.size}\npet_xp=${PetStore.state.value.progress.xp}\ntheme=dark\nchat_background=blue\n")
         compose.waitForIdle()
-        val screenshot = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+        val screenshot = compose.onRoot().captureToImage().asAndroidBitmap()
         File(context.cacheDir, "journey-restored.png").outputStream().use { assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, it)) }
         screenshot.recycle()
     }
