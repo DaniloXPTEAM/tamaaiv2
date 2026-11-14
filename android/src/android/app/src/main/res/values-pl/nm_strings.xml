@@ -1397,4 +1397,8 @@
     <string name="nm_reach_output_adjusted">Dostawca przyjął ponowną próbę z limitem %1$d tokenów odpowiedzi.</string>
     <string name="nm_reach_rate_wait">Osiągnięto limit żądań. Ponowna próba za %1$d s.</string>
     <string name="nm_reach_server_retry">Dostawca działa niestabilnie. Ponawiam próbę.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">Nie udało się uruchomić żądania usługi w tle. Nie zamykaj TAMA podczas zadania; po wyjściu może ono zostać przerwane.</string>
+    <string name="nm_background_stop_rejected">Nie udało się zażądać zatrzymania usługi w tle. Jej powiadomienie może pozostać widoczne.</string>
+    <string name="nm_background_service_retry">Spróbuj ponownie</string>
 </resources>

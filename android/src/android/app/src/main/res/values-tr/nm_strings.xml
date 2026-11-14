@@ -1389,4 +1389,8 @@
     <string name="nm_reach_output_adjusted">Sağlayıcı en fazla %1$d çıkış tokenı ile yeniden denemeyi kabul etti.</string>
     <string name="nm_reach_rate_wait">İstek sınırına ulaşıldı. %1$d sn sonra yeniden denenecek.</string>
     <string name="nm_reach_server_retry">Sağlayıcı kararsız. Yeniden deneniyor.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">Arka plan hizmeti istenemedi. Görev sürerken TAMA açık kalsın; uygulamadan çıkarsanız görev durabilir.</string>
+    <string name="nm_background_stop_rejected">Arka plan hizmetinin durdurulması istenemedi. Bildirimi görünmeye devam edebilir.</string>
+    <string name="nm_background_service_retry">Tekrar dene</string>
 </resources>

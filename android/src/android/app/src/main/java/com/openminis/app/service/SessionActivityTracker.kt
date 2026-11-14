@@ -222,6 +222,9 @@ object SessionActivityTracker {
     }
 
     private var appContext: Context? = null
+    // nanoMuse: a rejected Android request is visible; success is not proof of service survival.
+    private val serviceRequests = io.github.nanomuse.service.ServiceRequestState()
+    internal val serviceRequestIssue = serviceRequests.issue
 
     /**
      * The service should run iff at least one session is streaming OR
@@ -490,7 +493,11 @@ object SessionActivityTracker {
     fun setPresent(sessionId: String) {
         // nanoMuse: opening a reply marks it read, without clearing its pause indicator.
         SessionBadgeStore.replies.opened(sessionId)
-        if (sessionId in _presentSessions.value) return
+        if (sessionId in _presentSessions.value) {
+            // nanoMuse: an earlier rejected start must not make presence permanently skip retry.
+            if (serviceRequestIssue.value != null) updateService()
+            return
+        }
         val wasIdle = !shouldRunService()
         _presentSessions.value = _presentSessions.value + sessionId
         Log.d(TAG, "Presence set: $sessionId (present total: ${_presentSessions.value.size})")
@@ -635,25 +642,24 @@ object SessionActivityTracker {
         }
     }
 
-    private fun startServiceIfNeeded() {
-        val context = appContext ?: run {
-            Log.w(TAG, "Context not initialized, cannot start service")
-            return
+    // nanoMuse: service request failures must not strand a real turn or skip Pet cleanup.
+    // A successful request is not evidence that Android kept the service alive afterward.
+    private fun startServiceIfNeeded() = requestServiceStart()
+    private fun updateService() = requestServiceStart()
+
+    private fun requestServiceStart() {
+        val accepted = serviceRequests.attempt(io.github.nanomuse.service.ServiceRequestIssue.START) {
+            val context = checkNotNull(appContext) { "Service context not initialized" }
+            check(AgentForegroundService.startService(context, sessionCountForNotification(), statusForNotification())) {
+                "Android did not identify a service component"
+            }
         }
-        AgentForegroundService.startService(
-            context,
-            sessionCountForNotification(),
-            statusForNotification(),
-        )
+        if (!accepted) Log.w(TAG, "Background service start request was rejected")
     }
 
-    private fun updateService() {
-        val context = appContext ?: return
-        AgentForegroundService.startService(
-            context,
-            sessionCountForNotification(),
-            statusForNotification(),
-        )
+    // nanoMuse: retry only the request appropriate to current tracker state, never rerun a task.
+    internal fun retryServiceRequest() {
+        if (shouldRunService()) requestServiceStart() else stopService()
     }
 
     /**
@@ -705,11 +711,12 @@ object SessionActivityTracker {
     }
 
     private fun stopService() {
-        val context = appContext ?: run {
-            Log.w(TAG, "Context not initialized, cannot stop service")
-            return
+        // nanoMuse: an Android refusal must not prevent completion listeners or Pet accounting.
+        val accepted = serviceRequests.attempt(io.github.nanomuse.service.ServiceRequestIssue.STOP) {
+            val context = checkNotNull(appContext) { "Service context not initialized" }
+            AgentForegroundService.stopService(context)
         }
-        AgentForegroundService.stopService(context)
-        Log.d(TAG, "All sessions complete, service stopped")
+        if (accepted) Log.d(TAG, "All sessions complete, service stop requested")
+        else Log.w(TAG, "Background service stop request was rejected")
     }
 }

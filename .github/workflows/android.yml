@@ -328,6 +328,7 @@ jobs:
             sandbox-instrumentation.log
             sandbox-process-snapshot.txt
             prompt-detail-instrumentation.log
+            background-service-instrumentation.log
             browser-guard-instrumentation.log
             system-anr-policy-instrumentation.log
             android-runtime.log

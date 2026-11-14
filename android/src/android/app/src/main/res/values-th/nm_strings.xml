@@ -1385,4 +1385,8 @@
     <string name="nm_reach_output_adjusted">ผู้ให้บริการยอมรับการลองใหม่โดยจำกัดคำตอบไม่เกิน %1$d โทเคน</string>
     <string name="nm_reach_rate_wait">ถึงขีดจำกัดคำขอแล้ว จะลองใหม่ใน %1$d วินาที</string>
     <string name="nm_reach_server_retry">ผู้ให้บริการไม่เสถียร กำลังลองใหม่</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">ไม่สามารถขอใช้บริการเบื้องหลังได้ เปิด TAMA ไว้ขณะทำงาน เพราะงานอาจหยุดหากคุณออกจากแอป</string>
+    <string name="nm_background_stop_rejected">ไม่สามารถขอหยุดบริการเบื้องหลังได้ การแจ้งเตือนอาจยังแสดงอยู่</string>
+    <string name="nm_background_service_retry">ลองอีกครั้ง</string>
 </resources>

@@ -75,15 +75,17 @@ class AgentForegroundService : Service() {
         /**
          * Starts or updates the foreground service with current status.
          */
-        fun startService(context: Context, sessionCount: Int, toolStatus: String) {
+        // nanoMuse: null means Android did not identify a service to start; a non-null
+        // component only acknowledges the request, not successful promotion or survival.
+        fun startService(context: Context, sessionCount: Int, toolStatus: String): Boolean {
             val intent = Intent(context, AgentForegroundService::class.java).apply {
                 putExtra(EXTRA_SESSION_COUNT, sessionCount)
                 putExtra(EXTRA_TOOL_STATUS, toolStatus)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent) != null
             } else {
-                context.startService(intent)
+                context.startService(intent) != null
             }
         }
 

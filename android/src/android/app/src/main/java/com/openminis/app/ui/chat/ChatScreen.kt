@@ -574,6 +574,8 @@ fun ChatScreen(
     val messages by viewModel.uiMessages.collectAsState()
     val hasOlderMessages by viewModel.hasOlderMessages.collectAsState()
     val isStreaming by viewModel.isStreaming.collectAsState()
+    // nanoMuse: a rejected Android service request needs a persistent, actionable warning.
+    val nmServiceIssue by com.openminis.app.service.SessionActivityTracker.serviceRequestIssue.collectAsState()
     // nanoMuse: the screen stays on while the agent drives the browser or another app's screen.
     io.github.nanomuse.status.KeepAwake.Effect(isStreaming)
     val canResume by viewModel.canResume.collectAsState()
@@ -4792,6 +4794,16 @@ fun ChatScreen(
 
             },
             bottomContent = {
+            // nanoMuse: accepted requests still do not guarantee background survival; show only
+            // known rejections, and retry the service request without repeating the user's task.
+            nmServiceIssue?.let { issue ->
+                io.github.nanomuse.ui.chat.BackgroundServiceWarning(
+                    issue = issue,
+                    onRetry = { com.openminis.app.service.SessionActivityTracker.retryServiceRequest() },
+                    modifier = Modifier.widthIn(max = CHAT_MAX_CONTENT_WIDTH).fillMaxWidth()
+                        .align(Alignment.CenterHorizontally).padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
             // nanoMuse: tools and composer are siblings in one footer, so their
             // bounds cannot overlap regardless of composer/preview height.
             if (nmToolBarShown) {

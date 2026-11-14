@@ -115,10 +115,11 @@
         <item quantity="other">%d セッション</item>
     </plurals>
     <string name="battery_opt_section_title">電池の最適化</string>
-    <string name="battery_opt_section_footer">除外設定にすると、Android はタスク実行中にアプリをスリープさせません。この画面に戻るたびに再確認します。</string>
-    <string name="battery_opt_row_title">バックグラウンド実行を許可</string>
-    <string name="battery_opt_already_exempt">許可済み</string>
-    <string name="battery_opt_request_subtitle">タップして TAMA AI の中断のない実行を許可</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">除外によって制限が減る場合がありますが、タスクの継続は保証されません。この画面に戻ると状態を再確認します。</string>
+    <string name="battery_opt_row_title">バッテリーの制限</string>
+    <string name="battery_opt_already_exempt">バッテリー最適化の除外が有効</string>
+    <string name="battery_opt_request_subtitle">タップしてバッテリー最適化の除外を申請します。タスクは中断される場合があります。</string>
     <string name="rom_autostart_section_title">自動起動の権限</string>
     <string name="rom_autostart_section_footer">一部の Android UI（%1$s）では、標準のシステム設定に加えて自動起動の権限が必要です。これがないと TAMA AI はバックグラウンドへ移行後に数分で強制終了される可能性があります。</string>
     <string name="rom_autostart_row_title">自動起動の設定を開く</string>

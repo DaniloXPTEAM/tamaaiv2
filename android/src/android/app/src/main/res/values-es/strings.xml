@@ -115,10 +115,11 @@
         <item quantity="other">%d sesiones</item>
     </plurals>
     <string name="battery_opt_section_title">Optimización de batería</string>
-    <string name="battery_opt_section_footer">Con la exención, Android no suspenderá la app a mitad de una tarea. Se vuelve a comprobar cada vez que regresas a esta pantalla.</string>
-    <string name="battery_opt_row_title">Permitir actividad en segundo plano</string>
-    <string name="battery_opt_already_exempt">Ya está permitido</string>
-    <string name="battery_opt_request_subtitle">Toca para permitir que TAMA AI funcione sin interrupciones</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">La exención puede reducir restricciones, pero no garantiza un funcionamiento continuo. El estado se comprueba al volver.</string>
+    <string name="battery_opt_row_title">Restricciones de batería</string>
+    <string name="battery_opt_already_exempt">Exención de optimización de batería activa</string>
+    <string name="battery_opt_request_subtitle">Toca para solicitar una exención de la optimización de batería; las tareas aún pueden interrumpirse.</string>
     <string name="rom_autostart_section_title">Permiso de inicio automático</string>
     <string name="rom_autostart_section_footer">Algunas capas de Android (%1$s) requieren un permiso adicional de inicio automático además de los ajustes estándar del sistema. Sin él, TAMA AI puede cerrarse a los pocos minutos de pasar a segundo plano.</string>
     <string name="rom_autostart_row_title">Abrir ajustes de inicio automático</string>

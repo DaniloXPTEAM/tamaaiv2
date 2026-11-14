@@ -117,10 +117,11 @@
         <item quantity="other">%d сессии</item>
     </plurals>
     <string name="battery_opt_section_title">Оптимизация батареи</string>
-    <string name="battery_opt_section_footer">При исключении Android не будет усыплять приложение во время выполнения задачи. Проверяется заново при каждом возврате на этот экран.</string>
-    <string name="battery_opt_row_title">Разрешить работу в фоне</string>
-    <string name="battery_opt_already_exempt">Уже разрешено</string>
-    <string name="battery_opt_request_subtitle">Нажмите, чтобы разрешить TAMA AI работать без прерываний</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">Исключение может уменьшить ограничения, но не гарантирует непрерывную работу. Состояние проверяется при возвращении.</string>
+    <string name="battery_opt_row_title">Ограничения батареи</string>
+    <string name="battery_opt_already_exempt">Исключение из оптимизации батареи активно</string>
+    <string name="battery_opt_request_subtitle">Нажмите, чтобы запросить исключение из оптимизации батареи; задачи всё равно могут прерваться.</string>
     <string name="rom_autostart_section_title">Разрешение на автозапуск</string>
     <string name="rom_autostart_section_footer">Некоторые оболочки Android (%1$s) требуют дополнительного разрешения на автозапуск помимо стандартных системных настроек. Без него TAMA AI может быть закрыт через несколько минут после ухода в фон.</string>
     <string name="rom_autostart_row_title">Открыть настройки автозапуска</string>

@@ -120,10 +120,11 @@
         <item quantity="other">%d sesi</item>
     </plurals>
     <string name="battery_opt_section_title">Optimasi baterai</string>
-    <string name="battery_opt_section_footer">Jika dikecualikan, Android tidak akan menidurkan aplikasi di tengah tugas. Diperiksa ulang setiap kali Anda kembali ke layar ini.</string>
-    <string name="battery_opt_row_title">Izinkan kerja di latar belakang</string>
-    <string name="battery_opt_already_exempt">Sudah diizinkan</string>
-    <string name="battery_opt_request_subtitle">Ketuk untuk mengizinkan TAMA AI berjalan tanpa gangguan</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">Pengecualian dapat mengurangi pembatasan, tetapi tidak menjamin tugas berjalan tanpa henti. Status diperiksa saat Anda kembali.</string>
+    <string name="battery_opt_row_title">Pembatasan baterai</string>
+    <string name="battery_opt_already_exempt">Pengecualian pengoptimalan baterai aktif</string>
+    <string name="battery_opt_request_subtitle">Ketuk untuk meminta pengecualian pengoptimalan baterai; tugas masih dapat terhenti.</string>
     <string name="rom_autostart_section_title">Izin autostart</string>
     <string name="rom_autostart_section_footer">Beberapa antarmuka Android (%1$s) memerlukan izin autostart tambahan di luar pengaturan sistem standar. Tanpa izin tersebut, TAMA AI dapat dihentikan hanya beberapa menit setelah masuk ke latar belakang.</string>
     <string name="rom_autostart_row_title">Buka pengaturan autostart</string>

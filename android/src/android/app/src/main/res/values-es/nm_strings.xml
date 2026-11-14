@@ -1389,4 +1389,8 @@
     <string name="nm_reach_output_adjusted">El proveedor aceptó un nuevo intento con hasta %1$d tokens de respuesta.</string>
     <string name="nm_reach_rate_wait">Límite de solicitudes alcanzado. Lo intento de nuevo en %1$d s.</string>
     <string name="nm_reach_server_retry">El proveedor está inestable. Lo intento de nuevo.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">No pude solicitar el servicio en segundo plano. Mantén TAMA abierto durante la tarea; podría detenerse si sales.</string>
+    <string name="nm_background_stop_rejected">No pude solicitar que se detenga el servicio en segundo plano. Su notificación podría seguir visible.</string>
+    <string name="nm_background_service_retry">Intentar de nuevo</string>
 </resources>

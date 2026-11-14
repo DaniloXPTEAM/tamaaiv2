@@ -115,10 +115,11 @@
         <item quantity="other">%d na session</item>
     </plurals>
     <string name="battery_opt_section_title">Battery optimization</string>
-    <string name="battery_opt_section_footer">Kapag na-exempt, hindi patutulugin ng Android ang app sa gitna ng gawain. Sinusuri muli sa tuwing babalik ka sa screen na ito.</string>
-    <string name="battery_opt_row_title">Payagan ang paggana sa background</string>
-    <string name="battery_opt_already_exempt">Pinapayagan na</string>
-    <string name="battery_opt_request_subtitle">I-tap para payagan ang TAMA AI na tumakbo nang walang abala</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">Maaaring mabawasan ng exemption ang mga paghihigpit, pero hindi nito ginagarantiyang tuloy-tuloy ang gawain. Muling susuriin ang status pagbalik mo.</string>
+    <string name="battery_opt_row_title">Mga paghihigpit sa baterya</string>
+    <string name="battery_opt_already_exempt">Aktibo ang exemption sa pag-optimize ng baterya</string>
+    <string name="battery_opt_request_subtitle">I-tap para humiling ng exemption sa pag-optimize ng baterya; maaari pa ring maantala ang mga gawain.</string>
     <string name="rom_autostart_section_title">Pahintulot sa autostart</string>
     <string name="rom_autostart_section_footer">May ilang Android skin (%1$s) na nangangailangan ng dagdag na pahintulot sa autostart bukod sa karaniwang mga setting ng system. Kung wala ito, maaaring mapatay ang TAMA AI ilang minuto matapos mapunta sa background.</string>
     <string name="rom_autostart_row_title">Buksan ang mga setting ng autostart</string>

@@ -1355,4 +1355,8 @@
     <string name="nm_reach_output_adjusted">服務商已接受最多 %1$d 個回覆 token 的重試請求。</string>
     <string name="nm_reach_rate_wait">已達到請求限額，將在 %1$d 秒後重試。</string>
     <string name="nm_reach_server_retry">服務商暫時不穩定，正在重試。</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">無法要求背景服務。工作進行時請保持 TAMA 開啟；離開後工作可能會停止。</string>
+    <string name="nm_background_stop_rejected">無法要求停止背景服務。其通知可能仍會顯示。</string>
+    <string name="nm_background_service_retry">再試一次</string>
 </resources>

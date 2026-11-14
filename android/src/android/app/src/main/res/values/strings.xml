@@ -141,10 +141,11 @@
         <item quantity="other">%d sessions</item>
     </plurals>
     <string name="battery_opt_section_title">Battery optimisation</string>
-    <string name="battery_opt_section_footer">When exempted, Android won\'t put the app to sleep mid-task. Re-checked on each return to this screen.</string>
-    <string name="battery_opt_row_title">Allow background work</string>
-    <string name="battery_opt_already_exempt">Already allowed</string>
-    <string name="battery_opt_request_subtitle">Tap to allow TAMA AI to run uninterrupted</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">An exemption may reduce restrictions, but does not guarantee uninterrupted work. The status is checked when you return.</string>
+    <string name="battery_opt_row_title">Battery restrictions</string>
+    <string name="battery_opt_already_exempt">Battery optimization exemption active</string>
+    <string name="battery_opt_request_subtitle">Tap to request a battery optimization exemption; tasks may still stop.</string>
     <string name="rom_autostart_section_title">Autostart permission</string>
     <string name="rom_autostart_section_footer">Some Android skins (%1$s) require an extra autostart permission on top of the standard system settings. Without it, TAMA AI can be killed within minutes of going to background.</string>
     <string name="rom_autostart_row_title">Open autostart settings</string>

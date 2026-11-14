@@ -4,6 +4,10 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Made Android chat explain synchronous background-service request failures and retry the service request without repeating the person's task.
+
+- Clarified that exempting Android battery optimization can reduce restrictions but cannot guarantee uninterrupted background work.
+
 - Made the Android persistent shell decode completion markers and UTF-8 across process-read boundaries, without clearing a later command's callback.
 
 - Moved the Android prompt-size detail host outside the measured chat layout and added isolated report-sheet checks.

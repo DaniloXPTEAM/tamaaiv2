@@ -1385,4 +1385,8 @@
     <string name="nm_reach_output_adjusted">プロバイダーは応答を最大 %1$d トークンにした再試行を受け付けました。</string>
     <string name="nm_reach_rate_wait">リクエストの上限に達しました。%1$d 秒後に再試行します。</string>
     <string name="nm_reach_server_retry">プロバイダーが不安定です。再試行します。</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">バックグラウンドサービスを要求できませんでした。タスク中は TAMA を開いたままにしてください。離れると停止する場合があります。</string>
+    <string name="nm_background_stop_rejected">バックグラウンドサービスの停止を要求できませんでした。通知が表示されたままになる場合があります。</string>
+    <string name="nm_background_service_retry">再試行</string>
 </resources>

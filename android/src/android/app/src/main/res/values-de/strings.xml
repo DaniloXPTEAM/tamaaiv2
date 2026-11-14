@@ -115,10 +115,11 @@
         <item quantity="other">%d Sitzungen</item>
     </plurals>
     <string name="battery_opt_section_title">Akkuoptimierung</string>
-    <string name="battery_opt_section_footer">Wenn ausgenommen, schickt Android die App während einer Aufgabe nicht in den Schlaf. Wird bei jeder Rückkehr zu diesem Bildschirm erneut geprüft.</string>
-    <string name="battery_opt_row_title">Hintergrundarbeit erlauben</string>
-    <string name="battery_opt_already_exempt">Bereits erlaubt</string>
-    <string name="battery_opt_request_subtitle">Tippe, damit TAMA AI ununterbrochen laufen darf</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">Eine Ausnahme kann Einschränkungen verringern, garantiert aber keinen unterbrechungsfreien Betrieb. Der Status wird bei der Rückkehr geprüft.</string>
+    <string name="battery_opt_row_title">Akku-Einschränkungen</string>
+    <string name="battery_opt_already_exempt">Ausnahme von der Akkuoptimierung aktiv</string>
+    <string name="battery_opt_request_subtitle">Tippe, um eine Ausnahme von der Akkuoptimierung anzufordern; Aufgaben können trotzdem unterbrochen werden.</string>
     <string name="rom_autostart_section_title">Autostart-Berechtigung</string>
     <string name="rom_autostart_section_footer">Manche Android-Skins (%1$s) verlangen zusätzlich zu den Standardsystemeinstellungen eine Autostart-Berechtigung. Ohne sie kann TAMA AI innerhalb weniger Minuten nach dem Wechsel in den Hintergrund beendet werden.</string>
     <string name="rom_autostart_row_title">Autostart-Einstellungen öffnen</string>

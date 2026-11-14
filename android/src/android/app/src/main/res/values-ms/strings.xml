@@ -115,10 +115,11 @@
         <item quantity="other">%d sesi</item>
     </plurals>
     <string name="battery_opt_section_title">Pengoptimuman bateri</string>
-    <string name="battery_opt_section_footer">Apabila dikecualikan, Android tidak akan menidurkan aplikasi di tengah-tengah tugasan. Disemak semula setiap kali anda kembali ke skrin ini.</string>
-    <string name="battery_opt_row_title">Benarkan kerja di latar belakang</string>
-    <string name="battery_opt_already_exempt">Sudah dibenarkan</string>
-    <string name="battery_opt_request_subtitle">Ketik untuk membenarkan TAMA AI berjalan tanpa gangguan</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">Pengecualian boleh mengurangkan sekatan, tetapi tidak menjamin kerja berterusan. Status disemak apabila anda kembali.</string>
+    <string name="battery_opt_row_title">Sekatan bateri</string>
+    <string name="battery_opt_already_exempt">Pengecualian pengoptimuman bateri aktif</string>
+    <string name="battery_opt_request_subtitle">Ketik untuk meminta pengecualian pengoptimuman bateri; tugasan masih boleh terhenti.</string>
     <string name="rom_autostart_section_title">Kebenaran automula</string>
     <string name="rom_autostart_section_footer">Sesetengah antara muka Android (%1$s) memerlukan kebenaran automula tambahan selain tetapan sistem biasa. Tanpanya, TAMA AI boleh dihentikan dalam beberapa minit selepas beralih ke latar belakang.</string>
     <string name="rom_autostart_row_title">Buka tetapan automula</string>

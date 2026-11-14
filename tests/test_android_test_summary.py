@@ -24,6 +24,7 @@ def test_summary_distinguishes_pass_fail_skip_and_missing(tmp_path, monkeypatch,
         "INSTRUMENTATION_STATUS_CODE: -4\nOK (1 test)\n"
     )
     (tmp_path / "prompt-detail-instrumentation.log").write_text("OK (2 tests)\n")
+    (tmp_path / "background-service-instrumentation.log").write_text("OK (1 test)\n")
     (tmp_path / "browser-guard-instrumentation.log").write_text("OK (1 test)\n")
     assert summary.main() == 0
     output = capsys.readouterr().out
@@ -34,6 +35,7 @@ def test_summary_distinguishes_pass_fail_skip_and_missing(tmp_path, monkeypatch,
     assert "::error title=Packaged sandbox::Failed, skipped, or no tests reported" in output
     assert "::notice title=Packaged sandbox" not in output
     assert "::notice title=Prompt detail::OK (2 tests)" in output
+    assert "::notice title=Background warning::OK (1 test)" in output
     assert "::notice title=Browser guard::OK (1 test)" in output
 
 
@@ -51,6 +53,27 @@ def test_prompt_detail_summary_requires_both_interface_tests(tmp_path, monkeypat
     (tmp_path / "prompt-detail-instrumentation.log").write_text("OK (1 test)\n")
     assert summary.main() == 0
     assert "::error title=Prompt detail::" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("contents", "level"),
+    [
+        (None, "warning"),
+        ("FAILURES!!!\n", "error"),
+        ("INSTRUMENTATION_STATUS_CODE: -4\nOK (1 test)\n", "error"),
+        ("OK (0 tests)\n", "error"),
+    ],
+)
+def test_background_warning_summary_never_claims_missing_or_failed_test_passed(
+    tmp_path, monkeypatch, capsys, contents, level
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    if contents is not None:
+        (tmp_path / "background-service-instrumentation.log").write_text(contents)
+    assert summary.main() == 0
+    output = capsys.readouterr().out
+    assert f"::{level} title=Background warning::" in output
+    assert "::notice title=Background warning::" not in output
 
 
 def test_summary_reports_process_evidence_only_if_present(tmp_path, monkeypatch, capsys) -> None:

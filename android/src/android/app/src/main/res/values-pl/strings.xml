@@ -117,10 +117,11 @@
         <item quantity="other">%d sesji</item>
     </plurals>
     <string name="battery_opt_section_title">Optymalizacja baterii</string>
-    <string name="battery_opt_section_footer">Po wyłączeniu z optymalizacji Android nie uśpi aplikacji w trakcie zadania. Sprawdzane ponownie przy każdym powrocie na ten ekran.</string>
-    <string name="battery_opt_row_title">Zezwól na pracę w tle</string>
-    <string name="battery_opt_already_exempt">Już dozwolone</string>
-    <string name="battery_opt_request_subtitle">Dotknij, aby pozwolić aplikacji TAMA AI działać bez przerw</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">Wyłączenie może zmniejszyć ograniczenia, ale nie gwarantuje ciągłej pracy. Stan zostanie sprawdzony po powrocie.</string>
+    <string name="battery_opt_row_title">Ograniczenia baterii</string>
+    <string name="battery_opt_already_exempt">Wyłączenie z optymalizacji baterii jest aktywne</string>
+    <string name="battery_opt_request_subtitle">Dotknij, aby poprosić o wyłączenie z optymalizacji baterii; zadania nadal mogą zostać przerwane.</string>
     <string name="rom_autostart_section_title">Uprawnienie do autostartu</string>
     <string name="rom_autostart_section_footer">Niektóre nakładki systemu Android (%1$s) wymagają dodatkowego uprawnienia do autostartu poza standardowymi ustawieniami systemu. Bez niego TAMA AI może zostać zamknięty w ciągu kilku minut od przejścia w tło.</string>
     <string name="rom_autostart_row_title">Otwórz ustawienia autostartu</string>

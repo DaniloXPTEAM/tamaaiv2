@@ -115,10 +115,11 @@
         <item quantity="other">%d 个会话</item>
     </plurals>
     <string name="battery_opt_section_title">电池优化</string>
-    <string name="battery_opt_section_footer">豁免后，Android 不会在任务执行中让应用进入休眠。每次返回此页面会重新检查。</string>
-    <string name="battery_opt_row_title">允许后台运行</string>
-    <string name="battery_opt_already_exempt">已允许</string>
-    <string name="battery_opt_request_subtitle">点击允许 TAMA AI 不被中断地运行</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">豁免可能减少限制，但不能保证任务持续运行。返回此页面时会重新检查状态。</string>
+    <string name="battery_opt_row_title">电池限制</string>
+    <string name="battery_opt_already_exempt">已启用电池优化豁免</string>
+    <string name="battery_opt_request_subtitle">点击请求电池优化豁免；任务仍可能中断。</string>
     <string name="rom_autostart_section_title">自启动权限</string>
     <string name="rom_autostart_section_footer">某些 Android 系统（%1$s）在标准系统设置之外还需要额外的自启动权限。否则 TAMA AI 可能在进入后台几分钟内被杀掉。</string>
     <string name="rom_autostart_row_title">打开自启动设置</string>

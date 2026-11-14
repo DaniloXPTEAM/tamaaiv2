@@ -1389,4 +1389,8 @@
     <string name="nm_reach_output_adjusted">Tinanggap ng provider ang muling pagsubok na may hanggang %1$d output token.</string>
     <string name="nm_reach_rate_wait">Naabot ang limitasyon ng mga hiling. Susubukan muli sa loob ng %1$d s.</string>
     <string name="nm_reach_server_retry">Hindi matatag ang provider. Sinusubukan muli.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">Hindi nahiling ang serbisyo sa background. Panatilihing bukas ang TAMA habang may gawain; maaari itong huminto kapag umalis ka.</string>
+    <string name="nm_background_stop_rejected">Hindi nahiling na ihinto ang serbisyo sa background. Maaaring manatiling nakikita ang notification nito.</string>
+    <string name="nm_background_service_retry">Subukan muli</string>
 </resources>

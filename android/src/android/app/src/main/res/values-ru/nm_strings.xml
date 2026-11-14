@@ -1397,4 +1397,8 @@
     <string name="nm_reach_output_adjusted">Провайдер принял повторный запрос с пределом %1$d токенов ответа.</string>
     <string name="nm_reach_rate_wait">Достигнут лимит запросов. Повтор через %1$d с.</string>
     <string name="nm_reach_server_retry">Провайдер работает нестабильно. Повторяю запрос.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">Не удалось запросить фоновую службу. Оставьте TAMA открытым во время задачи: она может остановиться, если вы выйдете.</string>
+    <string name="nm_background_stop_rejected">Не удалось запросить остановку фоновой службы. Её уведомление может оставаться видимым.</string>
+    <string name="nm_background_service_retry">Повторить</string>
 </resources>

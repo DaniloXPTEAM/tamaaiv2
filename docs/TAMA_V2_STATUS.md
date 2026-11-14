@@ -8,8 +8,8 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | [Android 43601067705](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43601067705): build passou e APK instalado correspondeu ao selado; Pet, WebView e política de ANR passaram, mas jornada e PRoot falharam. | Investigar o painel e o PRoot sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | Em `43601067705`, a jornada alcançou o cartão `/prompt-size`, mas expirou após tocar nos detalhes; não há tabela. O proprietário do painel foi movido em `d4f2626`, com novos testes de interface preparados. | Validar o painel e publicar a tabela do pedido real ao servidor falso no Android. |
+| T0a: build, testes e hash | PARCIAL | [Android 43602905594](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43602905594): build passou e APK instalado correspondeu ao selado; Pet, WebView, política de ANR e painel sintético passaram, mas jornada, saúde do emulador e PRoot falharam. | Investigar o painel e o PRoot sem reduzir os gates. Release ainda não comprovado. |
+| T0b: medir prompt | EM ANDAMENTO | Em `43602905594`, os dois testes Compose isolados do painel passaram, mas a jornada real novamente expirou após tocar nos detalhes; não há tabela. | Diagnosticar a diferença na tela real e publicar a tabela do pedido ao servidor falso no Android. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
@@ -22,9 +22,64 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T6: tools sob demanda | PENDENTE | Sem `load_tools` nesta alteração. | Carregar grupos sem alterar o prefixo estável. |
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
 | T8: imagem | PENDENTE | Consultar a configuração não equivale a gerar imagem. | Tool e mensagem de configuração ausente. |
-| T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
+| T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; o tracker agora sinaliza falhas síncronas da solicitação e permite repetir somente o pedido do serviço. Há testes host com stubs; Android e Poco ainda não comprovados. `mediaPlayback` permanece inalterado. | Validar a mudança no CI, testar turno lento e investigar o Poco com autorização. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, Python passou no host e em Linux/macOS no CI; Windows experimental ainda falhou. Arte e keystore dependem do dono. | Investigar Windows; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI de `a87af1d`: painel sintético passou, jornada e PRoot não
+
+- [Android 43602905594](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43602905594)
+  passou `assembleDebug`, unitários, compilação da instrumentação e previews. APK selado e leitura
+  instalada coincidiram em 70.664.464 bytes, SHA-256
+  `5fa8f937f6d25bef1890c764246ea2aeee6b5b351667c1fecf64446a172322fa`; certificado reportado
+  `cec4b288c8c6d51ba7cedbcafcaaa2af754fd28a65b1414deef7708e990eff2e`. O APK e o log completo
+  não foram baixados neste ambiente; dados vêm das anotações. A assinatura instalada no telefone
+  continua desconhecida: **não desinstalar nem limpar dados**.
+- Os oito testes de persistência Pet, dois de tela, dois de painel sintético, WebView sintética e
+  política de ANR passaram no emulador. A jornada real voltou a expirar após tocar no relatório:
+  `close controls=0, titles=1`. A imagem final, reconstruída das anotações e conferida pelo
+  SHA-256 `383743cd6ec41ef3853b71f73e3cd3d9a62938b48d00246508a9d159b212590b`, mostra chat e
+  teclado, sem painel. Portanto, os testes isolados não demonstram a integração real; causa e
+  tabela permanecem pendentes. Recuperação de provedor e restart não foram concluídos.
+- A imagem anterior à intervenção, SHA-256
+  `f7d88e19a690c11e6cf8065d7870ab348e922512376ae0697bfade255fbebd73`, mostra **Pixel Launcher
+  isn't responding**. A recuperação diagnóstica não torna a jornada limpa, nem prova a causa do
+  ANR. A saúde do emulador e o workflow inteiro ficaram em falha.
+- O primeiro comando PRoot voltou a expirar com 124, processo vivo e saída vazia; o retrato
+  limitado mostrou um filho em espera e um neto em `ptrace`, ambos de executável `other`. Houve
+  também uma anotação de falha de `ndk_translation`. Nenhum desses sinais prova a causa ou o
+  comportamento em ARM físico. A correção de leitura fragmentada passou nos unitários do build,
+  mas não resolveu nem explica, por si só, a ausência de saída neste smoke.
+- A [Test Suite 43602905551](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43602905551)
+  terminou com sucesso geral; Linux, macOS, web, relay e Docker passaram, mas o job Windows
+  experimental voltou a falhar nos testes. A tentativa anterior de corrigir LF não resolveu tudo;
+  o log completo retornou EOF e a causa específica continua desconhecida.
+
+## Segundo plano: investigação, aviso de bateria e recusa de serviço
+
+- [TAMA_V2_SEGUNDO_PLANO.md](TAMA_V2_SEGUNDO_PLANO.md) mapeia o registro do turno local,
+  serviço, wake lock e configurações de bateria, além de separar esse fluxo do diário de tarefas
+  remotas que exige conta e UUIDs. A existência dessas chamadas não comprova que o serviço ou o
+  turno sobreviveram no Poco. Em dois cenários host com contexto e serviço falsos lançando
+  exceção, o tracker real anterior deixou sessão/cancelador ou presença registrados após falha de
+  início; a mesma presença não tentou iniciar outra vez. Isso não estabelece a causa no telefone.
+- O tracker agora preserva o registro do turno e continua a limpeza mesmo se a solicitação síncrona
+  do serviço lançar exceção; também sinaliza um início que retorna sem componente. O chat mostra
+  aviso diferente para início e encerramento, com tentativa apenas do pedido apropriado ao estado
+  atual, sem reenviar a tarefa. Cancelamento e interrupção continuam propagados. A ausência de aviso
+  **não** prova promoção a foreground, notificação, sobrevivência ou retomada após morte do app.
+- Passaram quatro testes Kotlin host do estado, quatro cenários do tracker com serviço e Pet
+  substituídos e um exercício do método de solicitação extraído com contexto Android falso. Os
+  testes Mockito do tracker e Compose do aviso foram preparados e verificados com stubs; ainda
+  faltam unitários e instrumentação Android no CI. Passaram 116 testes Python direcionados, um
+  foi pulado; Ruff, formato, `bash -n`, parser Kotlin e XML dos 17 locales passaram. Fora inglês
+  e pt-BR, as traduções não tiveram revisão por falantes. Os caminhos Hub e de tarefa agendada
+  solicitam o serviço diretamente e ainda não usam esse aviso. Persistem as demais limitações de T9.
+- As mensagens existentes de isenção de bateria foram revistas em 17 locales: descrevem uma
+  solicitação e deixam claro que a tarefa ainda pode ser interrompida, sem prometer execução
+  contínua. Inglês e pt-BR receberam verificações textuais; as outras traduções não tiveram
+  revisão por falantes. Passaram 16 testes Python, Ruff e análise XML dos 17 arquivos; ainda é
+  necessário build Android. A permissão continua opcional e o manifesto permanece inalterado.
 
 ## Shell: defeito de leitura reproduzido e correção preparada
 
@@ -41,8 +96,9 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 - Passaram **12 testes Kotlin no host**, com JUnit, Mockito e Android substituídos: todas as
   divisões de marcador em duas e três partes, caracteres UTF-8 divididos, 500 comandos sintéticos
   consecutivos, saída incompleta, timeout seguido de outro comando e Stop no processo falso.
-  O parser Kotlin não encontrou erros nas fontes. Ainda faltam build e testes Android no CI;
-  não declarar o sandbox funcional nem atribuir uma causa ao PRoot com base nesses testes.
+  O parser Kotlin não encontrou erros nas fontes. O build e os unitários Android passaram em
+  `43602905594`, mas o comando PRoot do smoke continuou expirando; não declarar o sandbox
+  funcional nem atribuir uma causa ao PRoot com base nesses testes.
 
 ## CI Android de `42f9e0d`: retrato de processos
 
@@ -87,8 +143,9 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   executando-os mesmo se jornada ou sandbox falharem. No host passaram 92 testes Python
   direcionados (um pulado), Ruff, formato e sintaxe Bash; o parser Kotlin não encontrou erros
   nas três fontes alteradas. A compilação e um exercício simples do proprietário usaram stubs de
-  Android/Compose, não uma interface Android real. O resultado dos novos testes instrumentados
-  e da jornada completa ainda precisa de CI.
+  Android/Compose, não uma interface Android real. Os dois testes instrumentados passaram em
+  `43602905594`, mas a jornada completa ainda falhou no mesmo ponto; o resultado sintético não
+  comprova a integração real nem identifica a causa.
 
 ## Limites do diagnóstico do sandbox
 

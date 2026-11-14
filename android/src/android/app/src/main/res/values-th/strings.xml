@@ -115,10 +115,11 @@
         <item quantity="other">%d เซสชัน</item>
     </plurals>
     <string name="battery_opt_section_title">การประหยัดแบตเตอรี่</string>
-    <string name="battery_opt_section_footer">เมื่อได้รับการยกเว้น Android จะไม่พักแอประหว่างทำงาน ระบบจะตรวจสอบใหม่ทุกครั้งที่คุณกลับมาหน้านี้</string>
-    <string name="battery_opt_row_title">อนุญาตให้ทำงานเบื้องหลัง</string>
-    <string name="battery_opt_already_exempt">ได้รับอนุญาตแล้ว</string>
-    <string name="battery_opt_request_subtitle">แตะเพื่ออนุญาตให้ TAMA AI ทำงานได้อย่างต่อเนื่อง</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">การยกเว้นอาจลดข้อจำกัด แต่ไม่รับประกันว่างานจะทำต่อเนื่อง ระบบจะตรวจสอบสถานะเมื่อคุณกลับมา</string>
+    <string name="battery_opt_row_title">ข้อจำกัดของแบตเตอรี่</string>
+    <string name="battery_opt_already_exempt">เปิดใช้การยกเว้นการเพิ่มประสิทธิภาพแบตเตอรี่แล้ว</string>
+    <string name="battery_opt_request_subtitle">แตะเพื่อขอยกเว้นการเพิ่มประสิทธิภาพแบตเตอรี่ งานอาจยังถูกขัดจังหวะได้</string>
     <string name="rom_autostart_section_title">สิทธิ์การเริ่มอัตโนมัติ</string>
     <string name="rom_autostart_section_footer">ระบบ Android บางรุ่น (%1$s) ต้องการสิทธิ์การเริ่มอัตโนมัติเพิ่มเติมนอกเหนือจากการตั้งค่าปกติ หากไม่มีสิทธิ์นี้ TAMA AI อาจถูกปิดภายในไม่กี่นาทีหลังเข้าสู่เบื้องหลัง</string>
     <string name="rom_autostart_row_title">เปิดการตั้งค่าการเริ่มอัตโนมัติ</string>

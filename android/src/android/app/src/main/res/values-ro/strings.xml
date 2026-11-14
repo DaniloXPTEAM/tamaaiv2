@@ -116,10 +116,11 @@
         <item quantity="other">%d de sesiuni</item>
     </plurals>
     <string name="battery_opt_section_title">Optimizarea bateriei</string>
-    <string name="battery_opt_section_footer">Când este exceptată, Android nu adoarme aplicația în mijlocul unei sarcini. Se verifică din nou la fiecare revenire pe acest ecran.</string>
-    <string name="battery_opt_row_title">Permite lucrul în fundal</string>
-    <string name="battery_opt_already_exempt">Deja permis</string>
-    <string name="battery_opt_request_subtitle">Atinge pentru a permite aplicației TAMA AI să ruleze neîntrerupt</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">Excepția poate reduce restricțiile, dar nu garantează funcționarea continuă. Starea este verificată la revenire.</string>
+    <string name="battery_opt_row_title">Restricții pentru baterie</string>
+    <string name="battery_opt_already_exempt">Excepția de la optimizarea bateriei este activă</string>
+    <string name="battery_opt_request_subtitle">Atinge pentru a solicita excepția de la optimizarea bateriei; sarcinile pot fi totuși întrerupte.</string>
     <string name="rom_autostart_section_title">Permisiune de pornire automată</string>
     <string name="rom_autostart_section_footer">Unele interfețe Android (%1$s) cer o permisiune suplimentară de pornire automată, pe lângă setările standard ale sistemului. Fără ea, TAMA AI poate fi închis la câteva minute după trecerea în fundal.</string>
     <string name="rom_autostart_row_title">Deschide setările de pornire automată</string>

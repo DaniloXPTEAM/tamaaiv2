@@ -131,6 +131,7 @@ elif args[:3] == ["shell", "am", "instrument"]:
     is_restart = "io.github.nanomuse.isolated.AfterProcessStopInstrumentedTest" in args
     is_sandbox = "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args
     is_prompt_detail = "io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest" in args
+    is_background_warning = "io.github.nanomuse.isolated.BackgroundServiceWarningInstrumentedTest" in args
     is_browser = "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args
     is_anr_policy = "io.github.nanomuse.isolated.EmulatorAnrPolicyInstrumentedTest" in args
     assert ["-e", "tama_isolated", "true"] == args[5:8]
@@ -145,10 +146,12 @@ elif args[:3] == ["shell", "am", "instrument"]:
             or (mode == "restart-failure" and is_restart)
             or (mode.startswith("sandbox-") and mode != "sandbox-skipped" and is_sandbox)
             or (mode == "prompt-detail-failure" and is_prompt_detail)
+            or (mode == "background-warning-failure" and is_background_warning)
             or (mode == "browser-failure" and is_browser) or (mode == "anr-policy-failure" and is_anr_policy)):
         print("FAILURES!!!")
     elif ((mode == "journey-skipped" and is_journey) or (mode == "sandbox-skipped" and is_sandbox)
             or (mode == "prompt-detail-skipped" and is_prompt_detail)
+            or (mode == "background-warning-skipped" and is_background_warning)
             or (mode == "browser-skipped" and is_browser) or (mode == "anr-policy-skipped" and is_anr_policy)):
         print("INSTRUMENTATION_STATUS_CODE: -4")
         print("OK (1 test)")
@@ -223,7 +226,7 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     invocations = [
         args for name, args in calls if name == "adb" and args[:3] == ["shell", "am", "instrument"]
     ]
-    assert len(invocations) == 8
+    assert len(invocations) == 9
     assert any(
         "io.github.nanomuse.pet.PetPersistenceInstrumentedTest" in args for args in invocations
     )
@@ -243,6 +246,10 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
         for args in invocations
     )
     assert any(
+        "io.github.nanomuse.isolated.BackgroundServiceWarningInstrumentedTest" in args
+        for args in invocations
+    )
+    assert any(
         "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args for args in invocations
     )
     assert any(
@@ -254,6 +261,10 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     assert "::notice title=sandbox instrumentation::OK (2 tests);" in result.stdout
     assert "::notice title=prompt detail instrumentation::OK (2 tests);" in result.stdout
     assert (checkout / "prompt-detail-instrumentation.log").read_text().strip() == "OK (2 tests)"
+    assert "::notice title=background warning instrumentation::OK (1 test);" in result.stdout
+    assert (
+        checkout / "background-service-instrumentation.log"
+    ).read_text().strip() == "OK (1 test)"
     assert not (checkout / "sandbox-process-snapshot.txt").exists()
     assert not any(
         name == "adb" and args[-1].endswith("sandbox-process-snapshot.txt")
@@ -302,6 +313,8 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
         ("prompt-detail-failure", "title=prompt detail instrumentation"),
         ("prompt-detail-skipped", "title=prompt detail instrumentation"),
         ("few-prompt-detail-tests", "title=prompt detail instrumentation"),
+        ("background-warning-failure", "title=background warning instrumentation"),
+        ("background-warning-skipped", "title=background warning instrumentation"),
         ("browser-failure", "title=browser guard instrumentation"),
         ("browser-skipped", "title=browser guard instrumentation"),
         ("anr-policy-failure", "title=system ANR policy instrumentation"),
@@ -441,6 +454,10 @@ def test_failed_journey_does_not_claim_restart_but_still_runs_sandbox(smoke) -> 
     )
     assert any(
         "io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest" in args
+        for args in invocations
+    )
+    assert any(
+        "io.github.nanomuse.isolated.BackgroundServiceWarningInstrumentedTest" in args
         for args in invocations
     )
 

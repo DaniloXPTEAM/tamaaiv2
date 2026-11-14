@@ -50,6 +50,10 @@ fails, is skipped, or reports no tests:
   disposing its originating row, closing it, and switching sessions without carrying the old
   report into another chat. These focused tests run independently of the full journey and use
   no provider. Their Android result must be checked in the individual instrumentation log.
+- The background-service warning in a synthetic Compose layout: a fake rejected start and stop
+  show different messages, and a retry changes only the test state. The check does not start a
+  service, run a task in the background or prove Android will preserve the app. Its individual
+  instrumentation log is required even if the real journey or sandbox fails.
 - A network-blocked WebView on an inline synthetic page: ordinary typing, a refused unknown
   selector, a refused fake card field and a denied payment-labeled tap. This checks specific
   click/type cases only; it does not establish comprehensive detection or guard JavaScript.

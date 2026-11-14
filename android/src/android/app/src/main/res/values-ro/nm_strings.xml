@@ -1393,4 +1393,8 @@
     <string name="nm_reach_output_adjusted">Furnizorul a acceptat o nouă încercare cu cel mult %1$d tokenuri de răspuns.</string>
     <string name="nm_reach_rate_wait">Limita de cereri a fost atinsă. Încerc din nou în %1$d s.</string>
     <string name="nm_reach_server_retry">Furnizorul este instabil. Încerc din nou.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">Nu s-a putut solicita serviciul în fundal. Păstrează TAMA deschis în timpul sarcinii; aceasta se poate opri dacă ieși.</string>
+    <string name="nm_background_stop_rejected">Nu s-a putut solicita oprirea serviciului în fundal. Notificarea lui poate rămâne vizibilă.</string>
+    <string name="nm_background_service_retry">Încearcă din nou</string>
 </resources>

@@ -1369,4 +1369,8 @@
     <string name="nm_reach_output_adjusted">The provider accepted a retry with a maximum of %1$d output tokens.</string>
     <string name="nm_reach_rate_wait">Request limit reached. Trying again in %1$d s.</string>
     <string name="nm_reach_server_retry">The provider is unstable. Trying again.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">Could not request the background service. Keep TAMA open while a task runs; it may stop if you leave.</string>
+    <string name="nm_background_stop_rejected">Could not request stopping the background service. Its notification may remain visible.</string>
+    <string name="nm_background_service_retry">Try again</string>
 </resources>

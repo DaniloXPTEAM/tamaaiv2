@@ -117,10 +117,11 @@
         <item quantity="other">%d 個工作階段</item>
     </plurals>
     <string name="battery_opt_section_title">電池最佳化</string>
-    <string name="battery_opt_section_footer">取得豁免後，Android 就不會在工作進行到一半時讓應用程式休眠。每次回到本畫面時都會重新檢查。</string>
-    <string name="battery_opt_row_title">允許背景執行</string>
-    <string name="battery_opt_already_exempt">已允許</string>
-    <string name="battery_opt_request_subtitle">點擊以允許 TAMA AI 不中斷地執行</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">豁免可能減少限制，但不能保證工作持續執行。回到此畫面時會重新檢查狀態。</string>
+    <string name="battery_opt_row_title">電池限制</string>
+    <string name="battery_opt_already_exempt">已啟用電池最佳化豁免</string>
+    <string name="battery_opt_request_subtitle">點擊以要求電池最佳化豁免；工作仍可能中斷。</string>
     <string name="rom_autostart_section_title">自動啟動權限</string>
     <string name="rom_autostart_section_footer">部分 Android 客製系統（%1$s）在標準系統設定之外，還需要額外的自動啟動權限。若未開啟，TAMA AI 可能在切換至背景後數分鐘內就被結束。</string>
     <string name="rom_autostart_row_title">開啟自動啟動設定</string>

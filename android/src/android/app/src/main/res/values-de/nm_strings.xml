@@ -1389,4 +1389,8 @@
     <string name="nm_reach_output_adjusted">Der Anbieter hat den erneuten Versuch mit höchstens %1$d Ausgabe-Token angenommen.</string>
     <string name="nm_reach_rate_wait">Anfragelimit erreicht. Neuer Versuch in %1$d s.</string>
     <string name="nm_reach_server_retry">Der Anbieter ist instabil. Neuer Versuch.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">Der Hintergrunddienst konnte nicht angefordert werden. Lass TAMA während einer Aufgabe geöffnet; sie kann beim Verlassen abbrechen.</string>
+    <string name="nm_background_stop_rejected">Das Beenden des Hintergrunddienstes konnte nicht angefordert werden. Seine Benachrichtigung kann sichtbar bleiben.</string>
+    <string name="nm_background_service_retry">Erneut versuchen</string>
 </resources>

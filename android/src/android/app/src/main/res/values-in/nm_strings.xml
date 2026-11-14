@@ -1385,4 +1385,8 @@
     <string name="nm_reach_output_adjusted">Penyedia menerima percobaan ulang dengan maksimum %1$d token keluaran.</string>
     <string name="nm_reach_rate_wait">Batas permintaan tercapai. Mencoba lagi dalam %1$d dtk.</string>
     <string name="nm_reach_server_retry">Penyedia sedang tidak stabil. Mencoba lagi.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">Tidak dapat meminta layanan latar belakang. Biarkan TAMA terbuka selama tugas; tugas dapat terhenti jika Anda keluar.</string>
+    <string name="nm_background_stop_rejected">Tidak dapat meminta penghentian layanan latar belakang. Notifikasinya mungkin tetap terlihat.</string>
+    <string name="nm_background_service_retry">Coba lagi</string>
 </resources>

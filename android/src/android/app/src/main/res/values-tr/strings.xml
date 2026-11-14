@@ -115,10 +115,11 @@
         <item quantity="other">%d oturum</item>
     </plurals>
     <string name="battery_opt_section_title">Pil optimizasyonu</string>
-    <string name="battery_opt_section_footer">Muaf tutulduğunda Android, uygulamayı görev ortasında uyku moduna almaz. Bu ekrana her dönüşünüzde yeniden denetlenir.</string>
-    <string name="battery_opt_row_title">Arka planda çalışmaya izin ver</string>
-    <string name="battery_opt_already_exempt">Zaten izin verilmiş</string>
-    <string name="battery_opt_request_subtitle">TAMA AI\'in kesintisiz çalışmasına izin vermek için dokunun</string>
+    <!-- nanoMuse: a battery exemption cannot guarantee uninterrupted work. -->
+    <string name="battery_opt_section_footer">Muafiyet kısıtlamaları azaltabilir ancak kesintisiz çalışmayı garanti etmez. Döndüğünüzde durum yeniden kontrol edilir.</string>
+    <string name="battery_opt_row_title">Pil kısıtlamaları</string>
+    <string name="battery_opt_already_exempt">Pil optimizasyonu muafiyeti etkin</string>
+    <string name="battery_opt_request_subtitle">Pil optimizasyonu muafiyeti istemek için dokunun; görevler yine de kesintiye uğrayabilir.</string>
     <string name="rom_autostart_section_title">Otomatik başlatma izni</string>
     <string name="rom_autostart_section_footer">Bazı Android arayüzleri (%1$s), standart sistem ayarlarına ek olarak ayrı bir otomatik başlatma izni ister. Bu izin olmadan TAMA AI, arka plana geçtikten birkaç dakika sonra kapatılabilir.</string>
     <string name="rom_autostart_row_title">Otomatik başlatma ayarlarını aç</string>
