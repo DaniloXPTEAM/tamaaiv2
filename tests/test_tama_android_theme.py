@@ -12,8 +12,8 @@ JAVA = ROOT / "android/src/android/app/src/main/java/com/openminis/app"
 
 
 def test_material_and_chat_palettes_match_the_rebrand_delta() -> None:
-    theme = (JAVA / "ui/theme/Theme.kt").read_text()
-    chat = (JAVA / "ui/theme/ChatColors.kt").read_text()
+    theme = (JAVA / "ui/theme/Theme.kt").read_text(encoding="utf-8")
+    chat = (JAVA / "ui/theme/ChatColors.kt").read_text(encoding="utf-8")
     for name, rgb in DELTA["TAMA_THEME_COLOURS"].items():
         assert f"private val {name} = Color(0xFF{rgb})" in theme
     for palette, colours in DELTA["TAMA_CHAT_COLOURS"].items():
@@ -30,14 +30,14 @@ def test_rebrand_does_not_change_the_legacy_cloud_group_name() -> None:
     assert DELTA["brand_in_kotlin"]('val title = "nanoMuse"') == 'val title = "TAMA AI"'
     cloud = (
         ROOT / "android/src/android/app/src/main/java/io/github/nanomuse/cloud/NanoMuseCloud.kt"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert 'val LEGACY_LABELS = listOf("nanoMuse Cloud")' in cloud
 
 
 def test_home_accent_and_white_on_actions_have_readable_contrast() -> None:
     tones = (
         ROOT / "android/src/android/app/src/main/java/io/github/nanomuse/ui/home/MuseTones.kt"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     action = re.search(r"val action: Color = Color\(0xFF([0-9A-F]{6})\)", tones)
     dark_accent = re.search(
         r"val accent: Color\s+@Composable @ReadOnlyComposable get\(\) = if \(isDark\) Color\(0xFF([0-9A-F]{6})\) else action",
@@ -73,7 +73,7 @@ def test_filled_buttons_use_white_and_surface_text_uses_adaptive_accent() -> Non
         "io/github/nanomuse/ui/reach/ComputersScreen.kt",
         "io/github/nanomuse/ui/connectors/ConnectorsScreen.kt",
     ):
-        source = (root / relative).read_text()
+        source = (root / relative).read_text(encoding="utf-8")
         assert (
             "buttonColors(containerColor = MuseTones.action, contentColor = Color.White)" in source
         )
@@ -82,7 +82,7 @@ def test_filled_buttons_use_white_and_surface_text_uses_adaptive_accent() -> Non
         "io/github/nanomuse/ui/models/ModelsScreen.kt",
         "io/github/nanomuse/ui/cloud/DataControlsScreen.kt",
     ):
-        source = (root / relative).read_text()
+        source = (root / relative).read_text(encoding="utf-8")
         assert "MuseTones.accent" in source
         assert "color = MuseTones.action," not in source
 
@@ -91,6 +91,6 @@ def test_chinese_rebrand_terminology_does_not_change_our_resources() -> None:
     rebrand = runpy.run_path(str(ROOT / "scripts/rebrand.py"), run_name="rebrand_test")
     for folder, replacements in rebrand["TERMS"].items():
         resource = ROOT / "android/src/android/app/src/main/res" / folder / "nm_strings.xml"
-        source = resource.read_text()
+        source = resource.read_text(encoding="utf-8")
         for old, _ in replacements:
             assert old not in source, (folder, old)

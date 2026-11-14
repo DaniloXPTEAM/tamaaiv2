@@ -72,7 +72,12 @@ elif args[:2] == ["exec-out", "screencap"]:
 elif args[:2] == ["exec-out", "run-as"]:
     if mode == "pet-screenshot":
         sys.exit(1)
-    print("pet png")
+    if mode == "invalid-remote-screenshot":
+        print("cat: file not found")
+    elif args[-1].endswith(".png"):
+        sys.stdout.buffer.write(b"\x89PNG\r\n\x1a\nFAKE")
+    else:
+        print("writer_pid=111\nrestored_pid=222")
 elif args[:3] == ["logcat", "-d", "-b"]:
     if mode == "process":
         print("FATAL EXCEPTION: main")
@@ -324,3 +329,11 @@ def test_failed_sandbox_does_not_erase_independent_journey_evidence(smoke) -> No
     assert "::notice title=app journey instrumentation::OK (1 test)" in result.stdout
     assert "::notice title=process restart instrumentation::OK (1 test)" in result.stdout
     assert "::error title=sandbox instrumentation::" in result.stdout
+
+
+def test_adb_remote_error_text_is_not_saved_as_a_screenshot(smoke) -> None:
+    checkout, run = smoke
+    result, _ = run("invalid-remote-screenshot")
+    assert result.returncode == 0
+    assert not (checkout / "journey-chat-light.png").exists()
+    assert "journey-chat-light.png unavailable" in result.stdout

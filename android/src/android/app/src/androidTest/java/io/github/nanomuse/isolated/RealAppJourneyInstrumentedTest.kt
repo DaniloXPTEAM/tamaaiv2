@@ -66,6 +66,7 @@ class RealAppJourneyInstrumentedTest {
         compose.waitUntil(timeout) { compose.onAllNodes(hasContentDescription(value)).fetchSemanticsNodes().isNotEmpty() }
     }
     private fun tab(id: Int) = compose.onNode(hasContentDescription(text(id)) and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab))
+    private fun radio(id: Int) = compose.onNode(hasText(text(id)) and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton))
     private fun back() = compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
 
     private fun capture(name: String) {
@@ -183,10 +184,11 @@ class RealAppJourneyInstrumentedTest {
             capture("journey-settings-light.png")
             compose.onNodeWithText(text(R.string.settings_section_appearance)).performScrollTo().performClick()
             awaitText(text(R.string.appearance_title))
-            compose.onNodeWithText(text(R.string.appearance_theme_dark)).performScrollTo().performClick()
+            // Both the theme and app-icon sections have a "Dark" label. The theme is a radio row.
+            radio(R.string.appearance_theme_dark).performScrollTo().performClick()
             assertEquals(2, context.getSharedPreferences(PREF_APPEARANCE, Context.MODE_PRIVATE).getInt(KEY_THEME_MODE, 0))
             capture("journey-appearance-dark.png")
-            compose.onNodeWithText(text(R.string.nm_chat_background_blue)).performScrollTo().performClick()
+            radio(R.string.nm_chat_background_blue).performScrollTo().performClick()
             assertEquals("blue", context.getSharedPreferences(PREF_APPEARANCE, Context.MODE_PRIVATE).getString(ChatBackground.KEY, null))
             back()
             awaitText(text(R.string.settings_title))

@@ -303,18 +303,78 @@ jobs:
         continue-on-error: true
         run: |
           python3 -m venv "$RUNNER_TEMP/tama-previews"
+          echo "$RUNNER_TEMP/tama-previews/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/tama-previews/bin/pip" install --disable-pip-version-check 'Pillow==11.3.0'
 
-      - name: Publish isolated visual previews
+      - name: Publish individual test results
         if: always()
-        run: |
-          encoder="$RUNNER_TEMP/tama-previews/bin/python"
-          [ -x "$encoder" ] || encoder=python3
-          "$encoder" scripts/android/publish-test-previews.py launch.png pet-alive.png pet-memorial.png \
-            journey-welcome.png journey-chat-light.png journey-feed.png journey-ideas.png \
-            journey-goals.png journey-library.png journey-pet.png journey-chat-reply.png \
-            journey-settings-light.png journey-appearance-dark.png journey-chat-dark-custom.png \
-            journey-restored.png journey-last-screen.png
+        run: python3 scripts/android/publish-test-summary.py
+
+      # Each check annotation has a 4 KB limit and each step emits at most ten notices.
+      # Publishing one synthetic image per step allows checksum-verified reconstruction.
+      - name: Preview Launch
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py launch.png
+
+      - name: Preview Pet care
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py pet-alive.png
+
+      - name: Preview Pet memorial
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py pet-memorial.png
+
+      - name: Preview Welcome
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-welcome.png
+
+      - name: Preview Chat
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-chat-light.png
+
+      - name: Preview Feed
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-feed.png
+
+      - name: Preview Ideas
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-ideas.png
+
+      - name: Preview Goals
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-goals.png
+
+      - name: Preview Library
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-library.png
+
+      - name: Preview Pet shortcut
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-pet.png
+
+      - name: Preview Chat reply
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-chat-reply.png
+
+      - name: Preview Settings
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-settings-light.png
+
+      - name: Preview Dark appearance
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-appearance-dark.png
+
+      - name: Preview Dark chat
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-chat-dark-custom.png
+
+      - name: Preview Restored chat
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-restored.png
+
+      - name: Preview Last screen
+        if: always()
+        run: python3 scripts/android/publish-test-previews.py journey-last-screen.png
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

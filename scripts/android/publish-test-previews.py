@@ -21,10 +21,16 @@ except ImportError:
     Image = None
 
 
+# Actions truncates each annotation message at 4096 bytes and emits at most ten
+# notices per step. One image per step, at most nine pieces and one checksum.
+CHUNK_SIZE = 3000
+MAX_BYTES = 20_000
+
+
 def make_preview(path: Path) -> bytes:
-    """Make one JPEG small enough for a single Actions annotation, without metadata."""
+    """Make a bounded JPEG without metadata for reconstructable Actions annotations."""
     convert = shutil.which("convert")
-    for width, quality in ((360, 65), (300, 50), (240, 40)):
+    for width, quality in ((360, 65), (300, 50), (240, 40), (160, 35)):
         if Image is not None:
             try:
                 with Image.open(path) as original:
@@ -53,7 +59,7 @@ def make_preview(path: Path) -> bytes:
             jpeg = result.stdout if result.returncode == 0 else b""
         else:
             return b""
-        if jpeg and len(jpeg) <= 42_000:
+        if jpeg and len(jpeg) <= MAX_BYTES:
             return jpeg
     return b""
 
@@ -64,21 +70,26 @@ def main() -> int:
             "::warning title=test-preview::Pillow and ImageMagick unavailable; full screenshots remain artifacts"
         )
         return 0
-    for argument in sys.argv[1:]:
-        path = Path(argument)
-        if not path.is_file() or path.stat().st_size == 0:
-            continue
-        jpeg = make_preview(path)
-        if not jpeg:
-            print(
-                f"::warning title=test-preview::{path.name} could not be converted to a small preview"
-            )
-            continue
-        label = path.stem.replace("_", "-")
-        encoded = base64.b64encode(jpeg).decode("ascii")
-        digest = hashlib.sha256(jpeg).hexdigest()
-        print(f"::notice title=tama-preview-{label}::{encoded}")
-        print(f"::notice title=tama-preview-sha256-{label}::{digest}")
+    if len(sys.argv) != 2:
+        print("::error title=test-preview::Expected exactly one synthetic image per step")
+        return 2
+    path = Path(sys.argv[1])
+    if not path.is_file() or path.stat().st_size == 0:
+        return 0
+    jpeg = make_preview(path)
+    if not jpeg:
+        print(
+            f"::warning title=test-preview::{path.name} could not be converted to a small preview"
+        )
+        return 0
+    label = path.stem.replace("_", "-")
+    encoded = base64.b64encode(jpeg).decode("ascii")
+    digest = hashlib.sha256(jpeg).hexdigest()
+    chunks = [encoded[i : i + CHUNK_SIZE] for i in range(0, len(encoded), CHUNK_SIZE)]
+    assert 1 <= len(chunks) <= 9
+    for index, chunk in enumerate(chunks, 1):
+        print(f"::notice title=tama-preview-{label}-{index:02d}-of-{len(chunks):02d}::{chunk}")
+    print(f"::notice title=tama-preview-sha256-{label}::{digest}")
     return 0
 
 

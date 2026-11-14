@@ -25,10 +25,16 @@ def test_preview_outputs_a_small_valid_jpeg_and_a_matching_digest(capsys, monkey
     monkeypatch.setattr(preview.sys, "argv", [str(SCRIPT), str(IMAGE)])
     assert preview.main() == 0
     lines = capsys.readouterr().out.splitlines()
-    data = base64.b64decode(lines[0].split("::", 2)[-1], validate=True)
+    pieces = lines[:-1]
+    assert 1 <= len(pieces) <= 9
+    assert len(lines) <= 10
+    for index, line in enumerate(pieces, 1):
+        assert f"-{index:02d}-of-{len(pieces):02d}::" in line
+        assert len(line.split("::", 2)[-1]) <= 3000
+    data = base64.b64decode("".join(line.split("::", 2)[-1] for line in pieces), validate=True)
     assert data.startswith(b"\xff\xd8\xff")
-    assert len(data) <= 42_000
-    assert lines[1].endswith(hashlib.sha256(data).hexdigest())
+    assert len(data) <= preview.MAX_BYTES
+    assert lines[-1].endswith(hashlib.sha256(data).hexdigest())
     if preview.Image is not None:
         with preview.Image.open(io.BytesIO(data)) as image:
             assert image.width <= 360
@@ -52,10 +58,37 @@ def test_absent_and_invalid_files_do_not_produce_fake_previews(
         pytest.skip("No image encoder installed")
     invalid = tmp_path / "invalid.png"
     invalid.write_bytes(b"not an image")
-    monkeypatch.setattr(
-        preview.sys, "argv", [str(SCRIPT), str(tmp_path / "missing.png"), str(invalid)]
-    )
+    monkeypatch.setattr(preview.sys, "argv", [str(SCRIPT), str(tmp_path / "missing.png")])
+    assert preview.main() == 0
+    assert not capsys.readouterr().out
+    monkeypatch.setattr(preview.sys, "argv", [str(SCRIPT), str(invalid)])
     assert preview.main() == 0
     output = capsys.readouterr().out
     assert "invalid.png could not be converted" in output
     assert "tama-preview-sha256" not in output
+
+
+def test_each_step_accepts_only_one_image(capsys, monkeypatch) -> None:
+    if preview.Image is None and not preview.shutil.which("convert"):
+        pytest.skip("No image encoder installed")
+    monkeypatch.setattr(preview.sys, "argv", [str(SCRIPT), str(IMAGE), str(IMAGE)])
+    assert preview.main() == 2
+    assert "exactly one synthetic image" in capsys.readouterr().out
+
+
+def test_noisy_image_still_fits_the_annotation_budget(tmp_path, capsys, monkeypatch) -> None:
+    if preview.Image is None:
+        pytest.skip("Pillow is required to construct a noisy fixture")
+    import random
+
+    rng = random.Random(17)
+    image = preview.Image.frombytes("RGB", (600, 1200), rng.randbytes(600 * 1200 * 3))
+    path = tmp_path / "noisy.png"
+    image.save(path)
+    monkeypatch.setattr(preview.sys, "argv", [str(SCRIPT), str(path)])
+    assert preview.main() == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert 2 <= len(lines) <= 10
+    data = base64.b64decode("".join(line.split("::", 2)[-1] for line in lines[:-1]), validate=True)
+    assert len(data) <= preview.MAX_BYTES
+    assert lines[-1].endswith(hashlib.sha256(data).hexdigest())

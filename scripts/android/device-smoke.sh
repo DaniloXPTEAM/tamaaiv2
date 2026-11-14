@@ -165,7 +165,16 @@ for image in pet-alive.png pet-memorial.png journey-welcome.png journey-chat-lig
   journey-feed.png journey-ideas.png journey-goals.png journey-library.png journey-pet.png \
   journey-chat-reply.png journey-settings-light.png journey-appearance-dark.png \
   journey-chat-dark-custom.png journey-restored.png journey-last-screen.png journey-process.txt; do
+  valid=false
   if adb exec-out run-as ai.tama.assistant cat "cache/$image" > "$image" 2>/dev/null && [ -s "$image" ]; then
+    if [[ "$image" == *.png ]]; then
+      # Some adb versions return success while writing a remote `cat` error to stdout.
+      [ "$(head -c 8 "$image" | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ] && valid=true
+    elif grep -q '^writer_pid=[0-9]' "$image" && grep -q '^restored_pid=[0-9]' "$image"; then
+      valid=true
+    fi
+  fi
+  if $valid; then
     echo "::notice title=test diagnostic::$image captured"
   else
     rm -f "$image"
