@@ -8,8 +8,8 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | `9299230`: [Android 43546300441](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43546300441). Build debug e testes do job de build passaram; SHA-256 abaixo. A jornada e o restart passaram; o PRoot expirou, então o smoke e o workflow falharam. | Rodar novamente no CI com as mudanças atuais. Release e hash de release ainda não comprovados. |
-| T0b: medir prompt | EM ANDAMENTO | Medidor `/prompt-size` e fixture nesta alteração; 46 testes Python direcionados e 11 testes Kotlin no host passaram. O host usa substitutos para dependências Android; build e teste instrumentado ainda não verificados no CI. | Publicar aqui a tabela obtida do pedido real ao servidor falso, se a jornada passar. |
+| T0a: build, testes e hash | PARCIAL | `0bdb919`: [Android 43587360354](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43587360354), build debug e unitários passaram; APK instalado com hash conferido. Smoke falhou na jornada e no PRoot. Test Suite, iOS, harness e Commits passaram. | Repetir o CI após correções; investigar PRoot. Release e hash de release ainda não comprovados. |
+| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: build Android passou; a jornada atingiu o botão do relatório, mas expirou ao esperar o conteúdo, então não há tabela. Uma correção para manter o painel fora da lista e dispensar o teclado está preparada, ainda sem prova Android. Os testes de host usam substitutos para dependências Android. | Confirmar a correção no APK e publicar a tabela do pedido real ao servidor falso. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | PENDENTE | `ProviderReach` existente; novos códigos e recuperação ainda não implementados. | Tratar 413, limite de saída, 429 e 5xx com mocks, sem repetir ações executadas. |
@@ -25,6 +25,23 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | As novas strings do medidor têm pt-BR e paridade; os demais textos não foram revisados. Arte de origem e keystore dependem do dono. | Continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI de `0bdb919`: linha de base parcial
+
+- [Android 43587360354](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43587360354):
+  build debug arm64 e unitários passaram, assim como os dois jobs de previews. O APK instalado no
+  emulador corresponde ao build: SHA-256
+  `e79af0ae88de9c24b9b76e3c9c44db134fbac0a3ddb20c466b04d09463658215`. Certificado informado pelo
+  CI: `1559d9bec98a321b37c645e0a26fcf78f8d72c653b010ee3e7c4cbb694402d0c`; a assinatura no telefone
+  continua desconhecida. **Não desinstalar nem limpar dados.**
+- O smoke falhou: persistência Pet (8 testes) e tela Pet (2) passaram; a jornada expirou ao abrir
+  os detalhes de `/prompt-size`, sem produzir a tabela; o restart não rodou. A captura publicada
+  mostra o chat com teclado e sem painel no fim da espera. A causa exata não está demonstrada;
+  a correção proposta move o painel para fora do item reciclável e fecha o teclado, e precisa de CI.
+- O sandbox também falhou: primeiro comando PRoot expirou em 60 s, processo vivo e saída vazia;
+  o log registra inicialização e encerramento do shell, mas não prova a causa. Não extrapolar para
+  ARM físico. O workflow inteiro terminou em falha, embora o APK e os demais jobs citados tenham
+  passado. O download do log completo falhou por EOF; foram usadas as anotações do próprio CI.
 
 ## Linha de base anterior
 

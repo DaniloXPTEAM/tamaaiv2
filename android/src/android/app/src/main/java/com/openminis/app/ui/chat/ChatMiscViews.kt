@@ -521,7 +521,11 @@ private fun BorderedMarkdownTable(
 // notices, and model-switch fallback notices — no card, no attribution.
 
 @Composable
-internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = null) {
+internal fun FallbackInfoBlock(
+    block: AssistantBlock,
+    onRevert: (() -> Unit)? = null,
+    onOpenDetail: (() -> Unit)? = null, // nanoMuse: allow a list owner to keep a detail sheet alive.
+) {
     val divider = ChatColors.separator
     val fg = ChatColors.secondaryText
     val icon = when (block.toolName) {
@@ -596,7 +600,8 @@ internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = 
                         tint = fg,
                         modifier = Modifier
                             .size(14.dp)
-                            .clickable { showDetail = true },
+                            // nanoMuse: a hoisted owner survives the row leaving the viewport.
+                            .clickable { if (onOpenDetail != null) onOpenDetail() else showDetail = true },
                     )
                 }
             }
@@ -649,7 +654,8 @@ internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = 
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun CompactSummarySheet(
+// nanoMuse: the chat can host the prompt report outside its recycled list item.
+internal fun CompactSummarySheet(
     summary: String,
     title: String, // nanoMuse: title is specific to the kind of local info.
     onDismiss: () -> Unit,

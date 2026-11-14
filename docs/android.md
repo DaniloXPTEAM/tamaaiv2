@@ -235,6 +235,8 @@ UTF-16 units; estimated tokens are characters divided by 3.7, rounded up. Histor
 output and request overhead are excluded. These numbers are neither exact tokenization nor a
 billing quote. The image-model indicator checks only whether an endpoint resolves locally; it
 does not generate an image or verify a provider. Results are snapshots of the current session.
+The report opens separately from the scrolling message row and dismisses the keyboard so it can
+remain open while the chat is laid out again.
 The isolated test compares the after counts with a loopback fixture's request and publishes only
 allowlisted labels and numbers, never prompt text, tool descriptions or credentials.
 

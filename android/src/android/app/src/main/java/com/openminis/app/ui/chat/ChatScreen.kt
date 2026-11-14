@@ -3290,6 +3290,8 @@ fun ChatScreen(
             // pill bar so the haze has content to blur. Bottom contentPadding
             // keeps the last message clear of the composer + pill.
             Box(modifier = Modifier.fillMaxSize()) {
+                // nanoMuse: a report opened from a recycled row must outlive keyboard and list relayout.
+                var nmPromptSizeDetail by remember(sessionId) { mutableStateOf<String?>(null) }
                 // nanoMuse: the measured footer already includes the tool preview,
                 // approval cards, composer and pill inset. Only breathing room is extra.
                 val bottomReserve = if (nmToolBarShown) 14.dp else 20.dp
@@ -4294,6 +4296,14 @@ fun ChatScreen(
                             )
                             is FlatChatItem.AssistantInfo -> FallbackInfoBlock(
                                 block = item.block,
+                                // nanoMuse: open this report from the stable chat owner, not the lazy row.
+                                onOpenDetail = if (item.block.toolName == "prompt_size") {
+                                    {
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus()
+                                        nmPromptSizeDetail = item.block.toolArgs
+                                    }
+                                } else null,
                                 // Only the compact-divider info block should
                                 // surface a "Revert Compact" button on its
                                 // detail sheet — other info rows (slash
@@ -4572,6 +4582,14 @@ fun ChatScreen(
                             viewModel.closeToolDetail()
                             viewModel.openBrowserSheetForUrl(url)
                         },
+                    )
+                }
+                // nanoMuse: the report stays mounted even if the source row is recycled.
+                nmPromptSizeDetail?.let { report ->
+                    CompactSummarySheet(
+                        summary = report,
+                        title = stringResource(R.string.nm_prompt_size_title),
+                        onDismiss = { nmPromptSizeDetail = null },
                     )
                 }
 
