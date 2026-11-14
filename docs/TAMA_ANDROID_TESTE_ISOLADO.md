@@ -27,13 +27,22 @@ fails, is skipped, or reports no tests:
 
 Full-size PNGs, individual instrumentation logs and a process-id summary are uploaded as
 `tama-device-smoke`. Small JPEG check annotations are generated from synthetic emulator images
-only, so individual screens can be inspected even where artifact downloads are unavailable.
-The screenshots are diagnostics, not an approval of every screen or a test on the person's device.
+only. Each preview is split into bounded pieces and has a SHA-256; reconstruct it only after
+checking the piece count and checksum. The screenshots are diagnostics, not an approval of every
+screen or a test on the person's device. A run exposed a 50-annotation check-run limit, so the
+preview jobs now split the images across two check runs; their transport still needs verification.
 
 The earlier [run 43535956822](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43535956822)
 for commit `507d2a6` installed the sealed arm64 APK on the emulator with a matching installed
 SHA-256 and passed eight Pet persistence and two Pet-screen tests. It did not include the expanded
-journey, restart or shell checks above; those require their own newer run and result.
+journey, restart or shell checks above.
+
+[Run 43539509267](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43539509267) for commit
+`9e606e0` also matched the installed APK hash and passed the eight Pet and two Pet-screen tests.
+The first-run journey timed out waiting for the local model to appear, the shell command timed out,
+and the restart check was not run. This is not a passing result for those checks. The only preview
+recovered with a matching checksum was the launch image; the check run stopped recording after 50
+annotations.
 
 **This procedure is not itself a test result.** Check the exact workflow run, its annotations,
 logs and artifacts before saying a step passed. An emulator with ARM translation is not a physical

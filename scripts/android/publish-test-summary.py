@@ -51,6 +51,23 @@ def main() -> int:
     if process.is_file():
         facts = " ".join(process.read_text(encoding="utf-8", errors="replace").splitlines())
         print(f"::notice title=Process evidence::{facts[:500]}")
+
+    # Captured only on the isolated emulator: no accounts, keys or user data are present.
+    # Keep each group under the per-annotation limit so transport cannot silently truncate it.
+    runtime = Path("android-runtime.log")
+    if runtime.is_file():
+        lines = runtime.read_text(encoding="utf-8", errors="replace").splitlines()
+        for title, tags in (
+            ("Shell diagnostics", ("PRootStderr", "PersistentShell", "PRootKernel")),
+            ("Provider diagnostics", ("ProviderRepo", "OpenAIModelsApi")),
+        ):
+            selected = [line.strip() for line in lines if any(tag in line for tag in tags)][-8:]
+            if selected:
+                details = " | ".join(selected)[-2800:]
+                details = (
+                    details.replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")[:3000]
+                )
+                print(f"::notice title={title}::{details}")
     return 0
 
 

@@ -26,6 +26,7 @@ internal class LocalOpenAiFixture : AutoCloseable {
     }
     val baseUrl: String = "http://127.0.0.1:${server.localPort}"
     val posts: MutableList<JSONObject> = Collections.synchronizedList(mutableListOf())
+    val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())
     val errors: MutableList<String> = Collections.synchronizedList(mutableListOf())
     @Volatile private var running = true
     private val acceptThread = thread(name = "tama-fixture-accept", isDaemon = true) {
@@ -79,6 +80,7 @@ internal class LocalOpenAiFixture : AutoCloseable {
                     offset += read
                 }
                 val path = request.getOrNull(1)?.substringBefore('?')
+                requests.add("${request.firstOrNull()} $path")
                 val (status, contentType, payload) = when {
                     request.firstOrNull() == "GET" && path == "/v1/models" -> Triple(
                         "200 OK", "application/json",

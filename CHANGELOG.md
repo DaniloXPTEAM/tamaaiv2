@@ -8,7 +8,7 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 - Prepared an isolated emulator check that installs the sealed arm64 phone APK rather than a separate x86 build, and compares the installed APK's hash with the artifact.
 
-- Extended the isolated Android checks to exercise first-run navigation, Pet care, a local model fixture, a process restart and the packaged shell, with synthetic visual diagnostics.
+- Extended the isolated Android checks to exercise first-run navigation, Pet care, a local model fixture, a process restart and the packaged shell, with bounded synthetic visual diagnostics and separate failure reports.
 
 - Kept action text and icons legible against dark TAMA surfaces while retaining white text on filled actions.
 

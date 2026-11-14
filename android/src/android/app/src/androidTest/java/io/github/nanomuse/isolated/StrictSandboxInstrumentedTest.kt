@@ -28,7 +28,11 @@ class StrictSandboxInstrumentedTest {
                 "printf 'TAMA_SHELL_OK\\n'; printf 'persisted' > /var/minis/workspace/probe.txt; cat /var/minis/workspace/probe.txt",
                 timeout = 60_000L,
             )
-            assertEquals("First shell command: ${first.output}", 0, first.exitCode)
+            assertEquals(
+                "First shell command: ${first.output}; ${ExecutionCoordinator.testShellDiagnostics(session)}",
+                0,
+                first.exitCode,
+            )
             assertTrue(first.output.contains("TAMA_SHELL_OK"))
             assertTrue(first.output.contains("persisted"))
             assertEquals("persisted", File(context.filesDir, "minis-sessions/$session/workspace/probe.txt").readText())

@@ -21,16 +21,17 @@ except ImportError:
     Image = None
 
 
-# Actions truncates each annotation message at 4096 bytes and emits at most ten
-# notices per step. One image per step, at most nine pieces and one checksum.
+# An annotation is truncated at 4096 bytes, and the check run itself can stop
+# recording after 50 annotations. Two preview jobs handle eight images each;
+# at most four pieces plus a checksum per image leaves room for runner notices.
 CHUNK_SIZE = 3000
-MAX_BYTES = 20_000
+MAX_BYTES = 9_000
 
 
 def make_preview(path: Path) -> bytes:
     """Make a bounded JPEG without metadata for reconstructable Actions annotations."""
     convert = shutil.which("convert")
-    for width, quality in ((360, 65), (300, 50), (240, 40), (160, 35)):
+    for width, quality in ((360, 65), (300, 50), (240, 40), (160, 35), (120, 30)):
         if Image is not None:
             try:
                 with Image.open(path) as original:
@@ -86,7 +87,7 @@ def main() -> int:
     encoded = base64.b64encode(jpeg).decode("ascii")
     digest = hashlib.sha256(jpeg).hexdigest()
     chunks = [encoded[i : i + CHUNK_SIZE] for i in range(0, len(encoded), CHUNK_SIZE)]
-    assert 1 <= len(chunks) <= 9
+    assert 1 <= len(chunks) <= 4
     for index, chunk in enumerate(chunks, 1):
         print(f"::notice title=tama-preview-{label}-{index:02d}-of-{len(chunks):02d}::{chunk}")
     print(f"::notice title=tama-preview-sha256-{label}::{digest}")

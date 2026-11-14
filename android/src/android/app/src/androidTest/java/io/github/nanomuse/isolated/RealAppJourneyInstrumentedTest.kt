@@ -112,7 +112,18 @@ class RealAppJourneyInstrumentedTest {
             compose.onNodeWithText(text(R.string.nm_useit_not_now)).performScrollTo().performClick()
             awaitText(text(R.string.nm_setup_step_models))
             compose.onNodeWithText(text(R.string.nm_setup_continue)).performClick()
-            awaitText(LocalOpenAiFixture.MODEL_NAME, 45_000)
+            try {
+                awaitText(LocalOpenAiFixture.MODEL_NAME, 45_000)
+            } catch (failure: Throwable) {
+                val config = app.providerRepository.config.value
+                val instances = config.instances.map {
+                    "type=${it.providerType}, enabled=${it.isEnabled}, fixture=${it.customBaseURL == fixture.baseUrl}"
+                }
+                val entries = config.modelEntries.map { it.model.id }
+                val requests = synchronized(fixture.requests) { fixture.requests.toList() }
+                val errors = synchronized(fixture.errors) { fixture.errors.toList() }
+                throw AssertionError("Model not visible; instances=$instances; entries=$entries; requests=$requests; errors=$errors", failure)
+            }
             compose.onNodeWithText(LocalOpenAiFixture.MODEL_NAME).performClick()
             compose.onNodeWithText(context.getString(R.string.onboarding_done_count, 1)).performClick()
             awaitText(text(R.string.nm_welcome_hands_title))

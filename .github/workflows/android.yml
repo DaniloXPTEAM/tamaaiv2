@@ -296,85 +296,9 @@ jobs:
           # The action splits multi-line inputs and runs each line under sh.
           script: bash scripts/android/device-smoke.sh
 
-      # Tiny previews contain fresh-emulator data only. They are useful where Actions artifact
-      # storage cannot be reached; the original PNGs are still uploaded below.
-      - name: Prepare visual preview encoder
-        if: always()
-        continue-on-error: true
-        run: |
-          python3 -m venv "$RUNNER_TEMP/tama-previews"
-          echo "$RUNNER_TEMP/tama-previews/bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/tama-previews/bin/pip" install --disable-pip-version-check 'Pillow==11.3.0'
-
       - name: Publish individual test results
         if: always()
         run: python3 scripts/android/publish-test-summary.py
-
-      # Each check annotation has a 4 KB limit and each step emits at most ten notices.
-      # Publishing one synthetic image per step allows checksum-verified reconstruction.
-      - name: Preview Launch
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py launch.png
-
-      - name: Preview Pet care
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py pet-alive.png
-
-      - name: Preview Pet memorial
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py pet-memorial.png
-
-      - name: Preview Welcome
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-welcome.png
-
-      - name: Preview Chat
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-chat-light.png
-
-      - name: Preview Feed
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-feed.png
-
-      - name: Preview Ideas
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-ideas.png
-
-      - name: Preview Goals
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-goals.png
-
-      - name: Preview Library
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-library.png
-
-      - name: Preview Pet shortcut
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-pet.png
-
-      - name: Preview Chat reply
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-chat-reply.png
-
-      - name: Preview Settings
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-settings-light.png
-
-      - name: Preview Dark appearance
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-appearance-dark.png
-
-      - name: Preview Dark chat
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-chat-dark-custom.png
-
-      - name: Preview Restored chat
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-restored.png
-
-      - name: Preview Last screen
-        if: always()
-        run: python3 scripts/android/publish-test-previews.py journey-last-screen.png
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -394,7 +318,103 @@ jobs:
             journey-instrumentation.log
             restart-instrumentation.log
             sandbox-instrumentation.log
+            android-runtime.log
             arm-runtime.txt
             installed-apk-sha256.txt
           retention-days: 14
           if-no-files-found: warn
+
+  # A check run can stop recording after 50 annotations, even when the messages
+  # themselves are shorter than 4 KB. Keep screenshots in two separate jobs,
+  # eight images per job and at most five annotations per image. Full synthetic
+  # PNGs remain in the smoke artifact; previews are diagnostics, not approval.
+  visual-previews:
+    name: synthetic previews · ${{ matrix.group }}
+    needs: device-smoke
+    if: always() && needs.device-smoke.result != 'skipped' && needs.device-smoke.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [core, extras]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch synthetic screenshots
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        continue-on-error: true
+        with:
+          name: tama-device-smoke
+          path: .
+
+      - name: Prepare visual preview encoder
+        continue-on-error: true
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tama-previews"
+          echo "$RUNNER_TEMP/tama-previews/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/tama-previews/bin/pip" install --disable-pip-version-check 'Pillow==11.3.0'
+
+      - name: Preview Last screen
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-last-screen.png
+
+      - name: Preview Welcome
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-welcome.png
+
+      - name: Preview Launch
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py launch.png
+
+      - name: Preview Chat
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-chat-light.png
+
+      - name: Preview Chat reply
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-chat-reply.png
+
+      - name: Preview Dark appearance
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-appearance-dark.png
+
+      - name: Preview Dark chat
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-chat-dark-custom.png
+
+      - name: Preview Restored chat
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-restored.png
+
+      - name: Preview Pet care
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py pet-alive.png
+
+      - name: Preview Pet memorial
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py pet-memorial.png
+
+      - name: Preview Feed
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-feed.png
+
+      - name: Preview Ideas
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-ideas.png
+
+      - name: Preview Goals
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-goals.png
+
+      - name: Preview Library
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-library.png
+
+      - name: Preview Pet shortcut
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-pet.png
+
+      - name: Preview Settings
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-settings-light.png

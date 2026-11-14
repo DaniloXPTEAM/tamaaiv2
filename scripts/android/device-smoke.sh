@@ -160,6 +160,12 @@ fi
 run_instrumentation io.github.nanomuse.isolated.StrictSandboxInstrumentedTest sandbox-instrumentation.log \
   'sandbox instrumentation' 1 'Packaged PRoot and persistent shell' || failed=1
 
+# This is a disposable, synthetic emulator with a keyless loopback provider. Save a bounded
+# selection of runtime tags for diagnosing failures after the emulator action has stopped it.
+adb logcat -d -v brief -s PRootStderr:D PersistentShell:I Minis.PersistentShell:I \
+  PRootKernel:I ExecutionCoordinator:I ProviderRepo:I OpenAIModelsApi:I '*:S' 2>&1 \
+  | tail -1000 > android-runtime.log || true
+
 # These screenshots are synthetic test diagnostics, not a visual approval or real user content.
 for image in pet-alive.png pet-memorial.png journey-welcome.png journey-chat-light.png \
   journey-feed.png journey-ideas.png journey-goals.png journey-library.png journey-pet.png \

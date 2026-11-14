@@ -26,8 +26,8 @@ def test_preview_outputs_a_small_valid_jpeg_and_a_matching_digest(capsys, monkey
     assert preview.main() == 0
     lines = capsys.readouterr().out.splitlines()
     pieces = lines[:-1]
-    assert 1 <= len(pieces) <= 9
-    assert len(lines) <= 10
+    assert 1 <= len(pieces) <= 4
+    assert len(lines) <= 5
     for index, line in enumerate(pieces, 1):
         assert f"-{index:02d}-of-{len(pieces):02d}::" in line
         assert len(line.split("::", 2)[-1]) <= 3000
@@ -88,7 +88,19 @@ def test_noisy_image_still_fits_the_annotation_budget(tmp_path, capsys, monkeypa
     monkeypatch.setattr(preview.sys, "argv", [str(SCRIPT), str(path)])
     assert preview.main() == 0
     lines = capsys.readouterr().out.splitlines()
-    assert 2 <= len(lines) <= 10
+    assert 2 <= len(lines) <= 5
     data = base64.b64decode("".join(line.split("::", 2)[-1] for line in lines[:-1]), validate=True)
     assert len(data) <= preview.MAX_BYTES
     assert lines[-1].endswith(hashlib.sha256(data).hexdigest())
+
+
+def test_preview_jobs_stay_below_the_check_run_annotation_limit() -> None:
+    workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+    preview_job = workflow.split("  visual-previews:", 1)[1]
+    assert "needs: device-smoke" in preview_job
+    assert "name: tama-device-smoke" in preview_job
+    assert preview_job.count("if: matrix.group == 'core'") == 8
+    assert preview_job.count("if: matrix.group == 'extras'") == 8
+    assert preview_job.count("scripts/android/publish-test-previews.py") == 16
+    # Four chunks and a checksum for each of eight images, below the observed 50 cap.
+    assert 8 * (4 + 1) < 50

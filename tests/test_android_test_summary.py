@@ -38,3 +38,22 @@ def test_summary_reports_process_evidence_only_if_present(tmp_path, monkeypatch,
     assert (
         "::notice title=Process evidence::writer_pid=12 restored_pid=13" in capsys.readouterr().out
     )
+
+
+def test_runtime_diagnostics_are_bounded_and_escape_commands(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "android-runtime.log").write_text(
+        "D/PRootStderr(1): proot started\n"
+        "I/ProviderRepo(2): 50% complete\n"
+        "I/Other(3): ignored\n" + "D/PersistentShell(1): " + "%" * 4000 + "\n",
+        encoding="utf-8",
+    )
+    assert summary.main() == 0
+    output = capsys.readouterr().out
+    assert "::notice title=Shell diagnostics::" in output
+    assert "::notice title=Provider diagnostics::" in output
+    assert "50%25 complete" in output
+    assert "I/Other" not in output
+    for line in output.splitlines():
+        if "diagnostics::" in line:
+            assert len(line.split("::", 2)[-1]) <= 3000
