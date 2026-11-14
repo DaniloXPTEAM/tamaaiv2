@@ -384,8 +384,15 @@ A failed turn whose error is the transport's (OkHttp's *failed to connect to cha
 shown as a card instead of the red banner: what happened, what helps (a VPN on this phone, the
 proxy under *Settings → Network*, another provider with a key of your own), *Try again*, and the
 raw line behind *Details*. The 401/403/429 and credit refusals are attached to their own
-`LLMError` in `OpenAIProvider` and written into the message as a canonical `nm_reach:` line.
-An expired ChatGPT sign-in reads *Sign in again*, a spent plan window keeps the provider's
+`LLMError` in `OpenAIProvider` and written into the message as a versioned canonical reach line.
+A 413 or explicit input-size refusal is not sent unchanged to the next group member. An output
+limit refusal is retried once only when the provider gives an unambiguous smaller maximum; a
+completed retry stores the maximum actually sent on that accepted attempt, isolated by route
+and model, for up to seven days. A normal 429 waits once for `Retry-After` (seconds or HTTP date),
+or five seconds when absent, up to a 60-second automatic-wait ceiling. An invalid supplied header
+is not treated as absent, and a quota refusal is not assumed to be a minute limit. These
+retries resend only the failed model request, not earlier executed tools. An oversized prompt is
+not yet reduced by profile here; that needs the subsequent router work. An expired ChatGPT sign-in reads *Sign in again*, a spent plan window keeps the provider's
 sentence and reset time, and an own-key provider's 401 is distinguished from a 403 or 429. The
 provider's message is shown when available, with the request credential redacted. The relay's
 `daily_cap` 429 is read like `allowance_exhausted` and the card

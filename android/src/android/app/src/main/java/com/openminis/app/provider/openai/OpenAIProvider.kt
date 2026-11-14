@@ -3495,10 +3495,10 @@ class OpenAIProvider private constructor(
             statusCode, safeBody,
             host = if (isOAuth && !forceChatCompletions) "chatgpt.com" else io.github.nanomuse.net.OwnProviderProxy.hostOf(basePath),
             oauth = isOAuth,
-            // A very large or non-finite hint cannot be safely rendered as an Int duration.
-            retryAfterS = retryAfter?.trim()?.toDoubleOrNull()
-                ?.takeIf { it.isFinite() && it > 0 && it <= Int.MAX_VALUE - 60 }
-                ?.let { kotlin.math.ceil(it).toInt() },
+            // nanoMuse: retain either delta-seconds or an HTTP-date without overflowing;
+            // an invalid supplied header must not turn into a guessed short wait.
+            retryAfterS = io.github.nanomuse.net.ProviderReach.retryAfterSeconds(retryAfter),
+            retryAfterPresent = retryAfter != null,
         )
         fun withDiagnostics(error: LLMError): LLMError = error.apply {
             nmProviderReach = reach

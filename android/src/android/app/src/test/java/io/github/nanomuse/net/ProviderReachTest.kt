@@ -6,6 +6,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 
 class ProviderReachTest {
     @Test fun `the maintainer's socket text becomes an unreachable chatgpt dot com`() {
@@ -135,5 +136,87 @@ class ProviderReachTest {
     @Test fun `unparsed JSON metadata is not displayed`() {
         val r = ProviderReach.fromHttp(403, """{"error":{"metadata":{"private":"do not show"}}}""", "openrouter.ai", oauth = false)!!
         assertEquals("", r.detail)
+    }
+
+    @Test fun `oversized requests are distinct from output and quota errors`() {
+        val body = """{"error":{"message":"Request too large for model. Limit 8000, requested 12000."}}"""
+        val r = ProviderReach.fromHttp(413, body, "API.GROQ.COM", oauth = false)!!
+        assertEquals(ProviderReach.Kind.REQUEST_TOO_LARGE, r.kind)
+        assertEquals("api.groq.com", r.host)
+        assertEquals(413, r.httpStatus)
+        assertNull(r.outputLimit)
+        assertEquals(r, ProviderReach.classify(ProviderReach.canonical(r)))
+        assertEquals(ProviderReach.Kind.REQUEST_TOO_LARGE,
+            ProviderReach.fromHttp(400, "Reduce the length of the messages", "host", false)!!.kind)
+        assertEquals(ProviderReach.Kind.REQUEST_TOO_LARGE,
+            ProviderReach.fromHttp(400, "maximum context length exceeded with max_tokens", "host", false)!!.kind)
+        // An unrelated JSON metadata field is never interpreted as the provider explanation.
+        assertNull(ProviderReach.fromHttp(400,
+            """{"error":{"message":"Bad request","metadata":{"prompt":"request too large"}}}""", "host", false))
+    }
+
+    @Test fun `output ceiling uses an explicit upper bound not the first number`() {
+        val examples = listOf(
+            "max_completion_tokens 32768 must be less than or equal to 16384" to 16384,
+            "max_tokens 32768 exceeds the maximum allowed of 16,384" to 16384,
+            "max_completion_tokens cannot be greater than 4096" to 4096,
+            "max_output_tokens 8192 exceeds 2048" to 2048,
+        )
+        for ((message, limit) in examples) {
+            val r = ProviderReach.fromHttp(400, message, "model.example", oauth = false)!!
+            assertEquals(message, ProviderReach.Kind.RESPONSE_LIMIT, r.kind)
+            assertEquals(message, limit, r.outputLimit)
+            assertEquals(r, ProviderReach.classify(ProviderReach.canonical(r)))
+        }
+        val vague = ProviderReach.fromHttp(400, "max_tokens is too large", "model.example", false)!!
+        assertEquals(ProviderReach.Kind.RESPONSE_LIMIT, vague.kind)
+        assertNull(vague.outputLimit)
+        val ambiguous = ProviderReach.fromHttp(400,
+            "max_tokens must be at most 4096 and maximum 8192", "model.example", false)!!
+        assertNull(ambiguous.outputLimit)
+        val malformed = ProviderReach.fromHttp(400, "max_tokens maximum is 16,38", "model.example", false)!!
+        assertNull(malformed.outputLimit)
+        assertNull(ProviderReach.fromHttp(400, "Unsupported parameter: max_tokens", "model.example", false))
+        assertNull(ProviderReach.fromHttp(400, "Unsupported parameter: max_tokens, maximum is 4096", "model.example", false))
+        assertNull(ProviderReach.fromHttp(400, "max_tokens is not supported, maximum is 4096", "model.example", false))
+        assertNull(ProviderReach.fromHttp(400, "max_tokens must be greater than 1", "model.example", false))
+    }
+
+    @Test fun `retry after accepts seconds and HTTP date without overflow`() {
+        val now = Instant.parse("2026-01-01T00:00:00.500Z")
+        assertEquals(2, ProviderReach.retryAfterSeconds("1.1", now))
+        assertEquals(0, ProviderReach.retryAfterSeconds("0", now))
+        assertEquals(60, ProviderReach.retryAfterSeconds("Thu, 1 Jan 2026 00:01:00 GMT", now))
+        assertEquals(0, ProviderReach.retryAfterSeconds("Thu, 1 Jan 2026 00:00:00 GMT", now))
+        assertNull(ProviderReach.retryAfterSeconds("-1", now))
+        assertNull(ProviderReach.retryAfterSeconds("NaN", now))
+        assertNull(ProviderReach.retryAfterSeconds("9999999999999999999999", now))
+        assertNull(ProviderReach.retryAfterSeconds("not a date", now))
+        val invalidHeader = ProviderReach.fromHttp(429, "rate limit", "host", false,
+            retryAfterS = null, retryAfterPresent = true)!!
+        assertTrue(invalidHeader.retryAfterPresent)
+        assertNull(invalidHeader.retryAfterS)
+        assertEquals(invalidHeader, ProviderReach.classify(ProviderReach.canonical(invalidHeader)))
+    }
+
+    @Test fun `server failures and HTML interceptions are separate`() {
+        val server = ProviderReach.fromHttp(503, "Temporary failure", "service.example", oauth = false, retryAfterS = 7)!!
+        assertEquals(ProviderReach.Kind.SERVER_ERROR, server.kind)
+        assertEquals(503, server.httpStatus)
+        assertEquals(7, server.retryAfterS)
+        assertEquals(server, ProviderReach.classify(ProviderReach.canonical(server)))
+        assertEquals(ProviderReach.Kind.UNREACHABLE,
+            ProviderReach.fromHttp(503, "<html>blocked</html>", "service.example", false)!!.kind)
+    }
+
+    @Test fun `new canonical format preserves ipv6 unicode and separators and rejects corruption`() {
+        val r = ProviderReach.Reach(ProviderReach.Kind.RESPONSE_LIMIT, "[fd00::1]", "Limite: 4096 | tente depois", 30, 4096, 400)
+        val line = ProviderReach.canonical(r)
+        assertTrue(line.startsWith("nm_reach2:"))
+        assertEquals(r, ProviderReach.classify(line))
+        val blank = ProviderReach.fromHttp(413, "", "", false)!!
+        assertEquals(blank, ProviderReach.classify(ProviderReach.canonical(blank)))
+        assertNull(ProviderReach.classify("nm_reach2:response_limit:garbage::::"))
+        assertNull(ProviderReach.classify("nm_reach2:response_limit:0:0:400::"))
     }
 }

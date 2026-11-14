@@ -1343,4 +1343,16 @@
     <string name="nm_prompt_size_image_no">Image model resolved locally: no. This does not test image generation.</string>
     <string name="nm_prompt_size_image_unknown">Image model resolved locally: could not check. This does not test image generation.</string>
     <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total</string>
+    <!-- nanoMuse: bounded provider refusals and retries. -->
+    <string name="nm_reach_request_large_title">傳送給 %1$s 的請求過大</string>
+    <string name="nm_reach_request_large_body">服務商拒絕了請求的大小。指示、歷史紀錄、工具和附件也計入其中。請縮短訊息或開始新對話。</string>
+    <string name="nm_reach_output_limit_title">%1$s 拒絕了回覆長度</string>
+    <string name="nm_reach_output_limit_known">服務商提示回覆最多為 %1$d 個 token。</string>
+    <string name="nm_reach_output_limit_unknown">服務商拒絕了要求的回覆上限，但沒有提供明確的最大值。</string>
+    <string name="nm_reach_server_error_title">%1$s 服務出錯</string>
+    <string name="nm_reach_server_error_body">服務商傳回錯誤。請稍候再試。</string>
+    <string name="nm_reach_output_retry">服務商提示回覆上限為 %1$d 個 token。正在依此上限重試。</string>
+    <string name="nm_reach_output_adjusted">服務商已接受最多 %1$d 個回覆 token 的重試請求。</string>
+    <string name="nm_reach_rate_wait">已達到請求限額，將在 %1$d 秒後重試。</string>
+    <string name="nm_reach_server_retry">服務商暫時不穩定，正在重試。</string>
 </resources>

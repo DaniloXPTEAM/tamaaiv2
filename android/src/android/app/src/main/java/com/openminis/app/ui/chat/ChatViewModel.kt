@@ -1162,6 +1162,8 @@ class ChatViewModel(
     // nanoMuse: model-scoped calibration survives Continue and process restart. The request
     // budget below is refreshed before each provider call, including model-group fallback.
     private val nmCalibrationStore by lazy { ContextCalibrationStore(context) }
+    // nanoMuse: remember a provider's confirmed smaller output cap by route and model.
+    private val nmOutputLimitStore by lazy { io.github.nanomuse.net.OutputLimitStore(context) }
     private var nmHistoryBudget: ContextBudget.Plan? = null
     private var nmHistoryCalibration = ContextEstimate.Calibration()
 
@@ -7926,6 +7928,8 @@ class ChatViewModel(
         var contextEstimate = ContextEstimate.Calibration()
         val usageMeter = ContextUsageMeter()
         var calibrationKey: String? = null
+        // nanoMuse: a one-off provider may retry, but must not persist a synthetic route identity.
+        var durableOutputKey: String? = null
         var calibratedModel: String? = null
         var preparedMessages: List<LLMMessage>? = null
         var requestBudget = ContextBudget.forModel(0, 0)
@@ -7940,10 +7944,12 @@ class ChatViewModel(
                 ?.takeIf { it.model.id == currentProvider.model.id }
             val instance = entry?.let { e -> config.instances.find { it.id == e.providerInstanceId } }
             // Store only the hashed identity. An unbound one-off provider gets an isolated key.
-            val key = if (instance != null && this@ChatViewModel.currentProvider === currentProvider) {
+            val boundRoute = instance != null && this@ChatViewModel.currentProvider === currentProvider
+            val key = if (boundRoute && instance != null) {
                 "${instance.id}|${instance.providerType}|${instance.customBaseURL.orEmpty()}|" +
                     "${instance.appendV1Suffix}|${instance.useResponsesAPI}"
             } else "${currentProvider.javaClass.name}|${System.identityHashCode(currentProvider)}"
+            durableOutputKey = key.takeIf { boundRoute } // nanoMuse: never retain one-off route identifiers.
             if (key != calibrationKey || calibratedModel != currentProvider.model.id) {
                 contextEstimate = nmCalibrationStore.load(key, currentProvider.model.id)
                 usageMeter.clear()
@@ -8317,8 +8323,20 @@ class ChatViewModel(
             // so we catch at collect level and unwrap.
             var collectDone = false
             var retryAttempt = 0  // per-turn auto-retry counter (resets on each new turn)
+            // nanoMuse: retry only this failed request; completed tools stay in history.
+            data class PendingOutputLimit(val provider: LLMProvider, val route: String?, val model: String, val limit: Int)
+            var pendingOutput: PendingOutputLimit? = null
+            var outputRetried = false
+            var rateRetried = false
+            var lastRequestedOutput = 0
             while (!collectDone) {
                 try {
+                    // nanoMuse: a failed partial stream cannot confirm the next attempt's cap
+                    // or carry its finish reason, reasoning or usage into another provider.
+                    turnFinishReason = null
+                    turnReasoningBlob = null
+                    lastUsage = null
+                    lastRequestedOutput = 0
                     // [T-android-enhanced-cache] Stamp the per-turn Enhanced
                     // Cache flag onto the active provider here — the single
                     // choke point every turn passes through, regardless of how
@@ -8404,9 +8422,21 @@ class ChatViewModel(
                     // false high ratio cannot squeeze the answer to a single output token.
                     lastContextTokens = if (contextMaintenance.calibrationProbeGranted) requestEstimate
                         else usageMeter.estimate(requestSnapshot, requestEstimate, contextEstimate)
+                    // nanoMuse: a learned ceiling is route/model-specific; a newly proposed cap
+                    // is used only on the bounded retry until the provider accepts it.
+                    val learnedLimit = durableOutputKey?.let { key ->
+                        runCatching { nmOutputLimitStore.load(key, currentProvider.model.id) }.getOrNull()
+                    }
+                    val pendingLimit = pendingOutput?.takeIf {
+                        it.provider === currentProvider && it.model == currentProvider.model.id && it.route == durableOutputKey
+                    }?.limit
+                    lastRequestedOutput = io.github.nanomuse.net.ProviderRecovery.clamp(
+                        io.github.nanomuse.net.ProviderRecovery.clamp(dynamicMaxTokens(currentProvider, lastContextTokens), learnedLimit),
+                        pendingLimit,
+                    )
                     currentProvider.streamMessage(
                         requestMessages,
-                        systemPrompt, dynamicMaxTokens(currentProvider, lastContextTokens),
+                        systemPrompt, lastRequestedOutput,
                         tools = requestTools,
                         thinkingLevel = if (currentModelSupportsReasoning) _thinkingLevel.value else ThinkingLevel.OFF,
                     ).collect { chunk ->
@@ -8760,6 +8790,24 @@ class ChatViewModel(
                     }
                 }
                     }  // end collect
+                    // nanoMuse: only the actual cap of this completed response is confirmed;
+                    // the context budget might have lowered it further during the wait.
+                    pendingOutput?.takeIf {
+                        it.provider === currentProvider && it.model == currentProvider.model.id && it.route == durableOutputKey
+                    }?.let { accepted ->
+                        val confirmed = io.github.nanomuse.net.ProviderRecovery.confirmedOutput(
+                            accepted.limit, lastRequestedOutput, turnFinishReason != null,
+                        )
+                        if (confirmed != null) {
+                            accepted.route?.let { key ->
+                                runCatching { nmOutputLimitStore.save(key, accepted.model, confirmed) }
+                            }
+                            withContext(Dispatchers.Main) {
+                                appendSystemInfo(context.getString(R.string.nm_reach_output_adjusted, confirmed), "info")
+                            }
+                            pendingOutput = null
+                        }
+                    }
                     // nanoMuse: persist one final input sample, never partial or failed requests.
                     requestUsage?.let { usage ->
                         usageMeter.observe(requestSnapshot, ContextEstimate.inputTokens(usage), requestEstimate)
@@ -8810,18 +8858,26 @@ class ChatViewModel(
                         }
                     }
                 } catch (e: Exception) {
-                    if (e is CancellationException && e.cause == null) throw e  // real job cancellation
+                    // nanoMuse: a cancelled job must never start another request, even when
+                    // its CancellationException carries a cause; active flow wrappers may unwrap.
+                    if (e is CancellationException) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (e.cause == null) throw e
+                    }
                     val actual = unwrapFlowException(e)
                     val isRateLimit = actual is com.openminis.app.data.model.LLMError.RateLimited
-                    val is5xx = actual is com.openminis.app.data.model.LLMError.ProviderError &&
-                        actual.detail.contains(Regex("[5][0-9]{2}"))
+                    // nanoMuse: a token count such as 5000 in a 400 is not an HTTP 500.
+                    val reach = (actual as? LLMError)?.nmProviderReach
+                    val is5xx = reach?.httpStatus?.let { it in 500..599 } ?: (
+                        actual is com.openminis.app.data.model.LLMError.ProviderError &&
+                            Regex("""(?:\[5\d\d\]|\bHTTP\s+5\d\d\b)""", RegexOption.IGNORE_CASE).containsMatchIn(actual.detail)
+                    )
                     // Auto-retry on transient network/5xx/transient errors on the SAME provider
                     // before considering a fallback (mirrors iOS streamWithAutoRetry).
-                    // Rate limits are provider-level signals that should trigger fallback immediately,
-                    // not retry on the same provider.
-                    val isTransient = actual is com.openminis.app.data.model.LLMError.NetworkError ||
-                        actual is com.openminis.app.data.model.LLMError.TransientError ||
-                        is5xx
+                    val sizeRejection = reach?.kind == io.github.nanomuse.net.ProviderReach.Kind.REQUEST_TOO_LARGE ||
+                        reach?.kind == io.github.nanomuse.net.ProviderReach.Kind.RESPONSE_LIMIT
+                    val isTransient = !sizeRejection && (actual is com.openminis.app.data.model.LLMError.NetworkError ||
+                        actual is com.openminis.app.data.model.LLMError.TransientError || is5xx)
                     // nanoMuse: one server-overflow retry is allowed only after local work
                     // measurably shrinks the same request. No blind resend of identical history.
                     var recoveredContext = false
@@ -8831,20 +8887,41 @@ class ChatViewModel(
                         prepareContext(force = true)
                         recoveredContext = measureRawTokens() < before
                     }
-                    if ((isTransient || recoveredContext) && retryAttempt < AUTO_RETRY_DELAYS_SEC.size) {
-                        val delaySec = if (recoveredContext) 0 else AUTO_RETRY_DELAYS_SEC[retryAttempt]
+                    // nanoMuse: a verified upper bound changes the next request; a short 429
+                    // gets one bounded wait. Neither path repeats already executed tools.
+                    val outputRetry = io.github.nanomuse.net.ProviderRecovery.outputRetry(reach, lastRequestedOutput, outputRetried)
+                    val rateDelay = if (isRateLimit) io.github.nanomuse.net.ProviderRecovery.rateDelay(reach, rateRetried) else null
+                    if ((isTransient || recoveredContext || outputRetry != null || rateDelay != null) && retryAttempt < AUTO_RETRY_DELAYS_SEC.size) {
+                        if (outputRetry != null) {
+                            outputRetried = true
+                            pendingOutput = PendingOutputLimit(currentProvider, durableOutputKey, currentProvider.model.id, outputRetry)
+                        }
+                        if (rateDelay != null) rateRetried = true
+                        val delaySec = when {
+                            recoveredContext || outputRetry != null -> 0
+                            rateDelay != null -> rateDelay
+                            else -> AUTO_RETRY_DELAYS_SEC[retryAttempt]
+                        }
                         retryAttempt += 1
                         val errDesc = actual.message ?: actual.javaClass.simpleName
                         Log.w(TAG, "🔁 Transient error on ${currentProvider.model.displayName}, retry $retryAttempt/${AUTO_RETRY_DELAYS_SEC.size} in ${delaySec}s: $errDesc")
                         withContext(Dispatchers.Main) {
                             _autoRetryAttempt.value = retryAttempt
-                            // Show the error inline on the streaming assistant message during countdown.
-                            // Keeps isStreaming=true so the UI doesn't tear down the streaming state.
-                            setTransientInlineError("$errDesc — retrying ($retryAttempt/${AUTO_RETRY_DELAYS_SEC.size})…")
+                            // nanoMuse: the new retry paths state only what is actually happening.
+                            val status = when {
+                                outputRetry != null -> context.getString(R.string.nm_reach_output_retry, outputRetry)
+                                rateDelay != null -> context.getString(R.string.nm_reach_rate_wait, delaySec)
+                                is5xx -> context.getString(R.string.nm_reach_server_retry)
+                                else -> "$errDesc — retrying ($retryAttempt/${AUTO_RETRY_DELAYS_SEC.size})…"
+                            }
+                            setTransientInlineError(status)
                         }
                         try {
                             for (remaining in delaySec downTo 1) {
                                 _autoRetryCountdown.value = remaining
+                                if (rateDelay != null) withContext(Dispatchers.Main) {
+                                    setTransientInlineError(context.getString(R.string.nm_reach_rate_wait, remaining))
+                                }
                                 kotlinx.coroutines.delay(1000)
                             }
                         } finally {
@@ -8910,8 +8987,10 @@ class ChatViewModel(
                     // makes the intent explicit and avoids a one-frame
                     // flash of the stale banner.
                     withContext(Dispatchers.Main) { clearInlineError() }
-                    val shouldFallback = isRateLimit || is5xx ||
-                        fallbackStrategy == com.openminis.app.data.model.FallbackStrategy.always
+                    // nanoMuse: never forward an unchanged size/output rejection to a group
+                    // model. Profile downgrade and an output-cap retry need their own guards.
+                    val shouldFallback = !sizeRejection && (isRateLimit || is5xx ||
+                        fallbackStrategy == com.openminis.app.data.model.FallbackStrategy.always)
                     val nextCandidate = if (shouldFallback) remainingFallbacks.removeFirstOrNull() else null
                     val next = nextCandidate?.provider
                     if (next != null && nextCandidate != null) {
@@ -8934,6 +9013,11 @@ class ChatViewModel(
                         val isRealModelChange = next.model.id != currentProvider.model.id
                         fallbackReasons.add("⚠️ ${currentProvider.model.displayName}: $reason")
                         Log.i(TAG, "🔀 $reason on ${currentProvider.model.displayName}, switching to ${next.model.displayName} (realModelChange=$isRealModelChange)")
+                        // nanoMuse: a different route must not inherit a proposal or its one-shot flags.
+                        // The existing overall retry counter remains bounded across the group.
+                        pendingOutput = null
+                        outputRetried = false
+                        rateRetried = false
                         currentProvider = next
                         // Also update class-level provider so the next sendMessage() starts from here
                         this@ChatViewModel.currentProvider = next

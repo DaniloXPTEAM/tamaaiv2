@@ -1378,4 +1378,16 @@
     <string name="nm_prompt_size_image_no">Modelo de imagem resolvido neste aparelho: não. Isso não testa a geração de imagens.</string>
     <string name="nm_prompt_size_image_unknown">Modelo de imagem resolvido neste aparelho: não foi possível verificar. Isso não testa a geração de imagens.</string>
     <string name="nm_prompt_size_section_names">Identidade|Introdução|Ferramentas disponíveis|Sandbox|Links|Criação de arquivos|Estilo das chamadas|Tom|Ferramentas Android|Ambiente|Tarefas agendadas|Base sem divisão|Política de risco|Controle de tela|Habilidades|MCP|Nome inicial|Mídia|Computadores|Sessão|Objetivos|Feed|Ferramentas de memória|Orientação de memória|Memória global|Memória diária|Arquivo do usuário|Data e idioma|Separadores|Total</string>
+    <!-- nanoMuse: bounded provider refusals and retries. -->
+    <string name="nm_reach_request_large_title">Pedido grande demais para %1$s</string>
+    <string name="nm_reach_request_large_body">O provedor recusou o tamanho do pedido. Instruções, histórico, ferramentas e anexos também entram na conta. Encurte a mensagem ou inicie outra conversa.</string>
+    <string name="nm_reach_output_limit_title">%1$s recusou o tamanho da resposta</string>
+    <string name="nm_reach_output_limit_known">O provedor informou um máximo de %1$d tokens para a resposta.</string>
+    <string name="nm_reach_output_limit_unknown">O provedor recusou o limite de resposta solicitado, sem informar um máximo claro.</string>
+    <string name="nm_reach_server_error_title">Erro no serviço de %1$s</string>
+    <string name="nm_reach_server_error_body">O provedor respondeu com erro. Aguarde um pouco e tente de novo.</string>
+    <string name="nm_reach_output_retry">O provedor informou um limite de %1$d tokens para a resposta. Vou tentar de novo com esse limite.</string>
+    <string name="nm_reach_output_adjusted">O provedor aceitou uma nova tentativa com até %1$d tokens de resposta.</string>
+    <string name="nm_reach_rate_wait">Limite de pedidos atingido. Tento de novo em %1$d s.</string>
+    <string name="nm_reach_server_retry">O provedor está instável. Tentando de novo.</string>
 </resources>

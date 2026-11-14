@@ -28,6 +28,15 @@ internal class LocalOpenAiFixture : AutoCloseable {
     val posts: MutableList<JSONObject> = Collections.synchronizedList(mutableListOf())
     val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())
     val errors: MutableList<String> = Collections.synchronizedList(mutableListOf())
+    // nanoMuse: fail only the exact test prompt, not concurrent model-list or title requests.
+    private val promptFailures = mutableListOf<Int>()
+    val promptRequestNanos: MutableList<Long> = Collections.synchronizedList(mutableListOf())
+    fun failNextPrompt(vararg statuses: Int) = synchronized(promptFailures) {
+        require(statuses.all { it == 400 || it == 413 || it == 429 })
+        promptFailures.clear()
+        promptFailures.addAll(statuses.toList())
+        promptRequestNanos.clear()
+    }
     @Volatile var failModelList = false
     @Volatile private var running = true
     private val acceptThread = thread(name = "tama-fixture-accept", isDaemon = true) {
@@ -82,6 +91,7 @@ internal class LocalOpenAiFixture : AutoCloseable {
                 }
                 val path = request.getOrNull(1)?.substringBefore('?')
                 requests.add("${request.firstOrNull()} $path")
+                var extraHeaders = "" // nanoMuse: controlled Retry-After for the rate-limit fixture.
                 val (status, contentType, payload) = when {
                     request.firstOrNull() == "GET" && path == "/v1/models" && failModelList -> Triple(
                         "503 Service Unavailable", "application/json", "{\"error\":\"temporary fixture outage\"}",
@@ -94,20 +104,44 @@ internal class LocalOpenAiFixture : AutoCloseable {
                         )).toString(),
                     )
                     request.firstOrNull() == "POST" && path == "/v1/chat/completions" -> {
-                        posts.add(JSONObject(String(body, Charsets.UTF_8)))
-                        val delta = JSONObject().put("id", "fixture-reply").put("object", "chat.completion.chunk")
-                            .put("choices", JSONArray().put(JSONObject().put("index", 0)
-                                .put("delta", JSONObject().put("role", "assistant").put("content", REPLY))))
-                        val finish = JSONObject().put("id", "fixture-reply").put("object", "chat.completion.chunk")
-                            .put("choices", JSONArray().put(JSONObject().put("index", 0)
-                                .put("delta", JSONObject()).put("finish_reason", "stop")))
-                        Triple("200 OK", "text/event-stream", "data: $delta\n\ndata: $finish\n\ndata: [DONE]\n\n")
+                        val post = JSONObject(String(body, Charsets.UTF_8))
+                        posts.add(post)
+                        // nanoMuse: the chat's actual user message is distinct from title generation.
+                        val messages = post.optJSONArray("messages") ?: JSONArray()
+                        val isPrompt = (0 until messages.length()).any {
+                            val message = messages.optJSONObject(it)
+                            message?.optString("role") == "user" && message.optString("content") == PROMPT
+                        }
+                        if (isPrompt) promptRequestNanos.add(System.nanoTime())
+                        val failure = if (isPrompt) synchronized(promptFailures) {
+                            if (promptFailures.isEmpty()) null else promptFailures.removeAt(0)
+                        } else null
+                        when (failure) {
+                            400 -> Triple("400 Bad Request", "application/json",
+                                """{"error":{"message":"max_completion_tokens must be less than or equal to 128"}}""")
+                            413 -> Triple("413 Payload Too Large", "application/json",
+                                """{"error":{"message":"Request too large"}}""")
+                            429 -> {
+                                extraHeaders = "Retry-After: 3\r\n"
+                                Triple("429 Too Many Requests", "application/json",
+                                    """{"error":{"message":"Rate limit reached"}}""")
+                            }
+                            else -> {
+                                val delta = JSONObject().put("id", "fixture-reply").put("object", "chat.completion.chunk")
+                                    .put("choices", JSONArray().put(JSONObject().put("index", 0)
+                                        .put("delta", JSONObject().put("role", "assistant").put("content", REPLY))))
+                                val finish = JSONObject().put("id", "fixture-reply").put("object", "chat.completion.chunk")
+                                    .put("choices", JSONArray().put(JSONObject().put("index", 0)
+                                        .put("delta", JSONObject()).put("finish_reason", "stop")))
+                                Triple("200 OK", "text/event-stream", "data: $delta\n\ndata: $finish\n\ndata: [DONE]\n\n")
+                            }
+                        }
                     }
                     else -> Triple("404 Not Found", "application/json", "{\"error\":\"fixture route not found\"}")
                 }
                 val bytes = payload.toByteArray(Charsets.UTF_8)
                 socket.getOutputStream().use { output ->
-                    output.write("HTTP/1.1 $status\r\nContent-Type: $contentType; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray(Charsets.US_ASCII))
+                    output.write("HTTP/1.1 $status\r\nContent-Type: $contentType; charset=utf-8\r\nContent-Length: ${bytes.size}\r\n${extraHeaders}Connection: close\r\n\r\n".toByteArray(Charsets.US_ASCII)) // nanoMuse: fixture header
                     output.write(bytes)
                     output.flush()
                 }

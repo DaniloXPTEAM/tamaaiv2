@@ -1,5 +1,10 @@
 package io.github.nanomuse.net
 
+import java.time.Duration
+import java.time.Instant
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Base64
 import java.util.Locale
 
 /**
@@ -41,6 +46,15 @@ object ProviderReach {
 
         /** Access was refused (403); the status alone says nothing about the balance. */
         ACCESS_DENIED,
+
+        /** The provider rejected the size of the request (not necessarily a free-plan quota). */
+        REQUEST_TOO_LARGE,
+
+        /** The provider rejected the requested maximum output, when the response says so. */
+        RESPONSE_LIMIT,
+
+        /** The provider responded with a server error, not necessarily a network failure. */
+        SERVER_ERROR,
     }
 
     data class Reach(
@@ -51,6 +65,12 @@ object ProviderReach {
         val detail: String = "",
         /** How long the vendor asked us to wait, when it said (`Retry-After`). */
         val retryAfterS: Int? = null,
+        /** The output ceiling only when the provider stated it unambiguously. */
+        val outputLimit: Int? = null,
+        /** HTTP status, if this diagnostic came from an HTTP response. */
+        val httpStatus: Int? = null,
+        /** A supplied but unparsable wait must not be treated as a missing header. */
+        val retryAfterPresent: Boolean = retryAfterS != null,
     ) {
         /** Whether the host is the ChatGPT plan's (the card names the plan, not an API). */
         val isChatGptPlan: Boolean get() = isPlanHost(host)
@@ -62,6 +82,30 @@ object ProviderReach {
     const val REGION_CODE = "unsupported_country_region_territory"
 
     private const val CANONICAL_PREFIX = "nm_reach:"
+    private const val CANONICAL_V2_PREFIX = "nm_reach2:"
+
+    private val REQUEST_SIZE_MARKERS = listOf(
+        "request too large", "request is too large", "request_too_large", "payload too large",
+        "reduce the length", "context length", "context_length_exceeded", "context window",
+        "context_window_exceeded", "prompt too long", "input too long",
+    )
+    private val OUTPUT_NAMES = listOf("max_completion_tokens", "max_output_tokens", "max_tokens")
+    private val UNSUPPORTED_PARAMETER_MARKERS = listOf(
+        "unsupported", "not supported", "unknown parameter", "unrecognized parameter",
+        "unrecognised parameter", "extra fields not permitted",
+    )
+    private val OUTPUT_LIMIT_MARKERS = listOf(
+        "maximum", "max allowed", "max value", "upper limit", "at most", "no more than",
+        "less than or equal", "cannot be greater than", "must not be greater than", "exceed",
+        "too large", "<=", "≤", "máximo", "máxima",
+    )
+    // Numbers are read only after an explicit upper-bound phrase, not simply the first number
+    // (which is often the rejected request, a model name, an HTTP code or a request id).
+    private val OUTPUT_LIMIT_PATTERNS = listOf(
+        Regex("""(?i)\b(?:maximum|max allowed|max value|upper limit|limit|at most|no more than|máximo|máxima|limite)\b[^0-9]{0,80}([0-9][0-9,]{0,9})\b"""),
+        Regex("""(?i)(?:less than or equal to|<=|≤|cannot exceed|must not exceed|cannot be greater than|must not be greater than)\s*[^0-9]{0,20}([0-9][0-9,]{0,9})\b"""),
+        Regex("""(?i)\bexceeds?\s*(?:the\s+)?([0-9][0-9,]{0,9})\b"""),
+    )
 
     private val QUOTA_MARKERS = listOf(
         "usage_limit_reached", "usage_not_included", "insufficient_quota", "quota_exceeded",
@@ -96,7 +140,7 @@ object ProviderReach {
     fun classify(text: String, hintHost: String? = null): Reach? {
         val t = text.trim()
         if (t.isEmpty()) return null
-        parseCanonical(t)?.let { return it }
+        if (t.startsWith(CANONICAL_PREFIX) || t.startsWith(CANONICAL_V2_PREFIX)) return parseCanonical(t)
         val low = t.lowercase(Locale.ROOT)
         val hint = hintHost?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }.orEmpty()
 
@@ -118,14 +162,21 @@ object ProviderReach {
     }
 
     /** Classify an HTTP response without guessing that a forbidden request means no credit. */
-    fun fromHttp(status: Int, body: String?, host: String, oauth: Boolean, retryAfterS: Int? = null): Reach? {
+    fun fromHttp(
+        status: Int, body: String?, host: String, oauth: Boolean, retryAfterS: Int? = null,
+        retryAfterPresent: Boolean = retryAfterS != null,
+    ): Reach? {
         val b = body.orEmpty()
         val low = b.lowercase(Locale.ROOT)
         val h = host.lowercase(Locale.ROOT)
         val message = vendorMessage(b)
         // Look at the provider's sentence, not arbitrary JSON metadata or echoed prompt text.
-        val creditReported = CREDIT_MARKERS.any { it in message.lowercase(Locale.ROOT) }
-        return when {
+        val messageLow = message.lowercase(Locale.ROOT)
+        val creditReported = CREDIT_MARKERS.any { it in messageLow }
+        val requestTooLarge = REQUEST_SIZE_MARKERS.any { it in messageLow }
+        val responseLimit = OUTPUT_NAMES.any { it in messageLow } && OUTPUT_LIMIT_MARKERS.any { it in messageLow } &&
+            UNSUPPORTED_PARAMETER_MARKERS.none { it in messageLow }
+        val reach = when {
             status == 403 && REGION_CODE in low -> Reach(Kind.REGION_BLOCKED, h, message)
             status in setOf(403, 404, 503) && looksLikeHtml(b) -> Reach(Kind.UNREACHABLE, h, "")
             status == 401 && oauth -> Reach(Kind.SIGNED_OUT, h, message)
@@ -137,10 +188,44 @@ object ProviderReach {
             status == 403 && creditReported ->
                 Reach(Kind.NO_CREDIT, h, statusDetail(status, message), retryAfterS)
             status == 403 -> Reach(Kind.ACCESS_DENIED, h, message)
+            status == 413 || (status == 400 && requestTooLarge) ->
+                Reach(Kind.REQUEST_TOO_LARGE, h, message, retryAfterS)
+            status == 400 && responseLimit ->
+                Reach(Kind.RESPONSE_LIMIT, h, message, retryAfterS, outputLimit(message))
             status == 429 && QUOTA_MARKERS.any { it in low } -> Reach(Kind.QUOTA, h, statusDetail(status, message), retryAfterS)
             status == 429 -> Reach(Kind.RATE_LIMITED, h, message, retryAfterS)
+            status in 500..599 -> Reach(Kind.SERVER_ERROR, h, message, retryAfterS)
             else -> null
         }
+        return reach?.copy(httpStatus = status, retryAfterPresent = retryAfterPresent)
+    }
+
+    /** Extract an unambiguous, explicitly stated ceiling, or decline to guess. */
+    private fun outputLimit(message: String): Int? {
+        val limits = OUTPUT_LIMIT_PATTERNS.flatMap { regex ->
+            regex.findAll(message).mapNotNull { match ->
+                val raw = match.groupValues[1]
+                // Reject malformed grouping such as 16,38 instead of silently changing its value.
+                if (!Regex("""(?:[1-9]\d{0,6}|[1-9]\d{0,2}(?:,\d{3})+)""").matches(raw)) null
+                else raw.replace(",", "").toIntOrNull()?.takeIf { it in 1..1_000_000 }
+            }.toList()
+        }.distinct()
+        return limits.singleOrNull()
+    }
+
+    /** RFC 9110 delta-seconds or HTTP-date, rounded up and never silently wrapped. */
+    fun retryAfterSeconds(header: String?, now: Instant = Instant.now()): Int? {
+        val value = header?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        value.toDoubleOrNull()?.let { number ->
+            if (!number.isFinite() || number < 0 || number > Int.MAX_VALUE - 1.0) return null
+            return kotlin.math.ceil(number).toInt()
+        }
+        val target = runCatching { ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant() }
+            .getOrNull() ?: return null
+        val delay = Duration.between(now, target)
+        if (delay.isNegative) return 0
+        val seconds = delay.seconds + if (delay.nano > 0) 1 else 0
+        return seconds.takeIf { it <= Int.MAX_VALUE }?.toInt()
     }
 
     private fun statusDetail(status: Int, message: String): String =
@@ -152,11 +237,22 @@ object ProviderReach {
         return BEARER_RX.replace(KEY_RX.replace(withoutCredential, "[redacted]"), "Bearer [redacted]")
     }
 
-    /** `nm_reach:<kind>:<host>:<retry_after>|<detail>` — what the view model stores for a side-channel reach. */
-    fun canonical(reach: Reach): String =
-        CANONICAL_PREFIX + reach.kind.name.lowercase(Locale.ROOT) + ":" + reach.host + ":" + (reach.retryAfterS ?: "") + "|" + reach.detail.replace('\n', ' ')
+    /** A versioned, delimiter-safe line for persistence; old lines remain readable. */
+    fun canonical(reach: Reach): String {
+        if (reach.httpStatus == null && reach.outputLimit == null && reach.retryAfterPresent == (reach.retryAfterS != null)) {
+            return CANONICAL_PREFIX + reach.kind.name.lowercase(Locale.ROOT) + ":" + reach.host + ":" +
+                (reach.retryAfterS ?: "") + "|" + reach.detail.replace('\n', ' ')
+        }
+        fun encode(text: String): String = Base64.getUrlEncoder().withoutPadding().encodeToString(text.toByteArray(Charsets.UTF_8))
+        return CANONICAL_V2_PREFIX + listOf(
+            reach.kind.name.lowercase(Locale.ROOT), reach.retryAfterS?.toString().orEmpty(),
+            reach.outputLimit?.toString().orEmpty(), reach.httpStatus?.toString().orEmpty(),
+            if (reach.retryAfterPresent) "1" else "0", encode(reach.host), encode(reach.detail.replace('\n', ' ')),
+        ).joinToString(":")
+    }
 
     private fun parseCanonical(t: String): Reach? {
+        if (t.startsWith(CANONICAL_V2_PREFIX)) return parseCanonicalV2(t.removePrefix(CANONICAL_V2_PREFIX))
         if (!t.startsWith(CANONICAL_PREFIX)) return null
         val rest = t.removePrefix(CANONICAL_PREFIX)
         val head = rest.substringBefore('|')
@@ -171,6 +267,21 @@ object ProviderReach {
         val retry = if (hostAndRetry.contains(':')) hostAndRetry.substringAfterLast(':').toIntOrNull() else null
         return Reach(kind, host, detail, retry)
     }
+
+    private fun parseCanonicalV2(rest: String): Reach? = runCatching {
+        val parts = rest.split(':')
+        require(parts.size == 7)
+        val kind = Kind.valueOf(parts[0].uppercase(Locale.ROOT))
+        fun number(value: String, range: IntRange): Int? =
+            if (value.isEmpty()) null else value.toInt().also { require(it in range) }
+        val retry = number(parts[1], 0..Int.MAX_VALUE)
+        val limit = number(parts[2], 1..1_000_000)
+        val status = number(parts[3], 100..599)
+        require(parts[4] == "0" || parts[4] == "1")
+        val retryAfterPresent = parts[4] == "1"
+        fun decode(value: String): String = String(Base64.getUrlDecoder().decode(value), Charsets.UTF_8)
+        Reach(kind, decode(parts[5]), decode(parts[6]), retry, limit, status, retryAfterPresent)
+    }.getOrNull()
 
     fun looksLikeHtml(body: String): Boolean {
         val head = body.trimStart().take(64).lowercase(Locale.ROOT)

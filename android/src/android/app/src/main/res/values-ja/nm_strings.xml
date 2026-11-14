@@ -1373,4 +1373,16 @@
     <string name="nm_prompt_size_image_no">Image model resolved locally: no. This does not test image generation.</string>
     <string name="nm_prompt_size_image_unknown">Image model resolved locally: could not check. This does not test image generation.</string>
     <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total</string>
+    <!-- nanoMuse: bounded provider refusals and retries. -->
+    <string name="nm_reach_request_large_title">%1$s へのリクエストが大きすぎます</string>
+    <string name="nm_reach_request_large_body">プロバイダーがリクエストのサイズを拒否しました。指示、履歴、ツール、添付ファイルも含まれます。メッセージを短くするか、新しい会話を始めてください。</string>
+    <string name="nm_reach_output_limit_title">%1$s が応答のサイズを拒否しました</string>
+    <string name="nm_reach_output_limit_known">プロバイダーは応答の上限を %1$d トークンと通知しました。</string>
+    <string name="nm_reach_output_limit_unknown">プロバイダーは応答の上限を拒否しましたが、明確な最大値は通知していません。</string>
+    <string name="nm_reach_server_error_title">%1$s のサービスエラー</string>
+    <string name="nm_reach_server_error_body">プロバイダーがエラーを返しました。少し待ってから再試行してください。</string>
+    <string name="nm_reach_output_retry">プロバイダーが応答の上限を %1$d トークンと通知しました。この上限で再試行します。</string>
+    <string name="nm_reach_output_adjusted">プロバイダーは応答を最大 %1$d トークンにした再試行を受け付けました。</string>
+    <string name="nm_reach_rate_wait">リクエストの上限に達しました。%1$d 秒後に再試行します。</string>
+    <string name="nm_reach_server_retry">プロバイダーが不安定です。再試行します。</string>
 </resources>

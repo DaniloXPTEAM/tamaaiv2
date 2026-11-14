@@ -220,8 +220,15 @@ class RealAppJourneyInstrumentedTest {
             compose.onNodeWithContentDescription("Send").performClick()
             awaitDescription(text(R.string.nm_prompt_size_details), 45_000)
             compose.onNodeWithContentDescription(text(R.string.nm_prompt_size_details)).performClick()
-            compose.waitUntil(30_000) {
-                compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isNotEmpty()
+            try {
+                compose.waitUntil(30_000) {
+                    compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isNotEmpty()
+                }
+            } catch (failure: ComposeTimeoutException) {
+                // nanoMuse: count fixed UI labels only, never dump the prompt or conversation.
+                val close = compose.onAllNodes(hasContentDescription(text(R.string.standard_sheet_close))).fetchSemanticsNodes().size
+                val titles = compose.onAllNodes(hasText(text(R.string.nm_prompt_size_title))).fetchSemanticsNodes().size
+                throw AssertionError("Prompt report did not appear; close controls=$close, titles=$titles", failure)
             }
             assertEquals(postsBeforeMeasure, synchronized(fixture.posts) { fixture.posts.size })
             back()
@@ -229,11 +236,31 @@ class RealAppJourneyInstrumentedTest {
                 compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isEmpty()
             }
 
+            // nanoMuse: first show a terminal 413 without blindly resending it. A manual retry
+            // then encounters a smaller output cap and one bounded 429 before the local answer.
+            // Only this disposable loopback service receives the requests; it never charges.
+            fixture.failNextPrompt(413, 400, 429)
             // Subscribe only in this disposable, loopback-only run. General logging stays off.
             PromptSizeTrace.observer = { event -> promptEvents.add(event) }
             compose.waitUntil(30_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
             compose.onAllNodes(hasSetTextAction())[0].performTextInput(LocalOpenAiFixture.PROMPT)
             compose.onNodeWithContentDescription("Send").performClick()
+            // nanoMuse: the unchanged oversized request must not be silently resent.
+            awaitText(text(R.string.nm_reach_request_large_body), 90_000)
+            compose.waitUntil(30_000) {
+                compose.onAllNodes(hasContentDescription("Stop")).fetchSemanticsNodes().isEmpty()
+            }
+            assertEquals("A 413 was sent again without shrinking it", 1,
+                synchronized(fixture.promptRequestNanos) { fixture.promptRequestNanos.size })
+            compose.onNodeWithText(text(R.string.nm_reach_request_large_body)).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText(text(R.string.nm_reach_try_again)).performScrollTo().performClick()
+            // nanoMuse: at least one visible countdown value must accompany the bounded wait.
+            compose.waitUntil(90_000) {
+                (1..3).any { seconds ->
+                    compose.onAllNodes(hasText(context.getString(R.string.nm_reach_rate_wait, seconds)))
+                        .fetchSemanticsNodes().isNotEmpty()
+                }
+            }
             awaitText(LocalOpenAiFixture.REPLY, 90_000)
             compose.onNodeWithText(LocalOpenAiFixture.REPLY).assertIsDisplayed()
             compose.waitUntil(90_000) {
@@ -256,6 +283,17 @@ class RealAppJourneyInstrumentedTest {
             assertTrue("Unexpected chat model(s); requests=$summary", chats.all {
                 it.optString("model") == LocalOpenAiFixture.MODEL_ID
             })
+            // nanoMuse: the 413 stays terminal; the manual retry gets one reduced cap,
+            // one 429 wait and a successful answer, without resending the first turn blindly.
+            assertEquals("Unexpected number of retries", 4, chats.size)
+            assertTrue(chats[0].getInt("max_completion_tokens") > 128)
+            assertTrue(chats[1].getInt("max_completion_tokens") > 128)
+            assertEquals(128, chats[2].getInt("max_completion_tokens"))
+            assertEquals(128, chats[3].getInt("max_completion_tokens"))
+            val attempts = synchronized(fixture.promptRequestNanos) { fixture.promptRequestNanos.toList() }
+            assertEquals(4, attempts.size)
+            assertTrue("Retry-After was not respected", attempts[3] - attempts[2] >= 2_900_000_000L)
+            awaitText(context.getString(R.string.nm_reach_output_adjusted, 128), 30_000)
             // Check the actual request received by the local fixture, not just a source-level
             // call site. Publish lengths only, never prompt text, model messages or keys.
             val chat = chats.last()

@@ -1377,4 +1377,16 @@
     <string name="nm_prompt_size_image_no">Image model resolved locally: no. This does not test image generation.</string>
     <string name="nm_prompt_size_image_unknown">Image model resolved locally: could not check. This does not test image generation.</string>
     <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total</string>
+    <!-- nanoMuse: bounded provider refusals and retries. -->
+    <string name="nm_reach_request_large_title">La solicitud es demasiado grande para %1$s</string>
+    <string name="nm_reach_request_large_body">El proveedor rechazó el tamaño de la solicitud. También cuentan las instrucciones, el historial, las herramientas y los adjuntos. Acorta el mensaje o inicia otra conversación.</string>
+    <string name="nm_reach_output_limit_title">%1$s rechazó el tamaño de la respuesta</string>
+    <string name="nm_reach_output_limit_known">El proveedor indicó un máximo de %1$d tokens de respuesta.</string>
+    <string name="nm_reach_output_limit_unknown">El proveedor rechazó el límite solicitado sin indicar un máximo claro.</string>
+    <string name="nm_reach_server_error_title">Error del servicio de %1$s</string>
+    <string name="nm_reach_server_error_body">El proveedor devolvió un error. Espera un momento e inténtalo de nuevo.</string>
+    <string name="nm_reach_output_retry">El proveedor indicó un límite de %1$d tokens de respuesta. Lo intento de nuevo con ese límite.</string>
+    <string name="nm_reach_output_adjusted">El proveedor aceptó un nuevo intento con hasta %1$d tokens de respuesta.</string>
+    <string name="nm_reach_rate_wait">Límite de solicitudes alcanzado. Lo intento de nuevo en %1$d s.</string>
+    <string name="nm_reach_server_retry">El proveedor está inestable. Lo intento de nuevo.</string>
 </resources>

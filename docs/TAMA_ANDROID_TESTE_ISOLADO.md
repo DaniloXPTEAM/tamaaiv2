@@ -23,7 +23,10 @@ fails, is skipped, or reports no tests:
   local `/prompt-size` command makes no model request, and compares count-only prompt and tool
   metrics with the real JSON posted to the loopback service. CI validates an allowlist before
   publishing the metrics. The result is an estimate for that synthetic fixture, not a measurement
-  of a real person's conversation or the physical phone.
+  of a real person's conversation or the physical phone. The updated fixture is prepared to return
+  a 413, followed after a manual retry by a 400 output-cap error, a 429 with `Retry-After`, and an
+  answer. The journey checks the refusal card, no blind 413 resend, the smaller request, countdown
+  and elapsed wait. This updated recovery scenario has not yet been run on Android.
 - After the journey, a force-stop on the disposable emulator, then a new app process verifying
   the stored chat and its displayed answer, Pet state, provider and dark appearance settings.
   No app data is cleared between the two runs.

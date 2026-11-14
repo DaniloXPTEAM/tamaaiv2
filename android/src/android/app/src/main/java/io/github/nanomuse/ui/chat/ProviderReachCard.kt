@@ -154,6 +154,22 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
             stringResource(R.string.nm_reach_rate_title),
             stringResource(R.string.nm_reach_rate_body),
         )
+        ProviderReach.Kind.REQUEST_TOO_LARGE -> Head(
+            Icons.Outlined.HourglassEmpty, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_request_large_title, host),
+            stringResource(R.string.nm_reach_request_large_body),
+        )
+        ProviderReach.Kind.RESPONSE_LIMIT -> Head(
+            Icons.Outlined.HourglassEmpty, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_output_limit_title, host),
+            if (reach.outputLimit != null) stringResource(R.string.nm_reach_output_limit_known, reach.outputLimit)
+            else stringResource(R.string.nm_reach_output_limit_unknown),
+        )
+        ProviderReach.Kind.SERVER_ERROR -> Head(
+            Icons.Outlined.CloudOff, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_server_error_title, host),
+            stringResource(R.string.nm_reach_server_error_body),
+        )
     }
 
     Surface(
@@ -200,7 +216,8 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                 ProviderReach.Kind.QUOTA -> listOf(R.string.nm_reach_help_wait, R.string.nm_reach_help_other)
                 ProviderReach.Kind.RATE_LIMITED -> listOf(R.string.nm_reach_help_moment)
                 ProviderReach.Kind.SIGNED_OUT, ProviderReach.Kind.AUTH_REJECTED,
-                ProviderReach.Kind.ACCESS_DENIED -> emptyList()
+                ProviderReach.Kind.ACCESS_DENIED, ProviderReach.Kind.REQUEST_TOO_LARGE,
+                ProviderReach.Kind.RESPONSE_LIMIT, ProviderReach.Kind.SERVER_ERROR -> emptyList()
                 ProviderReach.Kind.NO_CREDIT -> listOf(R.string.nm_reach_help_credit, R.string.nm_reach_help_free_model)
             }
             if (helps.isNotEmpty()) {
@@ -249,7 +266,8 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                                 Text(stringResource(R.string.nm_reach_network), fontSize = 13.sp, color = MuseTones.accent)
                             }
                         }
-                        if (reach.kind != ProviderReach.Kind.RATE_LIMITED) {
+                        if (reach.kind == ProviderReach.Kind.UNREACHABLE || reach.kind == ProviderReach.Kind.REGION_BLOCKED ||
+                            reach.kind == ProviderReach.Kind.QUOTA) {
                             TextButton(onClick = { ChatLinkResolver.dispatchDeepLink(context, OwnKeyPresets.deepLink(firstKeyVendor(context))) }) {
                                 Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
                                 Spacer(Modifier.width(5.dp))
@@ -304,8 +322,8 @@ private fun firstKeyVendor(context: Context): String {
 
 /** "2 h 05 min" / "40 min", for a Retry-After. */
 fun duration(context: Context, seconds: Int): String {
-    val minutes = (seconds + 59) / 60
-    val h = minutes / 60
-    val m = minutes % 60
-    return if (h > 0) context.getString(R.string.nm_reach_hours_minutes, h, m) else context.getString(R.string.nm_reach_minutes, maxOf(m, 1))
+    val minutes = (seconds.toLong() + 59L) / 60L
+    val h = minutes / 60L
+    val m = minutes % 60L
+    return if (h > 0L) context.getString(R.string.nm_reach_hours_minutes, h, m) else context.getString(R.string.nm_reach_minutes, maxOf(m, 1L))
 }

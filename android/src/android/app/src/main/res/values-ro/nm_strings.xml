@@ -1381,4 +1381,16 @@
     <string name="nm_prompt_size_image_no">Image model resolved locally: no. This does not test image generation.</string>
     <string name="nm_prompt_size_image_unknown">Image model resolved locally: could not check. This does not test image generation.</string>
     <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total</string>
+    <!-- nanoMuse: bounded provider refusals and retries. -->
+    <string name="nm_reach_request_large_title">Cererea este prea mare pentru %1$s</string>
+    <string name="nm_reach_request_large_body">Furnizorul a respins dimensiunea cererii. Sunt incluse și instrucțiunile, istoricul, instrumentele și atașamentele. Scurtează mesajul sau începe o conversație nouă.</string>
+    <string name="nm_reach_output_limit_title">%1$s a respins dimensiunea răspunsului</string>
+    <string name="nm_reach_output_limit_known">Furnizorul a indicat maximum %1$d tokenuri de răspuns.</string>
+    <string name="nm_reach_output_limit_unknown">Furnizorul a respins limita cerută fără să indice un maxim clar.</string>
+    <string name="nm_reach_server_error_title">Eroare a serviciului %1$s</string>
+    <string name="nm_reach_server_error_body">Furnizorul a returnat o eroare. Așteaptă puțin și încearcă din nou.</string>
+    <string name="nm_reach_output_retry">Furnizorul a indicat o limită de %1$d tokenuri de răspuns. Încerc din nou cu această limită.</string>
+    <string name="nm_reach_output_adjusted">Furnizorul a acceptat o nouă încercare cu cel mult %1$d tokenuri de răspuns.</string>
+    <string name="nm_reach_rate_wait">Limita de cereri a fost atinsă. Încerc din nou în %1$d s.</string>
+    <string name="nm_reach_server_retry">Furnizorul este instabil. Încerc din nou.</string>
 </resources>

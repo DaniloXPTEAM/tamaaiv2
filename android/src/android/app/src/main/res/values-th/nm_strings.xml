@@ -1373,4 +1373,16 @@
     <string name="nm_prompt_size_image_no">Image model resolved locally: no. This does not test image generation.</string>
     <string name="nm_prompt_size_image_unknown">Image model resolved locally: could not check. This does not test image generation.</string>
     <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total</string>
+    <!-- nanoMuse: bounded provider refusals and retries. -->
+    <string name="nm_reach_request_large_title">คำขอมีขนาดใหญ่เกินไปสำหรับ %1$s</string>
+    <string name="nm_reach_request_large_body">ผู้ให้บริการปฏิเสธขนาดของคำขอ โดยนับคำสั่ง ประวัติ เครื่องมือ และไฟล์แนบด้วย โปรดย่อข้อความหรือเริ่มบทสนทนาใหม่</string>
+    <string name="nm_reach_output_limit_title">%1$s ปฏิเสธขนาดคำตอบ</string>
+    <string name="nm_reach_output_limit_known">ผู้ให้บริการแจ้งจำนวนโทเคนคำตอบสูงสุด %1$d โทเคน</string>
+    <string name="nm_reach_output_limit_unknown">ผู้ให้บริการปฏิเสธขีดจำกัดคำตอบที่ขอโดยไม่ได้ระบุค่าสูงสุดที่ชัดเจน</string>
+    <string name="nm_reach_server_error_title">ข้อผิดพลาดของบริการ %1$s</string>
+    <string name="nm_reach_server_error_body">ผู้ให้บริการส่งข้อผิดพลาดกลับมา โปรดรอสักครู่แล้วลองใหม่</string>
+    <string name="nm_reach_output_retry">ผู้ให้บริการแจ้งขีดจำกัดคำตอบ %1$d โทเคน กำลังลองใหม่ด้วยขีดจำกัดนี้</string>
+    <string name="nm_reach_output_adjusted">ผู้ให้บริการยอมรับการลองใหม่โดยจำกัดคำตอบไม่เกิน %1$d โทเคน</string>
+    <string name="nm_reach_rate_wait">ถึงขีดจำกัดคำขอแล้ว จะลองใหม่ใน %1$d วินาที</string>
+    <string name="nm_reach_server_retry">ผู้ให้บริการไม่เสถียร กำลังลองใหม่</string>
 </resources>

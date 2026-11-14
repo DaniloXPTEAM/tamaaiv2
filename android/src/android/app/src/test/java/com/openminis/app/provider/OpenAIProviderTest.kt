@@ -343,6 +343,44 @@ class OpenAIProviderTest {
         Unit
     }
 
+    // nanoMuse: the HTTP client carries the exact, redacted response diagnostic per call.
+    @Test
+    fun `http size and rate failures retain their own bounded diagnostics`() = runBlocking {
+        suspend fun failure(response: MockResponse): LLMError {
+            server.enqueue(response)
+            return try {
+                provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+                throw AssertionError("Expected a provider error")
+            } catch (e: LLMError) { e }
+        }
+        val oversized = failure(MockResponse().setResponseCode(413)
+            .setBody("""{"error":{"message":"Request too large, test-key"}}"""))
+        val sizeReach = oversized.nmProviderReach!!
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.REQUEST_TOO_LARGE, sizeReach.kind)
+        assertEquals(413, sizeReach.httpStatus)
+        assertTrue(!sizeReach.detail.contains("test-key"))
+        assertTrue(!oversized.isFallbackable)
+
+        val output = failure(MockResponse().setResponseCode(400)
+            .setBody("""{"error":{"message":"max_completion_tokens 8192 must be less than or equal to 4096"}}"""))
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.RESPONSE_LIMIT, output.nmProviderReach?.kind)
+        assertEquals(4096, output.nmProviderReach?.outputLimit)
+        assertTrue(!output.isFallbackable)
+
+        val rate = failure(MockResponse().setResponseCode(429).setHeader("Retry-After", "1.5")
+            .setBody("""{"error":{"message":"Rate limit reached"}}"""))
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.RATE_LIMITED, rate.nmProviderReach?.kind)
+        assertEquals(2, rate.nmProviderReach?.retryAfterS)
+        assertEquals(429, rate.nmProviderReach?.httpStatus)
+
+        // nanoMuse: an empty header is present but invalid, not permission to guess a delay.
+        val blankWait = failure(MockResponse().setResponseCode(429).setHeader("Retry-After", "")
+            .setBody("""{"error":{"message":"Rate limit reached"}}"""))
+        assertTrue(blankWait.nmProviderReach!!.retryAfterPresent)
+        assertNull(blankWait.nmProviderReach!!.retryAfterS)
+        assertNull(io.github.nanomuse.net.ProviderRecovery.rateDelay(blankWait.nmProviderReach, false))
+    }
+
     @Test
     fun `sendMessage parses error body for ProviderError`() = runBlocking {
         val errorBody = """{"error":{"message":"The model does not exist","type":"invalid_request_error"}}"""

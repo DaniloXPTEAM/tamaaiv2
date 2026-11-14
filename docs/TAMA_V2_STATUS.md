@@ -9,10 +9,10 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
 | T0a: build, testes e hash | PARCIAL | `0bdb919`: [Android 43587360354](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43587360354), build debug e unitários passaram; APK instalado com hash conferido. Smoke falhou na jornada e no PRoot. Test Suite, iOS, harness e Commits passaram. | Repetir o CI após correções; investigar PRoot. Release e hash de release ainda não comprovados. |
-| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: build Android passou; a jornada atingiu o botão do relatório, mas expirou ao esperar o conteúdo, então não há tabela. Uma correção para manter o painel fora da lista e dispensar o teclado está preparada, ainda sem prova Android. Os testes de host usam substitutos para dependências Android. | Confirmar a correção no APK e publicar a tabela do pedido real ao servidor falso. |
+| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: build Android passou; a jornada atingiu o botão do relatório, mas expirou ao esperar o conteúdo, então não há tabela. `c0faef7` move o painel para fora da lista e dispensa o teclado, ainda sem prova Android. Os testes de host usam substitutos para dependências Android. | Confirmar a correção no APK e publicar a tabela do pedido real ao servidor falso. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
-| T1: erros e recuperação | PENDENTE | `ProviderReach` existente; novos códigos e recuperação ainda não implementados. | Tratar 413, limite de saída, 429 e 5xx com mocks, sem repetir ações executadas. |
+| T1: erros e recuperação | EM ANDAMENTO | Classificação 413, 400 por tamanho ou teto de saída, 429 e 5xx; 20 testes de classificação/recuperação passaram no host com substitutos, e uma fixture loopback foi preparada. Build Android e jornada com as novas falhas ainda não foram verificados. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
 | T2: detalhes tocáveis | PENDENTE | Sem prova de painel completo. | Implementar e testar na interface. |
 | T3: metas medidas | BLOQUEADA | Depende da tabela real de T0b. | Recalibrar perfis depois da medição. |
 | T4: roteador e perfis | PENDENTE | Perfis e orçamento ainda não integrados. | Criar roteador e testes por intenção, continuidade e orçamento. |
@@ -57,6 +57,20 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 - Tabela de caracteres/tokens do TAMA: **aguardando teste instrumentado da mudança atual**.
   Números de documentos anteriores são estimativas ou medições de outro contexto, não esta prova.
 
+## Verificação local de T1
+
+- 20 testes Kotlin de classificação e decisões de recuperação passaram no host; 11 testes de
+  medição e paridade também passaram. Usam JDK/Kotlin locais e substitutos para dependências
+  Android, portanto não comprovam compilação nem comportamento no aparelho.
+- A fixture HTTP do host respondeu 413, 400, 429 com `Retry-After: 3` e 200 para o prompt de
+  teste, sem afetar a chamada de título. O armazenamento isolado passou com preferências falsas.
+  O teste de interface preparado exige uma única chamada para o 413, retry manual, redução do
+  teto, contagem regressiva e intervalo monotônico de pelo menos 2,9 s antes da resposta local.
+  O teste HTTP do provider e toda essa jornada ainda precisam rodar no CI Android.
+- 19 testes Python direcionados passaram e um foi pulado; `git diff --check`, Ruff direcionado e
+  sintaxe do script de smoke passaram. O teste instrumentado do relatório recebeu um diagnóstico
+  de contagem de controles, sem registrar conteúdo da conversa, caso volte a expirar.
+
 ## Decisões e limites
 
 - `/prompt-size` monta um retrato local e mostra apenas contagens, sem enviar mensagem ao modelo,
@@ -71,6 +85,11 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 - Limites e capacidades desconhecidos permanecem desconhecidos até haver fonte ou configuração
   verificável. O valor de 8.000 TPM citado pelo dono é uma referência do caso relatado, não uma
   garantia universal das condições atuais de qualquer conta.
+- Na recuperação de saída, só um teto explícito, menor que o enviado e não ambíguo autoriza uma
+  tentativa adicional. O limite só é guardado após resposta concluída, por rota e modelo, e expira
+  em sete dias. Para 429 comum, o aplicativo espera uma vez até 60 s; sem cabeçalho usa cinco
+  segundos, e com cabeçalho inválido ou espera maior não inventa um prazo. Cota de uso não é
+  tratada como limite por minuto. Esses caminhos ainda precisam de prova na jornada Android.
 - A distribuição do APK continua uma decisão aberta do dono; por padrão, somente uso pessoal.
   Não editar `LICENSE`, `NOTICE` ou `THIRD_PARTY_NOTICES.md`, nem tomar decisão jurídica.
 - Sem prova no Poco X6 Pro, chave de teste autorizada, keystore próprio ou arte de origem, essas
