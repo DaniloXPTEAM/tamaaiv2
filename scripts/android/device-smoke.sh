@@ -189,6 +189,19 @@ else
   failed=1
 fi
 check_system_anr_state journey || failed=1
+# Only a failed journey may leave the count-and-geometry touch probe. Cap and validate before
+# retaining the file, so neither arbitrary output nor a stale previous run reaches the artifact.
+rm -f prompt-touch.log
+if ! $journey_ok; then
+  if adb exec-out run-as ai.tama.assistant cat cache/tama-prompt-touch.log 2>/dev/null \
+    | head -c 2049 > "$snapshot_tmp" && \
+    python3 "$SCRIPT_DIR/publish-test-summary.py" --check-prompt-touch "$snapshot_tmp"; then
+    mv "$snapshot_tmp" prompt-touch.log
+    echo '::notice title=prompt touch::Bounded event and geometry diagnostic captured'
+  else
+    echo '::warning title=prompt touch::Diagnostic unavailable or invalid'
+  fi
+fi
 # The isolated fixture writes count-only lines only after comparing them to the real loopback
 # request. Preserve them even if a later journey assertion fails, but label that failure in the
 # published report and never treat the metrics as a substitute for a passing journey.

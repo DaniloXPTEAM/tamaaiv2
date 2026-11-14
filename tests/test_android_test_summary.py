@@ -99,6 +99,57 @@ def test_system_anr_recovery_and_missing_status_are_never_silent(
     assert "::error title=Emulator health::restart system-ANR status was not captured" in output
 
 
+VALID_TOUCH = (
+    "v1 first none\n"
+    "v1 second opened\n"
+    "v1 after ROOT_DOWN,ROW_DOWN,ROOT_END,ROW_END,ROW_CLICK,CHAT_CALLBACK,OPEN_REQUEST,SHEET_MOUNT\n"
+    "v1 rect before 571 1347 697 1473\n"
+    "v1 rect immediate 571 1164 697 1290\n"
+    "v1 rect wait unknown\n"
+    "v1 focus focused\n"
+)
+
+
+def test_prompt_touch_summary_accepts_only_the_validated_fixed_diagnostic(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "prompt-touch.log").write_bytes(VALID_TOUCH.encode("ascii"))
+    assert summary.read_prompt_touch(tmp_path / "prompt-touch.log") == VALID_TOUCH.splitlines()
+    assert summary.main() == 0
+    output = capsys.readouterr().out
+    assert "::notice title=Prompt touch diagnostics::v1 first none | v1 second opened" in output
+    assert "ROOT_DOWN,ROW_DOWN,ROOT_END,ROW_END,ROW_CLICK" in output
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        VALID_TOUCH.replace("ROW_DOWN", "PRIVATE"),
+        VALID_TOUCH.replace("v1 first none", "v1 first ROW_END"),  # not a prefix of after
+        VALID_TOUCH.replace("v1 second opened", "v1 second ::error::private"),
+        VALID_TOUCH.replace("v1 rect wait unknown", "v1 rect wait 1 2 3 private"),
+        VALID_TOUCH.replace("v1 focus focused", "v1 focus private"),
+        VALID_TOUCH.replace("\n", "\r\n"),
+        VALID_TOUCH.rstrip("\n"),
+        VALID_TOUCH + "private" * 1000,
+        VALID_TOUCH.replace("ROW_DOWN", ",".join(["ROW_DOWN"] * 25)),
+    ],
+)
+def test_prompt_touch_summary_never_publishes_invalid_or_private_text(
+    tmp_path, monkeypatch, capsys, contents: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "prompt-touch.log"
+    path.write_bytes(contents.encode("ascii"))
+    assert summary.read_prompt_touch(path) is None
+    assert summary.main() == 0
+    output = capsys.readouterr().out
+    assert "::warning title=Prompt touch diagnostics::Invalid diagnostic omitted" in output
+    assert "private" not in output.lower()
+    assert "::notice title=Prompt touch diagnostics::" not in output
+
+
 def test_process_snapshot_is_published_only_as_a_valid_app_tree(
     tmp_path, monkeypatch, capsys
 ) -> None:

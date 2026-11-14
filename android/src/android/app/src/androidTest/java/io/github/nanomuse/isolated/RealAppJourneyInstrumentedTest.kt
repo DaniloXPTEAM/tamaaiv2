@@ -80,6 +80,58 @@ class RealAppJourneyInstrumentedTest {
     private fun radio(id: Int) = compose.onNode(hasText(text(id)) and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton))
     private fun back() = compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
 
+    // Title generation also quotes the prompt, so match the exact user message.
+    private fun isFixtureChat(request: org.json.JSONObject): Boolean {
+        val messages = request.optJSONArray("messages") ?: return false
+        return (0 until messages.length()).any { index ->
+            val message = messages.optJSONObject(index)
+            message?.optString("role") == "user" && message.optString("content") == LocalOpenAiFixture.PROMPT
+        }
+    }
+
+    private fun rectEvidence(label: String, rect: androidx.compose.ui.geometry.Rect?): String =
+        "v1 rect $label " + if (rect == null) "unknown" else
+            listOf(rect.left, rect.top, rect.right, rect.bottom).joinToString(" ") { it.toInt().toString() }
+
+    private fun capturePromptMetrics(chat: org.json.JSONObject) {
+        // Check the actual request received by the local fixture, not just a source-level
+        // call site. Publish lengths only, never prompt text, model messages or keys.
+        val messages = chat.getJSONArray("messages")
+        val system = (0 until messages.length()).map { messages.getJSONObject(it) }
+            .single { it.optString("role") == "system" }.getString("content")
+        assertTrue(system.contains("\nAndroid-only tools (android-* CLIs):\n"))
+        assertEquals("The actual system prompt was not dieted", system, PromptDiet.prompt(system))
+        val tools = chat.getJSONArray("tools")
+        val browser = (0 until tools.length()).map { tools.getJSONObject(it).getJSONObject("function") }
+            .single { it.getString("name") == "browser_use" }
+        val expectedBrowser = PromptDiet.tools(AgentTools.makeAgentTools()).single { it.name == "browser_use" }
+        assertEquals(expectedBrowser.description, browser.getString("description"))
+        val events = synchronized(promptEvents) { promptEvents.toList() }
+        val systemEvent = events.filterIsInstance<PromptSizeTrace.Event.System>().last()
+        val toolEvent = events.filterIsInstance<PromptSizeTrace.Event.Tools>().last()
+        val requestEvent = events.filterIsInstance<PromptSizeTrace.Event.Request>().last()
+        val systemTotal = systemEvent.rows.single { it.label == PromptSize.Section.TOTAL }
+        val toolTotal = toolEvent.rows.single { it.label == PromptSize.Tool.TOTAL }
+        assertEquals("System metric differs from the fixture's actual request", system.length, systemTotal.afterChars)
+        assertEquals("Tool metric differs from the fixture's actual request", tools.toString().length, toolTotal.afterChars)
+        assertEquals("Request prompt differs from the fixture", system.length, requestEvent.systemChars)
+        assertTrue("The base diet did not reduce this fixture", systemTotal.beforeChars > systemTotal.afterChars)
+        val browserMetric = toolEvent.rows.single { it.label == PromptSize.Tool.BROWSER_USE }
+        assertTrue("The browser diet did not reduce this fixture", browserMetric.beforeChars > browserMetric.afterChars)
+        val metricLines = events.flatMap { event ->
+            when (event) {
+                is PromptSizeTrace.Event.System -> PromptSize.logLines("system", event.rows) +
+                    "v1 image READY ${when (event.imageReady) { true -> 1; false -> 0; null -> -1 }}"
+                is PromptSizeTrace.Event.Tools -> PromptSize.logLines("tool", event.rows)
+                is PromptSizeTrace.Event.Request -> listOf("v1 request SYSTEM ${event.systemChars}")
+            }
+        }
+        File(context.cacheDir, "tama-prompt-size.log").writeText(
+            (metricLines + "v1 wire SYSTEM ${system.length}" + "v1 wire TOOLS ${tools.toString().length}")
+                .joinToString("\n", postfix = "\n"),
+        )
+    }
+
     private fun capture(name: String) {
         // Compose screenshots omit system windows, so don't let a passing journey conceal
         // an ANR dialog or another window that prevented the Activity from receiving focus.
@@ -123,6 +175,11 @@ class RealAppJourneyInstrumentedTest {
 
     @Test fun onboardingNavigationCareAndRealChatWorkWithALocalFixture() {
         requireIsolatedEmulator()
+        // Clear our own scratch evidence before any journey assertion, even on a test re-run.
+        listOf("tama-prompt-touch.log", "tama-prompt-size.log").forEach { name ->
+            val old = File(context.cacheDir, name)
+            check(!old.exists() || old.delete()) { "Could not remove stale isolated test evidence" }
+        }
         compose.waitUntil(45_000) { app.subsystemsReady() && app.providerRepository.configLoaded.value }
         assertTrue("The journey requires a fresh provider store", app.providerRepository.config.value.instances.isEmpty())
         assertTrue("The journey requires a fresh chat store", runBlocking { app.chatRepository.dao.listSessions() }.isEmpty())
@@ -242,35 +299,73 @@ class RealAppJourneyInstrumentedTest {
             val promptTarget = compose.onNodeWithContentDescription(text(R.string.nm_prompt_size_details))
             val boundsBeforeTap = promptTarget.fetchSemanticsNode().boundsInRoot
             promptTarget.assertIsDisplayed().performClick()
-            try {
+            val boundsImmediatelyAfterTap = runCatching { promptTarget.fetchSemanticsNode().boundsInRoot }.getOrNull()
+            var promptTouchFailure: AssertionError? = null
+            val reportVisible = try {
                 compose.waitUntil(30_000) {
                     compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isNotEmpty()
                 }
+                true
             } catch (failure: ComposeTimeoutException) {
                 // nanoMuse: count fixed UI labels only, never dump the prompt or conversation.
                 val close = compose.onAllNodes(hasContentDescription(text(R.string.standard_sheet_close))).fetchSemanticsNodes().size
                 val titles = compose.onAllNodes(hasText(text(R.string.nm_prompt_size_title))).fetchSemanticsNodes().size
-                val stages = synchronized(promptDetailEvents) { promptDetailEvents.joinToString(",") { it.name } }
-                val boundsAfterTap = runCatching { promptTarget.fetchSemanticsNode().boundsInRoot }.getOrNull()
+                val firstStages = synchronized(promptDetailEvents) { promptDetailEvents.joinToString(",") { it.name } }
+                val boundsAfterWait = runCatching { promptTarget.fetchSemanticsNode().boundsInRoot }.getOrNull()
                 val windowFocused = compose.activity.hasWindowFocus()
-                throw AssertionError(
-                    "Prompt report did not appear; close controls=$close, titles=$titles, stages=$stages, " +
-                        "target before=$boundsBeforeTap after=$boundsAfterTap, windowFocus=$windowFocused",
+                // The previous run showed a displaced target. A second physical touch after
+                // the wait is diagnostic only: it can never turn the first failure green.
+                val retryAllowed = close == 0 && windowFocused
+                val retried = retryAllowed && runCatching {
+                    promptTarget.assertIsDisplayed().performClick()
+                    compose.waitUntil(15_000) {
+                        compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isNotEmpty()
+                    }
+                }.isSuccess
+                val allStages = synchronized(promptDetailEvents) { promptDetailEvents.joinToString(",") { it.name } }
+                val retryResult = if (!retryAllowed) "skipped" else if (retried) "opened" else "absent"
+                // The shell reads this separately even if a later assertion fails. Only the
+                // allowlisted event names and rounded UI bounds leave the isolated emulator.
+                File(context.cacheDir, "tama-prompt-touch.log").writeText(listOf(
+                    "v1 first ${firstStages.ifEmpty { "none" }}",
+                    "v1 second $retryResult",
+                    "v1 after ${allStages.ifEmpty { "none" }}",
+                    rectEvidence("before", boundsBeforeTap),
+                    rectEvidence("immediate", boundsImmediatelyAfterTap),
+                    rectEvidence("wait", boundsAfterWait),
+                    "v1 focus ${if (windowFocused) "focused" else "unfocused"}",
+                ).joinToString("\n", postfix = "\n"))
+                promptTouchFailure = AssertionError(
+                    "Prompt report did not appear on first touch; close=$close, titles=$titles, " +
+                        "firstStages=$firstStages, afterRetryStages=$allStages, secondTouchOpened=$retried, " +
+                        "target before=$boundsBeforeTap immediatelyAfter=$boundsImmediatelyAfterTap " +
+                        "afterWait=$boundsAfterWait, windowFocus=$windowFocused",
                     failure,
                 )
+                // Do not send a diagnostic touch or Back to an unrecognized system window.
+                if (!compose.activity.hasWindowFocus()) throw promptTouchFailure!!
+                if (!retried && compose.onAllNodes(hasContentDescription(text(R.string.standard_sheet_close))).fetchSemanticsNodes().isNotEmpty()) {
+                    back()
+                    compose.waitUntil(30_000) {
+                        compose.onAllNodes(hasContentDescription(text(R.string.standard_sheet_close))).fetchSemanticsNodes().isEmpty()
+                    }
+                }
+                retried
             }
-            val detailStages = synchronized(promptDetailEvents) { promptDetailEvents.toList() }
-            assertTrue("Prompt detail did not use the expected host", detailStages.containsAll(listOf(
-                PromptSizeDetailTrace.Event.ROW_CLICK,
-                PromptSizeDetailTrace.Event.CHAT_CALLBACK,
-                PromptSizeDetailTrace.Event.OPEN_REQUEST,
-                PromptSizeDetailTrace.Event.SHEET_MOUNT,
-            )))
+            if (reportVisible) {
+                val detailStages = synchronized(promptDetailEvents) { promptDetailEvents.toList() }
+                assertTrue("Prompt detail did not use the expected host", detailStages.containsAll(listOf(
+                    PromptSizeDetailTrace.Event.ROW_CLICK,
+                    PromptSizeDetailTrace.Event.CHAT_CALLBACK,
+                    PromptSizeDetailTrace.Event.OPEN_REQUEST,
+                    PromptSizeDetailTrace.Event.SHEET_MOUNT,
+                )))
+                back()
+                compose.waitUntil(30_000) {
+                    compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isEmpty()
+                }
+            }
             assertEquals(postsBeforeMeasure, synchronized(fixture.posts) { fixture.posts.size })
-            back()
-            compose.waitUntil(30_000) {
-                compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isEmpty()
-            }
 
             // nanoMuse: first show a terminal 413 without blindly resending it. A manual retry
             // then encounters a smaller output cap and one bounded 429 before the local answer.
@@ -288,6 +383,12 @@ class RealAppJourneyInstrumentedTest {
             }
             assertEquals("A 413 was sent again without shrinking it", 1,
                 synchronized(fixture.promptRequestNanos) { fixture.promptRequestNanos.size })
+            // Record a validated baseline from the actual failed wire request even if a later
+            // panel or recovery assertion fails. The publisher labels an incomplete journey.
+            val firstChats = synchronized(fixture.posts) { fixture.posts.filter(::isFixtureChat) }
+            assertEquals("Expected one fixture chat before the manual retry", 1, firstChats.size)
+            assertEquals(LocalOpenAiFixture.MODEL_ID, firstChats.single().optString("model"))
+            capturePromptMetrics(firstChats.single())
             compose.onNodeWithText(text(R.string.nm_reach_request_large_body)).performScrollTo().assertIsDisplayed()
             compose.onNodeWithText(text(R.string.nm_reach_try_again)).performScrollTo().performClick()
             // nanoMuse: at least one visible countdown value must accompany the bounded wait.
@@ -304,15 +405,8 @@ class RealAppJourneyInstrumentedTest {
                 pet.daily.count(PetMission.CONVERSATION) == 1 && pet.daily.completed(PetMission.TASK)
             }
             val requests = synchronized(fixture.posts) { fixture.posts.toList() }
-            // Title generation also streams and quotes the prompt. Match the actual user
-            // message exactly, not an auxiliary request that merely contains its text.
-            val chats = requests.filter { request ->
-                val messages = request.optJSONArray("messages") ?: return@filter false
-                (0 until messages.length()).any { index ->
-                    val message = messages.optJSONObject(index)
-                    message?.optString("role") == "user" && message.optString("content") == LocalOpenAiFixture.PROMPT
-                }
-            }
+            // Match the actual user message, not auxiliary title generation.
+            val chats = requests.filter(::isFixtureChat)
             val summary = requests.map { "${it.optString("model")}:stream=${it.optBoolean("stream")}" }
             assertTrue("The fixture did not receive the person's message; requests=$summary", chats.isNotEmpty())
             assertTrue("Expected streaming chat; requests=$summary", chats.all { it.optBoolean("stream") })
@@ -330,44 +424,10 @@ class RealAppJourneyInstrumentedTest {
             assertEquals(4, attempts.size)
             assertTrue("Retry-After was not respected", attempts[3] - attempts[2] >= 2_900_000_000L)
             awaitText(context.getString(R.string.nm_reach_output_adjusted, 128), 30_000)
-            // Check the actual request received by the local fixture, not just a source-level
-            // call site. Publish lengths only, never prompt text, model messages or keys.
-            val chat = chats.last()
-            val messages = chat.getJSONArray("messages")
-            val system = (0 until messages.length()).map { messages.getJSONObject(it) }
-                .single { it.optString("role") == "system" }.getString("content")
-            assertTrue(system.contains("\nAndroid-only tools (android-* CLIs):\n"))
-            assertEquals("The actual system prompt was not dieted", system, PromptDiet.prompt(system))
-            val tools = chat.getJSONArray("tools")
-            val browser = (0 until tools.length()).map { tools.getJSONObject(it).getJSONObject("function") }
-                .single { it.getString("name") == "browser_use" }
-            val expectedBrowser = PromptDiet.tools(AgentTools.makeAgentTools()).single { it.name == "browser_use" }
-            assertEquals(expectedBrowser.description, browser.getString("description"))
-            val events = synchronized(promptEvents) { promptEvents.toList() }
-            val systemEvent = events.filterIsInstance<PromptSizeTrace.Event.System>().last()
-            val toolEvent = events.filterIsInstance<PromptSizeTrace.Event.Tools>().last()
-            val requestEvent = events.filterIsInstance<PromptSizeTrace.Event.Request>().last()
-            val systemTotal = systemEvent.rows.single { it.label == PromptSize.Section.TOTAL }
-            val toolTotal = toolEvent.rows.single { it.label == PromptSize.Tool.TOTAL }
-            assertEquals("System metric differs from the fixture's actual request", system.length, systemTotal.afterChars)
-            assertEquals("Tool metric differs from the fixture's actual request", tools.toString().length, toolTotal.afterChars)
-            assertEquals("Request prompt differs from the fixture", system.length, requestEvent.systemChars)
-            assertTrue("The base diet did not reduce this fixture", systemTotal.beforeChars > systemTotal.afterChars)
-            val browserMetric = toolEvent.rows.single { it.label == PromptSize.Tool.BROWSER_USE }
-            assertTrue("The browser diet did not reduce this fixture", browserMetric.beforeChars > browserMetric.afterChars)
-            val metricLines = events.flatMap { event ->
-                when (event) {
-                    is PromptSizeTrace.Event.System -> PromptSize.logLines("system", event.rows) +
-                        "v1 image READY ${when (event.imageReady) { true -> 1; false -> 0; null -> -1 }}"
-                    is PromptSizeTrace.Event.Tools -> PromptSize.logLines("tool", event.rows)
-                    is PromptSizeTrace.Event.Request -> listOf("v1 request SYSTEM ${event.systemChars}")
-                }
-            }
-            File(context.cacheDir, "tama-prompt-size.log").writeText(
-                (metricLines + "v1 wire SYSTEM ${system.length}" + "v1 wire TOOLS ${tools.toString().length}")
-                    .joinToString("\n", postfix = "\n"),
-            )
+            capturePromptMetrics(chats.last()) // recheck the recovered wire request too
             assertTrue("Fixture errors: ${fixture.errors}", fixture.errors.isEmpty())
+            // A later recovery and validated metrics are useful evidence, not a passing journey.
+            promptTouchFailure?.let { throw AssertionError("${it.message}; recovery sequence and wire metrics passed", it) }
             val session = checkNotNull(MainChat.persisted(context))
             val rows = runBlocking { app.chatRepository.dao.loadMessages(session) }
             assertTrue("User message was not persisted", rows.any { it.role == "user" && it.partsJson.contains(LocalOpenAiFixture.PROMPT) })

@@ -12,6 +12,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import java.io.File
+import io.github.nanomuse.ui.chat.tracePromptSizePointer
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -606,7 +607,7 @@ internal fun FallbackInfoBlock(
                         // touch target is 48dp and stays inside the lazy row's bounds. An
                         // expanded hit area outside a 14dp row can be clipped or overlap the
                         // composer, particularly while the keyboard is visible.
-                        IconButton(onClick = open, modifier = Modifier.size(48.dp)) {
+                        IconButton(onClick = open, modifier = Modifier.size(48.dp).tracePromptSizePointer()) {
                             Icon(
                                 imageVector = Icons.Default.Info,
                                 contentDescription = stringResource(R.string.nm_prompt_size_details),

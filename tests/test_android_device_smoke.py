@@ -101,6 +101,17 @@ elif args[:2] == ["exec-out", "run-as"]:
             print("v1 wire SYSTEM 123")
         else:
             sys.exit(1)
+    elif path.endswith("tama-prompt-touch.log"):
+        if mode == "journey-failure-with-metrics":
+            print("v1 first none\nv1 second opened\nv1 after ROOT_DOWN,ROW_DOWN,ROOT_END,ROW_END,ROW_CLICK\n"
+                  "v1 rect before 1 2 3 4\nv1 rect immediate 1 2 3 4\n"
+                  "v1 rect wait unknown\nv1 focus focused")
+        elif mode == "journey-failure-with-invalid-touch":
+            print("fake-private-data")
+        elif mode == "journey-failure-with-oversized-touch":
+            print("fake-private-data" * 1000)
+        else:
+            sys.exit(1)
     elif path.endswith("sandbox-process-snapshot.txt"):
         if mode == "sandbox-failure":
             print("v1 root=123 truncated=0\nv1 process pid=123 ppid=1 state=S wait=zero_or_hidden kind=app tracer=unknown")
@@ -142,7 +153,7 @@ elif args[:3] == ["shell", "am", "instrument"]:
     if ((mode == "no-tests" and is_pet) or (mode == "no-screen-tests" and is_screen)
             or (mode == "journey-empty" and is_journey)):
         print("OK (0 tests)")
-    elif ((mode == "instrument-failure" and is_pet) or (mode in ("journey-failure", "journey-failure-with-metrics") and is_journey)
+    elif ((mode == "instrument-failure" and is_pet) or (mode.startswith("journey-failure") and is_journey)
             or (mode == "restart-failure" and is_restart)
             or (mode.startswith("sandbox-") and mode != "sandbox-skipped" and is_sandbox)
             or (mode == "prompt-detail-failure" and is_prompt_detail)
@@ -491,11 +502,27 @@ def test_partial_count_evidence_is_preserved_without_claiming_a_passing_journey(
     result, calls = run("journey-failure-with-metrics")
     assert result.returncode != 0
     assert (checkout / "prompt-size.log").read_text().strip() == "v1 wire SYSTEM 123"
+    assert (
+        "v1 after ROOT_DOWN,ROW_DOWN,ROOT_END,ROW_END,ROW_CLICK"
+        in (checkout / "prompt-touch.log").read_text()
+    )
     assert "persisted-state verification was not run" in result.stdout
     assert not any(
         name == "adb" and "io.github.nanomuse.isolated.AfterProcessStopInstrumentedTest" in args
         for name, args in calls
     )
+
+
+@pytest.mark.parametrize(
+    "mode", ["journey-failure-with-invalid-touch", "journey-failure-with-oversized-touch"]
+)
+def test_invalid_touch_probe_is_never_retained_in_artifacts(smoke, mode: str) -> None:
+    checkout, run = smoke
+    result, _ = run(mode)
+    assert result.returncode != 0
+    assert not (checkout / "prompt-touch.log").exists()
+    assert "Diagnostic unavailable or invalid" in result.stdout
+    assert "fake-private-data" not in result.stdout
 
 
 def test_failed_sandbox_does_not_erase_independent_journey_evidence(smoke) -> None:

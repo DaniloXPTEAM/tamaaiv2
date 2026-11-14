@@ -333,6 +333,7 @@ jobs:
             system-anr-policy-instrumentation.log
             android-runtime.log
             prompt-size.log
+            prompt-touch.log
             prompt-size-summary.md
             arm-runtime.txt
             installed-apk-sha256.txt

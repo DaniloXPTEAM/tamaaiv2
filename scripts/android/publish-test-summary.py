@@ -35,6 +35,52 @@ PROCESS_ROW = re.compile(
     r"kind=(app|proot|busybox|loader|translation|sh|other) "
     r"tracer=([0-9]{1,10}|unknown)\Z"
 )
+PROMPT_EVENTS = frozenset(
+    "ROOT_DOWN ROOT_END ROOT_CANCEL ROW_DOWN ROW_END ROW_CANCEL ROW_CLICK CHAT_CALLBACK OPEN_REQUEST "
+    "SHEET_MOUNT SHEET_DISMISS SHEET_UNMOUNT HOST_UNMOUNT".split()
+)
+PROMPT_RECT = re.compile(r"(?:unknown|(-?\d{1,6}) (-?\d{1,6}) (-?\d{1,6}) (-?\d{1,6}))\Z")
+
+
+def read_prompt_touch(path: Path) -> list[str] | None:
+    """Accept only bounded fixed events and UI bounds, never arbitrary emulator text."""
+    try:
+        with path.open("rb") as source:
+            data = source.read(2049)
+        if not data.endswith(b"\n") or len(data) > 2048 or b"\r" in data:
+            return None
+        lines = data[:-1].decode("ascii").split("\n")
+    except (OSError, UnicodeError):
+        return None
+    if (
+        len(lines) != 7
+        or not lines[0].startswith("v1 first ")
+        or not lines[2].startswith("v1 after ")
+    ):
+        return None
+
+    def events(line: str, prefix: str) -> list[str] | None:
+        text = line.removeprefix(prefix)
+        result = [] if text == "none" else text.split(",")
+        if len(result) > 24 or any(event not in PROMPT_EVENTS for event in result):
+            return None
+        return result
+
+    first = events(lines[0], "v1 first ")
+    after = events(lines[2], "v1 after ")
+    if (
+        first is None
+        or after is None
+        or after[: len(first)] != first
+        or lines[1] not in {"v1 second opened", "v1 second absent", "v1 second skipped"}
+        or lines[6] not in {"v1 focus focused", "v1 focus unfocused"}
+    ):
+        return None
+    for line, label in zip(lines[3:6], ("before", "immediate", "wait"), strict=True):
+        prefix = f"v1 rect {label} "
+        if not line.startswith(prefix) or not PROMPT_RECT.fullmatch(line.removeprefix(prefix)):
+            return None
+    return lines
 
 
 def read_process_snapshot(path: Path) -> list[str] | None:
@@ -121,6 +167,14 @@ def main() -> int:
         elif log.is_file() and SUMMARY.search(log.read_text(encoding="utf-8", errors="replace")):
             print(f"::error title=Emulator health::{phase} system-ANR status was not captured")
 
+    touch = Path("prompt-touch.log")
+    if touch.exists():
+        touch_lines = read_prompt_touch(touch)
+        if touch_lines is None:
+            print("::warning title=Prompt touch diagnostics::Invalid diagnostic omitted")
+        else:
+            # The strict parser admits only fixed event labels, numbers and separators.
+            print(f"::notice title=Prompt touch diagnostics::{' | '.join(touch_lines)}")
     snapshot = Path("sandbox-process-snapshot.txt")
     if snapshot.is_file():
         if lines := read_process_snapshot(snapshot):
@@ -166,4 +220,6 @@ if __name__ == "__main__":
         raise SystemExit(main())
     if len(sys.argv) == 3 and sys.argv[1] == "--check-sandbox-snapshot":
         raise SystemExit(0 if read_process_snapshot(Path(sys.argv[2])) else 1)
+    if len(sys.argv) == 3 and sys.argv[1] == "--check-prompt-touch":
+        raise SystemExit(0 if read_prompt_touch(Path(sys.argv[2])) else 1)
     raise SystemExit(2)

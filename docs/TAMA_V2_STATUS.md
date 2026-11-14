@@ -8,8 +8,8 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | [Android 43608695720](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43608695720): build, unitários e APK instalado correspondente passaram; jornada e PRoot falharam. | Investigar sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | Em `43608695720`, três testes Compose sintéticos passaram; na jornada, nenhum evento de clique foi registrado e não houve tabela. Aumento do alvo e teste com wrappers do chat aguardam CI. | Verificar o toque físico na tela real e publicar a tabela do pedido ao servidor falso no Android. |
+| T0a: build, testes e hash | PARCIAL | [Android 43615334613](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43615334613): build, unitários e APK instalado correspondente passaram; jornada e PRoot falharam. | Investigar sem reduzir os gates. Release ainda não comprovado. |
+| T0b: medir prompt | EM ANDAMENTO | Em `43615334613`, três testes Compose sintéticos passaram; na jornada, o alvo de 48 dp não recebeu clique e não houve tabela. Uma nova sonda de eventos e limites aguarda CI. | Investigar o toque e publicar a tabela do pedido ao servidor falso no Android. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
@@ -25,6 +25,28 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; tracker e aviso sintético passaram no build e emulação `43608695720`. Isso não prova um turno em segundo plano nem o Poco. `mediaPlayback` permanece inalterado. | Testar turno lento e investigar o Poco com autorização. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, Python passou no host e em Linux/macOS no CI; Windows experimental ainda falhou. Arte e keystore dependem do dono. | Investigar Windows; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI de `1ee47f7`: alvo maior não resolveu a jornada
+
+- [Android 43615334613](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43615334613):
+  build, unitários e os três testes sintéticos do relatório passaram. O APK e a leitura instalada
+  coincidiram em 70.681.148 bytes, SHA-256
+  `74ccb43ef5b315f5928e089304891e7dd7ebdd3382541487219d70cb0ef92176`; certificado reportado
+  `ba2bec7daecc7fdd0dffe581b392ce62282410f2a9bc7fe8a52253466e254da1`. A assinatura no telefone
+  segue desconhecida: **não desinstalar nem limpar dados**.
+- A jornada voltou a falhar: não houve `ROW_CLICK`; os limites do alvo mudaram de
+  `y=1347..1473` antes do toque para `y=1164..1290` depois da espera, com foco na janela. O
+  teclado aparece na captura final; isso não demonstra a causa nem a entrega do toque. Não houve
+  medição do pedido, teste da recuperação T1 ou restart. PRoot também expirou; o retrato da árvore
+  mostra app em `poll`, filho em `wait` e neto em `ptrace`, sem provar causa ou comportamento no
+  telefone ARM. Test Suite `43615334632` terminou com sucesso agregado, mas Windows experimental
+  falhou.
+- Preparada uma sonda passiva, só no build debug, que registra eventos fixos na raiz do chat e
+  no botão, sem consumir gestos; o teste salva apenas esses nomes, limites arredondados e foco.
+  Uma segunda tentativa serve somente para diagnóstico e **não transforma a primeira falha em
+  aprovação**. Se a jornada puder prosseguir, a medição será conferida com o primeiro pedido
+  real ao servidor falso e identificada como parcial caso a jornada não termine. A sonda e essa
+  coleta ainda dependem de compilação e teste Android; não demonstram correção.
 
 ## CI de `14f8def`: toque não chegou ao painel na jornada
 
@@ -87,7 +109,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   uma hipótese para o toque perdido, não uma causa comprovada. O teste sintético foi ampliado
   para usar os wrappers reais de rolagem e seleção e o rodapé medido; a jornada captura apenas
   limites do alvo e foco da janela quando expira, sem registrar relatório ou conversa. Essas
-  alterações ainda precisam passar no CI Android e na jornada real.
+  alterações passaram nos testes sintéticos do CI `43615334613`, mas não na jornada real.
 
 ## Segundo plano: investigação, aviso de bateria e recusa de serviço
 

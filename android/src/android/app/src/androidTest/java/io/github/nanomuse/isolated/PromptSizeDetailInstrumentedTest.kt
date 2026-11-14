@@ -117,6 +117,10 @@ class PromptSizeDetailInstrumentedTest {
         compose.waitUntil(30_000) { compose.onAllNodes(hasText(report)).fetchSemanticsNodes().isEmpty() }
         val stages = synchronized(events) { events.toList() }
         val expected = listOf(
+            PromptSizeDetailTrace.Event.ROOT_DOWN,
+            PromptSizeDetailTrace.Event.ROW_DOWN,
+            PromptSizeDetailTrace.Event.ROOT_END,
+            PromptSizeDetailTrace.Event.ROW_END,
             PromptSizeDetailTrace.Event.ROW_CLICK,
             PromptSizeDetailTrace.Event.OPEN_REQUEST,
             PromptSizeDetailTrace.Event.SHEET_MOUNT,
