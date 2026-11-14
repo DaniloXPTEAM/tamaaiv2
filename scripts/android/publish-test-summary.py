@@ -17,6 +17,7 @@ CHECKS = (
     ("restart-instrumentation.log", "Process restart", 1),
     ("sandbox-instrumentation.log", "Packaged sandbox", 1),
     ("browser-guard-instrumentation.log", "Browser guard", 1),
+    ("system-anr-policy-instrumentation.log", "System ANR dialog policy", 1),
 )
 SUMMARY = re.compile(r"^OK \((\d+) tests?\)", re.MULTILINE)
 FAILED = re.compile(
@@ -48,6 +49,19 @@ def main() -> int:
         # Escape workflow-command metacharacters so the output cannot create extra commands.
         details = details.replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
         print(f"::error title={label}::{details}")
+    # The test may continue after closing one known system ANR to collect evidence, but the
+    # smoke must remain failed. Never echo an unexpected status file's contents.
+    for phase in ("journey", "restart"):
+        state = Path(f"{phase}-system-anr-recovery.txt")
+        log = Path(f"{phase}-instrumentation.log")
+        if state.is_file():
+            if state.read_text(encoding="utf-8", errors="replace").strip() != "none":
+                print(
+                    f"::error title=Emulator health::{phase} needed system-ANR intervention or had invalid status"
+                )
+        elif log.is_file() and SUMMARY.search(log.read_text(encoding="utf-8", errors="replace")):
+            print(f"::error title=Emulator health::{phase} system-ANR status was not captured")
+
     process = Path("journey-process.txt")
     if process.is_file():
         facts = " ".join(process.read_text(encoding="utf-8", errors="replace").splitlines())

@@ -84,7 +84,17 @@ class RealAppJourneyInstrumentedTest {
         try {
             compose.waitUntil(15_000) { compose.activity.hasWindowFocus() }
         } catch (failure: ComposeTimeoutException) {
-            throw AssertionError("The app window never gained focus; inspect the full-screen diagnostic", failure)
+            // Only the named Pixel Launcher or Messages ANR can be closed in the disposable emulator.
+            // The smoke still fails on any recovery; this only lets later checks gather evidence.
+            val recovered = runCatching {
+                IsolatedSystemAnrRecovery.closeIfRecognized(context, IsolatedSystemAnrRecovery.Phase.JOURNEY)
+            }.getOrDefault(false)
+            if (!recovered) throw AssertionError("The app window never gained focus; inspect the full-screen diagnostic", failure)
+            try {
+                compose.waitUntil(15_000) { compose.activity.hasWindowFocus() }
+            } catch (stillBlocked: ComposeTimeoutException) {
+                throw AssertionError("The app window did not regain focus after closing the system dialog", stillBlocked)
+            }
         }
         compose.waitForIdle()
         val screenshot = compose.onRoot().captureToImage().asAndroidBitmap()
@@ -100,6 +110,7 @@ class RealAppJourneyInstrumentedTest {
         if (InstrumentationRegistry.getArguments().getString("tama_isolated") == "true") {
             runCatching {
                 requireIsolatedEmulator()
+                IsolatedSystemAnrRecovery.recordNoAttempt(context, IsolatedSystemAnrRecovery.Phase.JOURNEY)
                 val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return@runCatching
                 File(context.cacheDir, "journey-last-screen.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 bitmap.recycle()

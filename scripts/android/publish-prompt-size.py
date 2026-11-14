@@ -22,6 +22,11 @@ REQUIRED_TOOLS = {"SHELL_EXECUTE", "BROWSER_USE", "ARRAY_SEPARATORS", "TOTAL"}
 METRIC = re.compile(r"v1 (system|tool) ([A-Z_]+) (\d+) (\d+) (\d+) (\d+)\Z")
 WIRE = re.compile(r"v1 (request|wire) (SYSTEM|TOOLS) (\d+)\Z")
 IMAGE = re.compile(r"v1 image READY (-1|0|1)\Z")
+FAILED = re.compile(
+    r"^FAILURES!!!|^INSTRUMENTATION_FAILED:|^INSTRUMENTATION_RESULT: shortMsg=|"
+    r"^INSTRUMENTATION_STATUS_CODE: -[34](?:\s|$)",
+    re.MULTILINE,
+)
 
 
 def estimate(chars: int) -> int:
@@ -95,13 +100,23 @@ def table(title: str, group: dict[str, tuple[int, int, int, int]]) -> str:
 def main() -> int:
     path = Path("prompt-size.log")
     journey = Path("journey-instrumentation.log")
-    journey_passed = journey.is_file() and bool(
-        re.search(
-            r"^OK \([1-9]\d* tests?\)",
-            journey.read_text(encoding="utf-8", errors="replace"),
-            re.MULTILINE,
+    journey_log = journey.read_text(encoding="utf-8", errors="replace") if journey.is_file() else ""
+    journey_passed = bool(
+        re.search(r"^OK \([1-9]\d* tests?\)", journey_log, re.MULTILINE)
+    ) and not FAILED.search(journey_log)
+    journey_result = "concluída" if journey_passed else "não concluída ou não comprovada"
+    anr_status = Path("journey-system-anr-recovery.txt")
+    if (
+        anr_status.is_file()
+        and anr_status.read_text(encoding="utf-8", errors="replace").strip() == "none"
+    ):
+        anr_result = "sem intervenção em diálogo de ANR"
+    elif anr_status.is_file():
+        anr_result = (
+            "houve intervenção ou o estado do diálogo de ANR é inválido; o smoke permanece em falha"
         )
-    )
+    else:
+        anr_result = "estado do diálogo de ANR não comprovado"
     try:
         sections, tools, image_ready = validate(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
@@ -116,6 +131,8 @@ def main() -> int:
         "Contagem em unidades UTF-16; tokens são estimativas arredondadas de caracteres ÷ 3,7. "
         "Não inclui histórico, anexos, saída, cobrança ou demais campos do protocolo. "
         "Os schemas são da forma OpenAI Chat Completions. Os números variam conforme a sessão.\n\n"
+        + f"Jornada instrumentada: {journey_result}; {anr_result}. "
+        "A tabela isolada não substitui uma jornada completa nem um smoke aprovado.\n\n"
         + "Modelo de imagem resolvido localmente: "
         + {1: "sim", 0: "não", -1: "não foi possível verificar"}[image_ready]
         + ". Isso não testa a geração de imagem.\n\n"

@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Added fail-closed emulator-health reporting and a narrowly scoped system-ANR diagnostic so later synthetic checks can run without treating an interrupted journey as a clean smoke.
+
 - Expanded Android screen and browser checks for common Portuguese labels, refused browser clicks or typing when the target cannot be inspected, and clarified the limits of detection, Stop and screenshot privacy.
 
 - Added bounded readback diagnostics to the isolated Android APK integrity check without bypassing a mismatch.

@@ -314,7 +314,10 @@ jobs:
             pet-alive.png
             pet-memorial.png
             journey-*.png
+            restart-system-anr.png
             journey-process.txt
+            journey-system-anr-recovery.txt
+            restart-system-anr-recovery.txt
             am.log
             install.log
             pet-install.log
@@ -324,6 +327,7 @@ jobs:
             restart-instrumentation.log
             sandbox-instrumentation.log
             browser-guard-instrumentation.log
+            system-anr-policy-instrumentation.log
             android-runtime.log
             prompt-size.log
             prompt-size-summary.md
@@ -333,8 +337,8 @@ jobs:
           if-no-files-found: warn
 
   # A check run can stop recording after 50 annotations, even when the messages
-  # themselves are shorter than 4 KB. Keep screenshots in two separate jobs,
-  # eight images per job and at most five annotations per image. Full synthetic
+  # themselves are shorter than 4 KB. Split screenshots across separate jobs,
+  # at most eight images per job and five annotations per image. Full synthetic
   # PNGs remain in the smoke artifact; previews are diagnostics, not approval.
   visual-previews:
     name: synthetic previews · ${{ matrix.group }}
@@ -345,7 +349,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [core, extras]
+        group: [core, extras, recovery]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -426,3 +430,11 @@ jobs:
       - name: Preview Settings
         if: matrix.group == 'extras'
         run: python3 scripts/android/publish-test-previews.py journey-settings-light.png
+
+      - name: Preview system ANR dialog during journey
+        if: matrix.group == 'recovery'
+        run: python3 scripts/android/publish-test-previews.py journey-system-anr.png
+
+      - name: Preview system ANR dialog after restart
+        if: matrix.group == 'recovery'
+        run: python3 scripts/android/publish-test-previews.py restart-system-anr.png

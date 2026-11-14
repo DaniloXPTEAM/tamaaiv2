@@ -82,12 +82,32 @@ elif args[:2] == ["exec-out", "screencap"]:
         sys.exit(1)
     print("png")
 elif args[:2] == ["exec-out", "run-as"]:
-    if mode == "pet-screenshot":
-        sys.exit(1)
-    if mode == "invalid-remote-screenshot":
-        print("cat: file not found")
-    elif args[-1].endswith(".png"):
-        sys.stdout.buffer.write(b"\x89PNG\r\n\x1a\nFAKE")
+    path = args[-1]
+    if path.endswith("-system-anr-recovery.txt"):
+        if mode == "anr-missing":
+            sys.exit(1)
+        elif mode == "anr-invalid":
+            print("unexpected status")
+        elif mode == "anr-attempted" and path.endswith("journey-system-anr-recovery.txt"):
+            print("attempted")
+        elif mode == "anr-recovered" and path.endswith("journey-system-anr-recovery.txt"):
+            print("recovered")
+        elif mode == "restart-anr-recovered" and path.endswith("restart-system-anr-recovery.txt"):
+            print("recovered")
+        else:
+            print("none")
+    elif path.endswith("tama-prompt-size.log"):
+        if mode == "journey-failure-with-metrics":
+            print("v1 wire SYSTEM 123")
+        else:
+            sys.exit(1)
+    elif path.endswith(".png"):
+        if mode == "pet-screenshot":
+            sys.exit(1)
+        elif mode == "invalid-remote-screenshot":
+            print("cat: file not found")
+        else:
+            sys.stdout.buffer.write(b"\x89PNG\r\n\x1a\nFAKE")
     else:
         print("writer_pid=111\nrestored_pid=222")
 elif args[:3] == ["logcat", "-d", "-b"]:
@@ -100,19 +120,21 @@ elif args[:3] == ["shell", "am", "instrument"]:
     is_restart = "io.github.nanomuse.isolated.AfterProcessStopInstrumentedTest" in args
     is_sandbox = "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args
     is_browser = "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args
+    is_anr_policy = "io.github.nanomuse.isolated.EmulatorAnrPolicyInstrumentedTest" in args
     assert ["-e", "tama_isolated", "true"] == args[5:8]
+    assert ["-e", "tama_system_anr_recovery", "true"] == args[8:11]
     if (mode == "instrument-command" and is_pet) or (mode == "screen-command" and is_screen):
         print("INSTRUMENTATION_FAILED: test runner")
         sys.exit(1)
     if ((mode == "no-tests" and is_pet) or (mode == "no-screen-tests" and is_screen)
             or (mode == "journey-empty" and is_journey)):
         print("OK (0 tests)")
-    elif ((mode == "instrument-failure" and is_pet) or (mode == "journey-failure" and is_journey)
+    elif ((mode == "instrument-failure" and is_pet) or (mode in ("journey-failure", "journey-failure-with-metrics") and is_journey)
             or (mode == "restart-failure" and is_restart) or (mode == "sandbox-failure" and is_sandbox)
-            or (mode == "browser-failure" and is_browser)):
+            or (mode == "browser-failure" and is_browser) or (mode == "anr-policy-failure" and is_anr_policy)):
         print("FAILURES!!!")
     elif ((mode == "journey-skipped" and is_journey) or (mode == "sandbox-skipped" and is_sandbox)
-            or (mode == "browser-skipped" and is_browser)):
+            or (mode == "browser-skipped" and is_browser) or (mode == "anr-policy-skipped" and is_anr_policy)):
         print("INSTRUMENTATION_STATUS_CODE: -4")
         print("OK (1 test)")
     elif mode == "few-screen-tests" and is_screen:
@@ -186,7 +208,7 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     invocations = [
         args for name, args in calls if name == "adb" and args[:3] == ["shell", "am", "instrument"]
     ]
-    assert len(invocations) == 6
+    assert len(invocations) == 7
     assert any(
         "io.github.nanomuse.pet.PetPersistenceInstrumentedTest" in args for args in invocations
     )
@@ -204,10 +226,17 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     assert any(
         "io.github.nanomuse.isolated.BrowserGuardInstrumentedTest" in args for args in invocations
     )
+    assert any(
+        "io.github.nanomuse.isolated.EmulatorAnrPolicyInstrumentedTest" in args
+        for args in invocations
+    )
     assert "::notice title=app journey instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=process restart instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=sandbox instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=browser guard instrumentation::OK (1 test);" in result.stdout
+    assert "::notice title=system ANR policy instrumentation::OK (1 test);" in result.stdout
+    assert (checkout / "journey-system-anr-recovery.txt").read_text().strip() == "none"
+    assert (checkout / "restart-system-anr-recovery.txt").read_text().strip() == "none"
     assert (
         sum(name == "adb" and args[:3] == ["shell", "am", "force-stop"] for name, args in calls)
         == 1
@@ -245,6 +274,10 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
         ("sandbox-skipped", "title=sandbox instrumentation"),
         ("browser-failure", "title=browser guard instrumentation"),
         ("browser-skipped", "title=browser guard instrumentation"),
+        ("anr-policy-failure", "title=system ANR policy instrumentation"),
+        ("anr-policy-skipped", "title=system ANR policy instrumentation"),
+        ("anr-missing", "title=emulator health"),
+        ("anr-invalid", "title=emulator health"),
     ],
 )
 def test_smoke_fails_honestly_when_a_required_step_fails(smoke, failure: str, message: str) -> None:
@@ -375,6 +408,40 @@ def test_failed_journey_does_not_claim_restart_but_still_runs_sandbox(smoke) -> 
     )
     assert any(
         "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args for args in invocations
+    )
+
+
+@pytest.mark.parametrize("mode", ["anr-attempted", "anr-recovered", "restart-anr-recovered"])
+def test_system_anr_intervention_never_turns_the_smoke_green(smoke, mode: str) -> None:
+    checkout, run = smoke
+    result, calls = run(mode)
+    assert result.returncode != 0
+    assert "::error title=emulator health::" in result.stdout
+    # The recovery is diagnostic: subsequent checks still run, but the job remains failed.
+    assert "::notice title=app journey instrumentation::OK (1 test);" in result.stdout
+    assert "::notice title=process restart instrumentation::OK (1 test);" in result.stdout
+    assert any(
+        name == "adb" and "io.github.nanomuse.isolated.StrictSandboxInstrumentedTest" in args
+        for name, args in calls
+    )
+    if mode == "restart-anr-recovered":
+        assert (checkout / "restart-system-anr-recovery.txt").read_text().strip() == "recovered"
+    else:
+        assert (checkout / "journey-system-anr-recovery.txt").read_text().strip() in {
+            "attempted",
+            "recovered",
+        }
+
+
+def test_partial_count_evidence_is_preserved_without_claiming_a_passing_journey(smoke) -> None:
+    checkout, run = smoke
+    result, calls = run("journey-failure-with-metrics")
+    assert result.returncode != 0
+    assert (checkout / "prompt-size.log").read_text().strip() == "v1 wire SYSTEM 123"
+    assert "persisted-state verification was not run" in result.stdout
+    assert not any(
+        name == "adb" and "io.github.nanomuse.isolated.AfterProcessStopInstrumentedTest" in args
+        for name, args in calls
     )
 
 

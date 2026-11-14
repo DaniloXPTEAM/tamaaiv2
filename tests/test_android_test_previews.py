@@ -101,6 +101,7 @@ def test_preview_jobs_stay_below_the_check_run_annotation_limit() -> None:
     assert "name: tama-device-smoke" in preview_job
     assert preview_job.count("if: matrix.group == 'core'") == 8
     assert preview_job.count("if: matrix.group == 'extras'") == 8
-    assert preview_job.count("scripts/android/publish-test-previews.py") == 16
+    assert preview_job.count("if: matrix.group == 'recovery'") == 2
+    assert preview_job.count("scripts/android/publish-test-previews.py") == 18
     # Four chunks and a checksum for each of eight images, below the observed 50 cap.
     assert 8 * (4 + 1) < 50

@@ -42,6 +42,20 @@ def test_summary_reports_process_evidence_only_if_present(tmp_path, monkeypatch,
     )
 
 
+def test_system_anr_recovery_and_missing_status_are_never_silent(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "journey-instrumentation.log").write_text("OK (1 test)\n")
+    (tmp_path / "restart-instrumentation.log").write_text("OK (1 test)\n")
+    (tmp_path / "journey-system-anr-recovery.txt").write_text("recovered\n")
+    assert summary.main() == 0
+    output = capsys.readouterr().out
+    assert "::notice title=Real app journey::OK (1 test)" in output
+    assert "::error title=Emulator health::journey needed system-ANR intervention" in output
+    assert "::error title=Emulator health::restart system-ANR status was not captured" in output
+
+
 def test_runtime_diagnostics_are_bounded_and_escape_commands(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "android-runtime.log").write_text(

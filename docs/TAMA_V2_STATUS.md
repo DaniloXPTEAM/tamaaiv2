@@ -8,8 +8,8 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | [Android 43590807353](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43590807353): build passou e leitura do APK instalado correspondeu ao selado; Pet passou, mas jornada e PRoot falharam. | Investigar o diálogo do Pixel Launcher e o PRoot no emulador sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: a jornada expirou ao esperar o relatório, sem tabela. `c0faef7` move o painel para fora da lista e dispensa o teclado; em `43590807353`, um diálogo do Pixel Launcher impediu a jornada antes do chat. | Confirmar o painel no APK e publicar a tabela do pedido real ao servidor falso. |
+| T0a: build, testes e hash | PARCIAL | [Android 43592023057](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43592023057): build passou e leitura do APK instalado correspondeu ao selado; Pet passou, mas jornada e PRoot falharam. | Investigar os diálogos do emulador e o PRoot sem reduzir os gates. Release ainda não comprovado. |
+| T0b: medir prompt | EM ANDAMENTO | `0bdb919`: a jornada expirou ao esperar o relatório, sem tabela. `c0faef7` move o painel para fora da lista e dispensa o teclado; diálogos do Pixel Launcher e Messages impediram a jornada antes do chat em runs posteriores. | Confirmar o painel no APK e publicar a tabela do pedido real ao servidor falso. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
@@ -23,8 +23,32 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
 | T8: imagem | PENDENTE | Consultar a configuração não equivale a gerar imagem. | Tool e mensagem de configuração ausente. |
 | T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
-| T10: tradução e resíduos | PARCIAL / BLOQUEADA | Avisos de operação da tela revisados em 17 locales; testes de paridade e heurísticas passaram no host. O teste de WebView sintética foi preparado, ainda sem execução Android. Arte e keystore dependem do dono. | Validar as mudanças no CI; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
+| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de operação da tela revisados em 17 locales; testes de paridade e heurísticas passaram no host. O teste de WebView sintética foi preparado, ainda sem execução Android. Arte e keystore dependem do dono. | Validar as mudanças no CI; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI de `bb50bfb`: diálogo do emulador e sandbox
+
+- [Android 43592023057](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43592023057):
+  build debug arm64, unitários, compilação instrumentada e previews passaram. O APK selado e a
+  primeira leitura do APK instalado coincidiram em 70.648.760 bytes, SHA-256
+  `3b34f539da88211d92984512c7c5ee1801bf46956e9cc7fe4b12baa03a681de5`; o certificado reportado
+  foi `d503b40c4e7f675a99604adcead671c39db056d92fafdf70583fe0fcc60eb70b`. Isso não estabelece
+  compatibilidade com o certificado instalado no telefone; não desinstalar nem limpar dados.
+- O Pet passou em oito testes de persistência e dois de tela. A jornada parou antes da primeira
+  captura por falta de foco; a imagem sintética reconstruída das anotações, com SHA-256
+  `349c4d3b43f289816c6ff9b81c9f19cb0035ef75e9ce89c48870e576d899bd28`, mostra o diálogo
+  **Messages isn't responding** sobre o TAMA. Isso é diferente do diálogo do Pixel Launcher no
+  run anterior; não prova por que esses processos deixaram de responder. Chat, tabela e restart
+  não foram concluídos. O sandbox novamente retornou 124, processo vivo e saída vazia; a causa
+  continua desconhecida e não se pode extrapolar para ARM físico.
+- Test Suite, iOS, harness e Commits passaram; o workflow Android falhou. Para obter diagnóstico
+  sem mascarar o problema, foi preparado um teste que, somente no emulador isolado e com flag
+  adicional, pode fechar uma vez um diálogo do sistema com identificação exata de Pixel Launcher
+  ou Messages, após salvar a tela. O foco precisa retornar e as demais asserções continuam
+  obrigatórias. Uma tentativa, uma intervenção ou a ausência do estado **mantém o smoke em falha**.
+  As decisões da política e os estados do script foram exercitados no host com Android/adb falsos;
+  a recuperação real ainda não foi testada no Android. A tabela count-only, se já tiver sido
+  validada pela fixture antes de uma falha posterior, passa a ser preservada como evidência parcial.
 
 ## CI do diagnóstico de leitura do APK
 
@@ -47,7 +71,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   o workflow Android falhou. O workflow Commits falhou porque o assunto de `fb499df` não seguia
   Conventional Commits. Apenas a mensagem foi corrigida para `bb50bfb` com DCO, e o check
   [Commits 43592023070](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43592023070) passou.
-  O CI Android de `bb50bfb` estava em andamento ao registrar este status.
+  O resultado posterior do Android de `bb50bfb` está descrito acima.
 - O plano único fornecido pelo dono foi preservado em `35018fe`, sem alteração de conteúdo;
   SHA-256 `00e2a1bf719fd5c69c570f278ac578de7f3ec19ba2aff3eb372a5d7a761996b5`.
 
@@ -128,9 +152,10 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   teto, contagem regressiva e intervalo monotônico de pelo menos 2,9 s antes da resposta local.
   Os testes HTTP e de armazenamento passaram no job de unitários do CI; a jornada Android ainda
   não chegou aos pedidos, primeiro por falha de integridade e depois pelo diálogo do launcher.
-- A verificação mais recente no host incluiu 62 testes Python direcionados, Ruff e sintaxe do
-  script de smoke, além de 11 testes Kotlin de medição e paridade e 21 de guardas com substitutos
-  para dependências Android. `git diff --check` passou. O teste instrumentado do relatório recebeu
+- A verificação mais recente no host incluiu 78 testes Python direcionados, um pulado, Ruff e
+  sintaxe do script de smoke, além de 11 testes Kotlin de medição e paridade e 21 de guardas com
+  substitutos para dependências Android. A política e os caminhos de recuperação de ANR também
+  passaram em cenários sintéticos com substitutos Android. `git diff --check` passou. O teste instrumentado do relatório recebeu
   um diagnóstico de contagem de controles, sem registrar conteúdo da conversa, caso volte a expirar.
 
 ## Decisões e limites

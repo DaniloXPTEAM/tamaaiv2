@@ -39,12 +39,22 @@ fails, is skipped, or reports no tests:
   selector, a refused fake card field and a denied payment-labeled tap. This checks specific
   click/type cases only; it does not establish comprehensive detection or guard JavaScript.
 
+When a journey capture cannot get focus, an opt-in diagnostic can attempt to close **only** an
+Android system dialog exactly identifying Pixel Launcher or Messages as not responding, after
+saving the full display. It requires the isolated-emulator flag and a separate recovery flag.
+It never closes a TAMA ANR or a dialog for an app outside this list. Focus is checked again and all journey assertions
+still run; an attempted recovery, a missing status or an invalid status **fails the smoke** even
+if later assertions succeed. This may collect count-only evidence after an infrastructure
+intervention; it is not an unobstructed journey or a passing device test. The recognition policy
+has a synthetic instrumented test; actual dialog recovery still needs a CI run.
+
 Full-size PNGs, individual instrumentation logs and a process-id summary are uploaded as
 `tama-device-smoke`. Small JPEG check annotations are generated from synthetic emulator images
 only. Each preview is split into bounded pieces and has a SHA-256; reconstruct it only after
 checking the piece count and checksum. The screenshots are diagnostics, not an approval of every
 screen or a test on the person's device. A run exposed a 50-annotation check-run limit, so the
-preview jobs split images across two check runs. Eleven images from run `43541546957` were
+preview jobs split images across separate check runs, including one for system-dialog recovery.
+Eleven images from run `43541546957` were
 reconstructed with matching checksums, but `journey-pet.jpg` showed the chat rather than the Pet:
 transport integrity alone does not establish that a capture contains its named screen. The journey
 now captures the tested Compose root, without system bars, and each image still needs visual review.

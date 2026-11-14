@@ -133,7 +133,7 @@ fi
 run_instrumentation() {
   local class="$1" log="$2" label="$3" minimum="$4" details="$5" summary count
   if ! adb shell am instrument -w -r \
-    -e tama_isolated true -e class "$class" ai.tama.assistant.test/androidx.test.runner.AndroidJUnitRunner > "$log" 2>&1; then
+    -e tama_isolated true -e tama_system_anr_recovery true -e class "$class" ai.tama.assistant.test/androidx.test.runner.AndroidJUnitRunner > "$log" 2>&1; then
     echo "::error title=$label::instrumentation command failed"
     tail -40 "$log"
     return 1
@@ -156,6 +156,22 @@ run_instrumentation() {
   fi
   echo "::notice title=$label::$summary; $details tests passed on the emulator"
 }
+# A recognized Pixel Launcher or Messages ANR can be dismissed only to gather later diagnostics.
+# Never turn that intervention, an unknown status or a missing readback into a green result.
+check_system_anr_state() {
+  local phase="$1" path="${1}-system-anr-recovery.txt" value
+  if ! adb exec-out run-as ai.tama.assistant cat "cache/$path" > "$path" 2>/dev/null; then
+    rm -f "$path"
+    echo "::error title=emulator health::$phase system-ANR status unavailable"
+    return 1
+  fi
+  value="$(cat "$path")"
+  if [ "$value" != none ]; then
+    echo "::error title=emulator health::$phase system-ANR dialog required intervention or status was invalid"
+    return 1
+  fi
+  echo "::notice title=emulator health::$phase did not recover a system-ANR dialog"
+}
 # Exercise independent layers even if an earlier one fails, then fail the job honestly at the end.
 # Only the journey writes real app preferences, and it requires the fresh-emulator flag above.
 failed=0
@@ -163,35 +179,45 @@ run_instrumentation io.github.nanomuse.pet.PetPersistenceInstrumentedTest pet-in
   'pet instrumentation' 8 'Android SharedPreferences and tracker' || failed=1
 run_instrumentation io.github.nanomuse.pet.PetScreenInstrumentedTest pet-screen-instrumentation.log \
   'pet screen instrumentation' 2 'Android Compose Pet screen' || failed=1
+journey_ok=false
 if run_instrumentation io.github.nanomuse.isolated.RealAppJourneyInstrumentedTest journey-instrumentation.log \
   'app journey instrumentation' 1 'First run, five tabs, Pet and local fake chat'; then
-  # The isolated fixture wrote only validated count lines, after comparing them to the actual
-  # loopback request. Retrieve them before force-stop; do not copy the general app log.
-  if adb exec-out run-as ai.tama.assistant cat cache/tama-prompt-size.log > prompt-size.log 2>/dev/null \
-    && grep -q '^v1 wire SYSTEM [0-9]' prompt-size.log; then
-    echo '::notice title=prompt-size::Count-only fixture measurements captured'
-  else
-    rm -f prompt-size.log
-    echo '::warning title=prompt-size::Fixture measurements were unavailable'
-  fi
+  journey_ok=true
+else
+  failed=1
+fi
+check_system_anr_state journey || failed=1
+# The isolated fixture writes count-only lines only after comparing them to the real loopback
+# request. Preserve them even if a later journey assertion fails, but label that failure in the
+# published report and never treat the metrics as a substitute for a passing journey.
+if adb exec-out run-as ai.tama.assistant cat cache/tama-prompt-size.log > prompt-size.log 2>/dev/null \
+  && grep -q '^v1 wire SYSTEM [0-9]' prompt-size.log; then
+  echo '::notice title=prompt-size::Count-only fixture measurements captured'
+else
+  rm -f prompt-size.log
+  echo '::warning title=prompt-size::Fixture measurements were unavailable'
+fi
+if $journey_ok; then
   # This is a disposable emulator installed by this script, never the person's device. Do not
   # clear data. The verification test checks both the persisted rows and a changed process ID.
   if adb shell am force-stop ai.tama.assistant && [ -z "$(adb shell pidof ai.tama.assistant 2>/dev/null | tr -d '\r' || true)" ]; then
     run_instrumentation io.github.nanomuse.isolated.AfterProcessStopInstrumentedTest restart-instrumentation.log \
       'process restart instrumentation' 1 'Chat, Pet and appearance after force-stop' || failed=1
+    check_system_anr_state restart || failed=1
   else
     echo '::error title=process restart::Could not stop the disposable app process'
     failed=1
   fi
 else
   echo '::error title=process restart::Journey did not finish, so persisted-state verification was not run'
-  failed=1
 fi
 run_instrumentation io.github.nanomuse.isolated.StrictSandboxInstrumentedTest sandbox-instrumentation.log \
   'sandbox instrumentation' 1 'Packaged PRoot and persistent shell' || failed=1
 # nanoMuse: exercise the browser guard against an inline page with networking disabled.
 run_instrumentation io.github.nanomuse.isolated.BrowserGuardInstrumentedTest browser-guard-instrumentation.log \
   'browser guard instrumentation' 1 'Synthetic WebView and approval gate' || failed=1
+run_instrumentation io.github.nanomuse.isolated.EmulatorAnrPolicyInstrumentedTest system-anr-policy-instrumentation.log \
+  'system ANR policy instrumentation' 1 'Isolated dialog recognition policy' || failed=1
 
 # This is a disposable, synthetic emulator with a keyless loopback provider. Save a bounded
 # selection of runtime tags for diagnosing failures after the emulator action has stopped it.
@@ -203,7 +229,8 @@ adb logcat -d -v brief -s PRootStderr:D PersistentShell:I Minis.PersistentShell:
 for image in pet-alive.png pet-memorial.png journey-welcome.png journey-chat-light.png \
   journey-feed.png journey-ideas.png journey-goals.png journey-library.png journey-pet.png \
   journey-chat-reply.png journey-settings-light.png journey-appearance-dark.png \
-  journey-chat-dark-custom.png journey-restored.png journey-last-screen.png journey-process.txt; do
+  journey-chat-dark-custom.png journey-restored.png journey-last-screen.png journey-process.txt \
+  journey-system-anr.png restart-system-anr.png; do
   valid=false
   if adb exec-out run-as ai.tama.assistant cat "cache/$image" > "$image" 2>/dev/null && [ -s "$image" ]; then
     if [[ "$image" == *.png ]]; then

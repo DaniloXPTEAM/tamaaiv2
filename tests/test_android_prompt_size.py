@@ -65,6 +65,21 @@ def test_complete_evidence_is_published_without_user_content(tmp_path, monkeypat
     assert (tmp_path / "summary.md").read_text(encoding="utf-8") == text
 
 
+@pytest.mark.parametrize("log", ["FAILURES!!!\n", "INSTRUMENTATION_STATUS_CODE: -4\nOK (1 test)\n"])
+def test_valid_counts_from_an_incomplete_journey_are_labelled_as_partial(
+    tmp_path, monkeypatch, log
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "prompt-size.log").write_text(fixture(), encoding="utf-8")
+    (tmp_path / "journey-instrumentation.log").write_text(log, encoding="utf-8")
+    (tmp_path / "journey-system-anr-recovery.txt").write_text("recovered\n", encoding="utf-8")
+    assert report.main() == 0
+    text = (tmp_path / "prompt-size-summary.md").read_text(encoding="utf-8")
+    assert "Jornada instrumentada: não concluída ou não comprovada" in text
+    assert "o smoke permanece em falha" in text
+    assert "não substitui uma jornada completa" in text
+
+
 def test_unknown_or_private_lines_are_rejected_without_being_repeated(
     tmp_path, monkeypatch, capsys
 ) -> None:

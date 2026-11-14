@@ -51,6 +51,7 @@ class AfterProcessStopInstrumentedTest {
         if (InstrumentationRegistry.getArguments().getString("tama_isolated") == "true") {
             runCatching {
                 requireIsolatedEmulator()
+                IsolatedSystemAnrRecovery.recordNoAttempt(context, IsolatedSystemAnrRecovery.Phase.RESTART)
                 val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return@runCatching
                 File(context.cacheDir, "journey-last-screen.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 bitmap.recycle()
@@ -74,7 +75,15 @@ class AfterProcessStopInstrumentedTest {
         try {
             compose.waitUntil(15_000) { compose.activity.hasWindowFocus() }
         } catch (failure: ComposeTimeoutException) {
-            throw AssertionError("The relaunched app window never gained focus", failure)
+            val recovered = runCatching {
+                IsolatedSystemAnrRecovery.closeIfRecognized(context, IsolatedSystemAnrRecovery.Phase.RESTART)
+            }.getOrDefault(false)
+            if (!recovered) throw AssertionError("The relaunched app window never gained focus", failure)
+            try {
+                compose.waitUntil(15_000) { compose.activity.hasWindowFocus() }
+            } catch (stillBlocked: ComposeTimeoutException) {
+                throw AssertionError("The relaunched app did not regain focus after the system dialog", stillBlocked)
+            }
         }
         assertEquals(session, MainChat.persisted(context))
         val rows = runBlocking { app.chatRepository.dao.loadMessages(session) }
