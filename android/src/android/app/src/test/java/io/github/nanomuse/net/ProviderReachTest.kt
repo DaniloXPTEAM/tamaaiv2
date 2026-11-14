@@ -139,6 +139,22 @@ class ProviderReachTest {
         assertEquals(ProviderReach.Kind.SIGNED_OUT, ProviderReach.fromHttp(401, "", "chatgpt.com", oauth = true)!!.kind)
     }
 
+    @Test fun `stream event codes classify without claiming an HTTP status`() {
+        val quotaBody = """{"error":{"message":"Exceeded your current quota"}}"""
+        val quota = ProviderReach.fromHttp(429, quotaBody, "host", oauth = false, hasHttpStatus = false)!!
+        assertEquals(ProviderReach.Kind.QUOTA, quota.kind)
+        assertNull(quota.httpStatus)
+        assertEquals("Exceeded your current quota", quota.detail)
+        assertEquals(quota, ProviderReach.classify(ProviderReach.canonical(quota)))
+        val httpQuota = ProviderReach.fromHttp(429, quotaBody, "host", oauth = false)!!
+        assertEquals(429, httpQuota.httpStatus)
+        assertEquals("HTTP 429: Exceeded your current quota", httpQuota.detail)
+        val credit = ProviderReach.fromHttp(402, "", "openrouter.ai", oauth = false, hasHttpStatus = false)!!
+        assertEquals(ProviderReach.Kind.NO_CREDIT, credit.kind)
+        assertNull(credit.httpStatus)
+        assertEquals("", credit.detail)
+    }
+
     @Test fun `new diagnostics survive a reload`() {
         for (reach in listOf(
             ProviderReach.fromHttp(402, "", "openrouter.ai", oauth = false)!!,

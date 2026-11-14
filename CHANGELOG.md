@@ -4,7 +4,7 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
-- Added a tappable Android provider-error detail sheet with the failed request's model, redacted message and guarded retry.
+- Added a tappable Android provider-error detail sheet with the failed request's model, redacted message and guarded retry. Stream error codes are not labelled as HTTP statuses.
 
 - Enlarged the Android prompt-report touch target and strengthened its isolated gesture diagnostics.
 

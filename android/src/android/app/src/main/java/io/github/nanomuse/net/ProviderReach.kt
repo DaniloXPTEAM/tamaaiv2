@@ -172,11 +172,16 @@ object ProviderReach {
         return null
     }
 
-    /** Classify an HTTP response without guessing that a forbidden request means no credit. */
+    /**
+     * Classify a response without guessing that a forbidden request means no credit.
+     * A stream event may use an HTTP-like numeric error code for the same classification,
+     * but it is not itself an HTTP response and must not be displayed as an HTTP status.
+     */
     fun fromHttp(
         status: Int, body: String?, host: String, oauth: Boolean, retryAfterS: Int? = null,
         retryAfterPresent: Boolean = retryAfterS != null, credential: String? = null,
         credentials: Collection<String> = emptyList(), includeOtherFailures: Boolean = false,
+        hasHttpStatus: Boolean = true,
     ): Reach? {
         val b = body.orEmpty()
         val h = host.lowercase(Locale.ROOT)
@@ -203,15 +208,15 @@ object ProviderReach {
             // OpenRouter documents 402 for credit limits. Other hosts need an explicit credit
             // message; 403 can instead mean moderation, a workspace budget or access policy.
             status == 402 && (h == "openrouter.ai" || h.endsWith(".openrouter.ai") || creditReported) ->
-                Reach(Kind.NO_CREDIT, h, statusDetail(status, message), retryAfterS)
+                Reach(Kind.NO_CREDIT, h, statusDetail(status, message, hasHttpStatus), retryAfterS)
             status == 403 && creditReported ->
-                Reach(Kind.NO_CREDIT, h, statusDetail(status, message), retryAfterS)
+                Reach(Kind.NO_CREDIT, h, statusDetail(status, message, hasHttpStatus), retryAfterS)
             status == 403 -> Reach(Kind.ACCESS_DENIED, h, message)
             status == 413 || (status == 400 && requestTooLarge) ->
                 Reach(Kind.REQUEST_TOO_LARGE, h, message, retryAfterS)
             status == 400 && responseLimit ->
                 Reach(Kind.RESPONSE_LIMIT, h, message, retryAfterS, outputLimit(classificationMessage))
-            status == 429 && QUOTA_MARKERS.any { it in signals } -> Reach(Kind.QUOTA, h, statusDetail(status, message), retryAfterS)
+            status == 429 && QUOTA_MARKERS.any { it in signals } -> Reach(Kind.QUOTA, h, statusDetail(status, message, hasHttpStatus), retryAfterS)
             status == 429 -> Reach(Kind.RATE_LIMITED, h, message, retryAfterS)
             status in 500..599 -> Reach(Kind.SERVER_ERROR, h, message, retryAfterS)
             // Status zero is reserved for a stream error with no HTTP status, never shown as HTTP 0.
@@ -221,7 +226,7 @@ object ProviderReach {
         }
         return reach?.copy(
             host = redactCredentials(reach.host, redactions),
-            httpStatus = status.takeIf { it in 100..599 }, retryAfterPresent = retryAfterPresent,
+            httpStatus = status.takeIf { hasHttpStatus && it in 100..599 }, retryAfterPresent = retryAfterPresent,
             originalMessage = original,
         )
     }
@@ -254,8 +259,8 @@ object ProviderReach {
         return seconds.takeIf { it <= Int.MAX_VALUE }?.toInt()
     }
 
-    private fun statusDetail(status: Int, message: String): String =
-        if (message.isBlank()) "HTTP $status" else "HTTP $status: $message"
+    private fun statusDetail(status: Int, message: String, hasHttpStatus: Boolean): String =
+        if (!hasHttpStatus) message else if (message.isBlank()) "HTTP $status" else "HTTP $status: $message"
 
     /** Remove a known credential and common key forms before logging or persisting errors. */
     fun redactBody(body: String, credential: String? = null): String =

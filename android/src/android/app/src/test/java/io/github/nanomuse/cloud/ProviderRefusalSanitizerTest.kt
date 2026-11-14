@@ -71,6 +71,30 @@ class ProviderRefusalSanitizerTest {
         assertEquals(relay.refusal, RelayRefusal.fromCanonical(RelayRefusal.canonical(relay.refusal)))
     }
 
+    @Test fun `relay stream event keeps classification and redaction but no false HTTP status`() {
+        for ((eventCode, kind, descriptionCode) in listOf(
+            Triple(401, RelayRefusal.Kind.SIGNED_OUT, "bad_key"),
+            Triple(413, RelayRefusal.Kind.TOO_LARGE, "too_large"),
+            Triple(529, RelayRefusal.Kind.RELAY_DOWN, "upstream"),
+        )) {
+            val body = """{"error":{"type":"nanomuse_cloud","code":$eventCode,"message":"Blocked: \u0066ixture-secret"}}"""
+            val raw = AllowanceSignal.fromHttpError(eventCode, body, hasHttpStatus = false)!!
+            val safe = ProviderRefusalSanitizer.sanitize(raw, listOf("fixture-secret"))
+            assertEquals(kind, safe.refusal.kind)
+            assertEquals(0, safe.refusal.status)
+            assertEquals("stream_$eventCode", safe.refusal.code)
+            assertEquals(descriptionCode, safe.refusal.toException().code)
+            assertEquals("Blocked: [redacted]", safe.refusal.message)
+            assertEquals(safe.refusal, RelayRefusal.fromCanonical(RelayRefusal.canonical(safe.refusal)))
+        }
+        val explicit = """{"error":{"type":"nanomuse_cloud","code":"allowance_exhausted","message":"Spent","grant":2}}"""
+        val allowance = AllowanceSignal.fromHttpError(0, explicit, hasHttpStatus = false)!!
+        assertEquals(RelayRefusal.Kind.EXHAUSTED, allowance.refusal.kind)
+        assertEquals("allowance_exhausted", allowance.refusal.code)
+        assertEquals(0, allowance.refusal.status)
+        assertEquals(2.0, allowance.exhausted!!.grantCny, 0.0)
+    }
+
     @Test fun `object valued relay code and message do not become visible metadata`() {
         val body = """{"error":{"type":"nanomuse_cloud","code":{"private":"hidden"},"message":{"private":"hidden"}}}"""
         val parsed = AllowanceSignal.fromHttpError(400, body)!!

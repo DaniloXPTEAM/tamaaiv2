@@ -1083,11 +1083,11 @@
     <string name="nm_reach_generic_title">%1$s could not complete the request</string>
     <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
     <string name="nm_reach_sheet_title">错误详情</string>
-    <string name="nm_reach_sheet_message">提供商消息</string>
+    <string name="nm_reach_sheet_message">服务商消息</string>
     <string name="nm_reach_sheet_unavailable">未提供</string>
     <string name="nm_reach_sheet_privacy">消息可能已缩短，也可能包含个人数据或未检测到的秘密。复制前请先检查。</string>
     <string name="nm_reach_sheet_change_model">切换模型</string>
-    <string name="nm_reach_sheet_provider_settings">打开提供商设置</string>
+    <string name="nm_reach_sheet_provider_settings">打开服务商设置</string>
     <string name="nm_reach_details">详情</string>
     <string name="nm_reach_details_hide">收起详情</string>
     <string name="nm_reach_hours_minutes">%1$d 小时 %2$d 分钟</string>

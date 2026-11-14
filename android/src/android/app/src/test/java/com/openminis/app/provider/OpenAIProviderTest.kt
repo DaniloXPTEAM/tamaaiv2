@@ -544,18 +544,61 @@ class OpenAIProviderTest {
     }
 
     @Test
-    fun `midstream provider error keeps wire model and a redacted message`() = runBlocking {
-        server.enqueue(sse("""{"error":{"code":429,"message":"Rate limit, test-key"}}"""))
+    fun `midstream provider code is not an HTTP status and keeps retry behavior`() = runBlocking {
+        // The HTTP response is successful; this 429 is inside the SSE data, not its status.
+        server.enqueue(sse("""{"error":{"code":429,"message":"Exceeded your current quota, test-key"}}"""))
         val thrown = runCatching {
             provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
         }.exceptionOrNull()
         val error = generateSequence(thrown) { it.cause }.filterIsInstance<LLMError>().first()
         val request = JSONObject(server.takeRequest().body.readUtf8())
         val reach = error.nmProviderReach!!
-        assertEquals(429, reach.httpStatus)
+        assertTrue(error is LLMError.RateLimited)
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.QUOTA, reach.kind)
+        assertNull(reach.httpStatus)
+        assertTrue(!reach.detail.contains("HTTP 429"))
         assertEquals(request.getString("model"), reach.modelId)
         assertTrue(reach.originalMessage.contains("[redacted]"))
         assertTrue(!reach.originalMessage.contains("test-key"))
+        assertEquals(reach, io.github.nanomuse.net.ProviderReach.classify(io.github.nanomuse.net.ProviderReach.canonical(reach)))
+    }
+
+    @Test
+    fun `unnumbered or non-status stream errors get a generic card without invented HTTP`() = runBlocking {
+        for (body in listOf(
+            """{"error":{"message":"Failed, test-key"}}""",
+            """{"error":{"code":1234,"message":"Failed, test-key"}}""",
+        )) {
+            server.enqueue(sse(body))
+            val thrown = runCatching {
+                provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+            }.exceptionOrNull()
+            val error = generateSequence(thrown) { it.cause }.filterIsInstance<LLMError>().first()
+            val reach = error.nmProviderReach!!
+            assertEquals(io.github.nanomuse.net.ProviderReach.Kind.PROVIDER_ERROR, reach.kind)
+            assertNull(reach.httpStatus)
+            assertEquals("Failed, [redacted]", reach.originalMessage)
+            assertTrue(!error.message.orEmpty().contains("HTTP 0"))
+            server.takeRequest()
+        }
+    }
+
+    @Test
+    fun `relay refusal in a successful SSE response keeps guidance without a false HTTP status`() = runBlocking {
+        server.enqueue(sse("""{"error":{"type":"nanomuse_cloud","code":413,"message":"Too large, test-key"}}"""))
+        val thrown = runCatching {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+        }.exceptionOrNull()
+        val error = generateSequence(thrown) { it.cause }.filterIsInstance<LLMError>().first()
+        val refusal = error.nmRelayError!!.refusal
+        assertEquals(io.github.nanomuse.cloud.RelayRefusal.Kind.TOO_LARGE, refusal.kind)
+        assertEquals(0, refusal.status)
+        assertEquals("stream_413", refusal.code)
+        assertEquals("too_large", refusal.toException().code)
+        assertEquals("Too large, [redacted]", refusal.message)
+        assertEquals(refusal, io.github.nanomuse.cloud.RelayRefusal.fromCanonical(io.github.nanomuse.cloud.RelayRefusal.canonical(refusal)))
+        assertNull(error.nmProviderReach)
+        server.takeRequest()
     }
 
     @Test

@@ -248,7 +248,7 @@ run_instrumentation io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest
   'prompt detail instrumentation' 3 'Synthetic report, recycled row, session change and focused composer' || failed=1
 # The error-detail test uses only synthetic messages and a disposable emulator clipboard.
 run_instrumentation io.github.nanomuse.isolated.ProviderErrorDetailInstrumentedTest provider-detail-instrumentation.log \
-  'provider detail instrumentation' 4 'Synthetic error details, redaction, actions, retry identity and session change' || failed=1
+  'provider detail instrumentation' 5 'Synthetic error details, redaction, actions, retry identity, stream codes and session change' || failed=1
 run_instrumentation io.github.nanomuse.isolated.BackgroundServiceWarningInstrumentedTest background-service-instrumentation.log \
   'background warning instrumentation' 1 'Synthetic service rejection and retry warning' || failed=1
 # nanoMuse: exercise the browser guard against an inline page with networking disabled.

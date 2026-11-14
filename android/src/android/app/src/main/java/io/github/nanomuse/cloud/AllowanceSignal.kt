@@ -40,8 +40,8 @@ object AllowanceSignal {
      * [fromRelay] says the call went to the relay's host. The caller attaches the result to
      * the corresponding exception and carries it across any final fallback wrapper.
      */
-    fun fromHttpError(status: Int, body: String?, fromRelay: Boolean = false): HttpError? {
-        val refusal = RelayRefusal.parse(status, body, fromRelay) ?: return null
+    fun fromHttpError(status: Int, body: String?, fromRelay: Boolean = false, hasHttpStatus: Boolean = true): HttpError? {
+        val refusal = RelayRefusal.parse(status, body, fromRelay, hasHttpStatus) ?: return null
         if (!refusal.isAllowance) return HttpError(refusal)
         val err = RelayRefusal.errorObject(body) ?: JSONObject()
         return HttpError(refusal, Exhausted(

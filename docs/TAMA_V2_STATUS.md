@@ -13,7 +13,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
-| T2: detalhes tocáveis | EM ANDAMENTO | Painel e retry condicionado preparados; 43 testes Kotlin no host passaram com stubs de plataforma e catálogo. Android, MockWebServer e Compose ainda não verificados nesta alteração. | Executar CI do APK e dos testes instrumentados; testar a jornada e corrigir eventuais falhas. |
+| T2: detalhes tocáveis | EM ANDAMENTO | [Android 43623510074](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43623510074): `assembleDebug` passou, mas um teste unitário falhou; instrumentação não executada. Correção preparada, ainda não validada no Android. | Executar CI do APK e dos testes instrumentados; testar a jornada e corrigir eventuais falhas. |
 | T3: metas medidas | BLOQUEADA | Depende da tabela real de T0b. | Recalibrar perfis depois da medição. |
 | T4: roteador e perfis | PENDENTE | Perfis e orçamento ainda não integrados. | Criar roteador e testes por intenção, continuidade e orçamento. |
 | T4b: auto-combo | PENDENTE | Failover existente limitado a grupos não comprova a seleção pedida. | Selecionar modelos elegíveis, avisar e testar recuperação com provedores falsos. |
@@ -23,7 +23,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
 | T8: imagem | PENDENTE | Consultar a configuração não equivale a gerar imagem. | Tool e mensagem de configuração ausente. |
 | T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; tracker e aviso sintético passaram no build e emulação `43608695720`. Isso não prova um turno em segundo plano nem o Poco. `mediaPlayback` permanece inalterado. | Testar turno lento e investigar o Poco com autorização. |
-| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, Python passou no host e em Linux/macOS no CI; Windows experimental ainda falhou. Arte e keystore dependem do dono. | Investigar Windows; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
+| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos em 17 locales e WebView sintética passou em `43593761942`. Test Suite de `3a22b1c` falhou em todas as matrizes Python; a terminologia chinesa foi reproduzida e corrigida localmente, mas os logs remotos não puderam ser lidos. Arte e keystore dependem do dono. | Confirmar as correções no CI, investigar o Windows experimental e continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
 
 ## T2: painel de erro preparado, execução Android pendente
@@ -44,14 +44,43 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   orientação do relay também são sanitizados. A proteção é heurística: segredos transformados ou
   em cabeçalhos desconhecidos podem escapar, e o log de debug ainda guarda URL e corpo do pedido.
   O painel avisa para revisar antes de copiar; não é uma garantia de ausência de dados sensíveis.
-- No host, 43 testes JUnit passaram para classificação, recuperação, redação, retry e paridade de
-  strings, usando JSON real e stubs para plataforma e catálogo Android. O parser Kotlin encontrou
-  zero erros sintáticos em 21 arquivos alterados; isso não é compilação Android. Quatro testes
-  adicionais passaram sobre a função de mapeamento extraída do cliente, com stubs, sem executar
-  OpenAIProvider ou OkHttp. Também passaram 113 testes Python de smoke, resumo e publicação,
-  executados sem o `conftest` geral, mais Ruff e
-  `bash -n`. As novas chaves estão nas 17 locales, mas 15 usam texto em inglês: paridade técnica
-  **não** é tradução revisada.
+- Na correção local, 45 testes JUnit passaram para classificação, recuperação, redação, retry e
+  paridade de strings, com JSON real e stubs de plataforma e catálogo. Sete testes adicionais
+  passaram sobre a função de mapeamento extraída do cliente, com stubs, sem executar o cliente
+  real ou OkHttp. O parser Kotlin encontrou zero erros sintáticos nos arquivos desta correção;
+  isso não é compilação Android. Também passaram 131 testes Python com dependências instaladas,
+  incluindo os de terminologia, smoke e MCP, mais Ruff e `bash -n`. Os novos testes MockWebServer
+  e Compose ainda dependem do CI. As novas chaves estão nas 17 locales, mas 15 usam texto em inglês:
+  paridade técnica **não** é tradução revisada.
+
+## CI de `8e7fede` e `3a22b1c`: cancelamento e correções preparadas
+
+- [Android 43622667020](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43622667020)
+  compilou o APK, os unitários e a instrumentação de `8e7fede`, mas seu smoke foi **cancelado**
+  pelo push seguinte enquanto instalava no emulador. Não houve medições. A publicação após o
+  cancelamento não transforma testes não executados em prova; o Test Suite anterior também foi
+  cancelado. Para não interromper novo diagnóstico, esperar a conclusão antes de outro push.
+- [Android 43623510074](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43623510074)
+  compilou `assembleDebug` de `3a22b1c`; o unitário `OpenRouterErrorPathTest` falhou porque
+  esperava `nmProviderReach` nulo para 400 genérico, que agora possui diagnóstico próprio. A
+  asserção foi atualizada sem remover a verificação de isolamento do relay, mas **não foi
+  executada novamente no Android**. A instrumentação, o smoke e os previews foram pulados;
+  não há novo APK selado ou instalado por esse run. O hash da montagem, antes do gate, foi
+  `d17b91bbfe440716ba383203cf65b7e2f9c9e7f8d468a1ac0e1fc3f0e55ae44a`; o certificado
+  `0a9789b174db04fb8c5726e0d4caa8fc749c7995c3e42d81711d3f9ff390702b` diferiu do artefato
+  anterior. A assinatura no telefone continua desconhecida: não substituir nem limpar dados.
+- [Test Suite 43623510017](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43623510017)
+  falhou nas matrizes Python; os logs completos retornaram EOF. Localmente, foi reproduzida uma
+  falha de terminologia chinesa causada por quatro strings novas e corrigida conforme a regra
+  do rebrand. Isso não prova que era a única falha em cada matriz. Uma primeira execução local
+  com dependências em `PYTHONPATH` teve ainda quatro falhas MCP porque o subprocesso não herda
+  esse caminho; com interpretador de ambiente virtual, esses cenários e a terminologia passaram.
+  Commits, harness e iOS passaram.
+- A revisão de T2 também identificou que um código numérico dentro do SSE podia ser apresentado
+  como HTTP 401/403/429, embora não fosse o status da resposta. A correção preparada mantém a
+  classificação e o retry, mas deixa HTTP indisponível e evita títulos que alegam esses status;
+  recusas do relay mantêm o tipo. Cinco testes Compose são exigidos no próximo smoke. Ainda não
+  há prova Android dessa correção ou da integração do retry do ViewModel.
 
 ## CI de `085dc82`: primeiro toque na raiz, segundo abriu o painel
 

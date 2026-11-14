@@ -179,6 +179,42 @@ class ProviderErrorDetailInstrumentedTest {
         assertEquals(1, stale.get())
     }
 
+    @Test fun streamCodesDoNotAppearAsHttpStatusesInTheCardOrSheet() {
+        fun reach(code: Int, body: String, isHttp: Boolean = false) = ProviderReach.withRequestModel(
+            ProviderReach.fromHttp(code, body, "fixture.example", false, hasHttpStatus = isHttp)!!,
+            "fixture-model",
+        )
+        var selected by mutableStateOf(reach(401, "Authentication failed"))
+        compose.setContent {
+            MinisTheme {
+                ProviderErrorDetailHost("stream-session", onChangeModel = {}, onOpenProviderSettings = {}) { open ->
+                    ProviderReachCard(selected, onRetry = {}, onOpenDetails = { guidance -> open(selected, guidance) {} })
+                }
+            }
+        }
+        val cases = listOf(
+            Triple(reach(401, "Authentication failed"), context.getString(R.string.nm_reach_key_refused_title, "fixture.example"),
+                context.getString(R.string.nm_reach_auth_title, "fixture.example")),
+            Triple(reach(403, "Access denied"), context.getString(R.string.nm_reach_generic_title, "fixture.example"),
+                context.getString(R.string.nm_reach_access_title, "fixture.example")),
+            Triple(reach(429, "Too many requests"), context.getString(R.string.nm_reach_quota_key_title, "fixture.example"),
+                text(R.string.nm_reach_rate_title)),
+        )
+        for ((value, expectedTitle, falseHttpTitle) in cases) {
+            compose.runOnIdle { selected = value }
+            compose.onNodeWithText(expectedTitle).assertIsDisplayed()
+            assertTrue(compose.onAllNodes(hasText(falseHttpTitle)).fetchSemanticsNodes().isEmpty())
+        }
+        compose.onNodeWithTag("provider-error-card").performClick()
+        waitForSheet(open = true)
+        compose.onNodeWithText(text(R.string.nm_reach_sheet_unavailable)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(close).performClick()
+        waitForSheet(open = false)
+        // A real failed HTTP response still shows the actual status in its title.
+        compose.runOnIdle { selected = reach(403, "Access denied", isHttp = true) }
+        compose.onNodeWithText(context.getString(R.string.nm_reach_access_title, "fixture.example")).assertIsDisplayed()
+    }
+
     @Test fun legacyDiagnosticsDoNotPretendToKnowTheirModelOrStatus() {
         val old = ProviderReach.Reach(ProviderReach.Kind.UNREACHABLE, "old.example", "timeout sk-synthetic123")
         compose.setContent {

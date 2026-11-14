@@ -1153,7 +1153,7 @@ class OpenAIProvider private constructor(
                             // There is no HTTP status in this event; do not invent one. Relay and
                             // content-check refusals keep their existing special classification.
                             val diagnosticBody = JSONObject().put("error", err ?: JSONObject()).toString()
-                            val mapped = mapHttpError(0, diagnosticBody, requestModelId = requestModelId, requestCredentials = responseCredentials)
+                            val mapped = mapHttpError(0, diagnosticBody, requestModelId = requestModelId, requestCredentials = responseCredentials, hasHttpStatus = false)
                             val safeCode = io.github.nanomuse.net.ProviderReach.redactedText(code, responseCredentials, 128)
                             val message = io.github.nanomuse.net.ProviderReach.diagnosticMessage(diagnosticBody, credentials = responseCredentials)
                                 .ifBlank { "response.failed with no error detail" }
@@ -1301,8 +1301,9 @@ class OpenAIProvider private constructor(
                     val inlineError = event.optJSONObject("error")
                     if (inlineError != null) {
                         val code = inlineError.optInt("code", 0)
-                        // nanoMuse: classify this event, then redact its decoded message.
-                        val err = mapHttpError(code, event.toString(), requestModelId = requestModelId, requestCredentials = responseCredentials)
+                        // nanoMuse: the event's code can guide retry but is not the HTTP status
+                        // of the successful streaming response. Keep that distinction in details.
+                        val err = mapHttpError(code, event.toString(), requestModelId = requestModelId, requestCredentials = responseCredentials, hasHttpStatus = false)
                         throw err
                     }
                     event.optJSONObject("nanomuse")?.let { io.github.nanomuse.cloud.NmStreamStatus.note(it) } // nanoMuse: the relay's "queued, N ahead" before the model speaks (docs/cloud.md)
@@ -3507,19 +3508,24 @@ class OpenAIProvider private constructor(
     private fun mapHttpError(
         statusCode: Int, body: String, retryAfter: String? = null,
         requestModelId: String? = null, requestCredentials: Collection<String> = emptyList(),
+        hasHttpStatus: Boolean = true, // nanoMuse: false for an error inside a successful SSE response
     ): LLMError {
         // nanoMuse: retain each provider response on its own exception. A process-wide last-error
         // slot could show a different request's failure after a fallback or a parallel call.
         // Parse raw JSON first: literal redaction before parsing can corrupt JSON when a key
         // contains a quote, and does not find a JSON-escaped credential. The body itself is not retained.
         val fromRelay = io.github.nanomuse.net.OwnProviderProxy.isRelay(basePath)
-        val relayError = io.github.nanomuse.cloud.AllowanceSignal.fromHttpError(statusCode, body, fromRelay = fromRelay)?.let {
+        val relayError = io.github.nanomuse.cloud.AllowanceSignal.fromHttpError(
+            statusCode, body, fromRelay = fromRelay, hasHttpStatus = hasHttpStatus,
+        )?.let {
             // nanoMuse: allowance guidance and links can echo credentials too, not just message.
             io.github.nanomuse.cloud.ProviderRefusalSanitizer.sanitize(it, requestCredentials)
         }
         // nanoMuse: relay refusals keep their existing special handling and allowance actions.
+        // Unknown stream codes still need a generic card rather than a made-up HTTP status.
+        val diagnosticCode = if (!hasHttpStatus && statusCode !in 300..599) 0 else statusCode
         val reach = if (relayError != null) null else io.github.nanomuse.net.ProviderReach.fromHttp(
-            statusCode, body,
+            diagnosticCode, body,
             host = if (isOAuth && !forceChatCompletions) "chatgpt.com" else io.github.nanomuse.net.OwnProviderProxy.hostOf(basePath),
             oauth = isOAuth,
             // nanoMuse: retain either delta-seconds or an HTTP-date without overflowing;
@@ -3529,6 +3535,7 @@ class OpenAIProvider private constructor(
             credentials = requestCredentials,
             // nanoMuse: an otherwise unclassified provider failure still gets details.
             includeOtherFailures = true,
+            hasHttpStatus = hasHttpStatus,
         )?.let { io.github.nanomuse.net.ProviderReach.withRequestModel(it, requestModelId, credentials = requestCredentials) }
         fun withDiagnostics(error: LLMError): LLMError = error.apply {
             nmProviderReach = reach
@@ -3540,7 +3547,13 @@ class OpenAIProvider private constructor(
         // nanoMuse: parsed provider message only. Opaque JSON metadata and HTML are not
         // needed to explain a failure and may echo prompts or encoded credentials.
         val errorMessage = io.github.nanomuse.net.ProviderReach.diagnosticMessage(body, credentials = requestCredentials)
-        val message = if (errorMessage.isNotBlank()) "[$statusCode] $errorMessage" else "HTTP $statusCode"
+        val message = when {
+            errorMessage.isNotBlank() && statusCode != 0 -> "[$statusCode] $errorMessage"
+            errorMessage.isNotBlank() -> errorMessage
+            hasHttpStatus -> "HTTP $statusCode"
+            statusCode != 0 -> "Provider error [$statusCode]"
+            else -> "Provider error"
+        }
 
         // nanoMuse: a 403 is access denied, not proof of an invalid API key. It follows the
         // ProviderError path below, preserving both its status and the provider's message.

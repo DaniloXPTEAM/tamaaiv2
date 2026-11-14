@@ -171,11 +171,12 @@ elif args[:3] == ["shell", "am", "instrument"]:
         print("OK (1 test)")
     elif mode == "few-screen-tests" and is_screen:
         print("OK (1 test)")
-    elif ((mode == "few-prompt-detail-tests" and is_prompt_detail)
-            or (mode == "few-provider-detail-tests" and is_provider_detail)):
+    elif mode == "few-prompt-detail-tests" and is_prompt_detail:
         print("OK (2 tests)")
+    elif mode == "few-provider-detail-tests" and is_provider_detail:
+        print("OK (4 tests)")
     else:
-        print("OK (8 tests)" if is_pet else "OK (4 tests)" if is_provider_detail else "OK (3 tests)" if is_prompt_detail else "OK (2 tests)" if is_screen or is_sandbox else "OK (1 test)")
+        print("OK (8 tests)" if is_pet else "OK (5 tests)" if is_provider_detail else "OK (3 tests)" if is_prompt_detail else "OK (2 tests)" if is_screen or is_sandbox else "OK (1 test)")
 
 """
 
@@ -278,8 +279,8 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     assert "::notice title=sandbox instrumentation::OK (2 tests);" in result.stdout
     assert "::notice title=prompt detail instrumentation::OK (3 tests);" in result.stdout
     assert (checkout / "prompt-detail-instrumentation.log").read_text().strip() == "OK (3 tests)"
-    assert "::notice title=provider detail instrumentation::OK (4 tests);" in result.stdout
-    assert (checkout / "provider-detail-instrumentation.log").read_text().strip() == "OK (4 tests)"
+    assert "::notice title=provider detail instrumentation::OK (5 tests);" in result.stdout
+    assert (checkout / "provider-detail-instrumentation.log").read_text().strip() == "OK (5 tests)"
     assert "::notice title=background warning instrumentation::OK (1 test);" in result.stdout
     assert (
         checkout / "background-service-instrumentation.log"

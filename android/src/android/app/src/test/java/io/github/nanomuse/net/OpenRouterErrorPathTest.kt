@@ -137,8 +137,14 @@ class OpenRouterErrorPathTest {
         ))
         val unrelated = failedCall()
         assertNull(unrelated.nmRelayError)
-        assertNull(unrelated.nmProviderReach)
+        // nanoMuse: unrelated 400s now retain their own generic diagnostic, never the relay's.
+        val reach = unrelated.nmProviderReach!!
+        assertEquals(ProviderReach.Kind.PROVIDER_ERROR, reach.kind)
+        assertEquals(400, reach.httpStatus)
+        assertEquals(freeModel, reach.modelId)
+        assertEquals("Unsupported parameter", reach.originalMessage)
         assertTrue(unrelated.message!!.contains("Unsupported parameter"))
+        assertEquals(RelayRefusal.Kind.DAILY_CAP, relay.nmRelayError!!.refusal.kind)
     }
 
     @Test fun `a mid-stream 403 retains the same access diagnosis`() = runBlocking {
@@ -149,5 +155,7 @@ class OpenRouterErrorPathTest {
         assertTrue(error is LLMError.ProviderError)
         assertEquals(ProviderReach.Kind.ACCESS_DENIED, error.nmProviderReach!!.kind)
         assertEquals("Blocked by policy", error.nmProviderReach!!.detail)
+        // nanoMuse: 403 was in the SSE event; the successful response did not have HTTP 403.
+        assertNull(error.nmProviderReach!!.httpStatus)
     }
 }

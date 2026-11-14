@@ -146,17 +146,19 @@ fun ProviderReachCard(
         )
         ProviderReach.Kind.AUTH_REJECTED -> Head(
             Icons.Outlined.VpnKey, Color(0xFFE0772C),
-            stringResource(R.string.nm_reach_auth_title, host),
+            // An SSE error code or an old saved diagnostic is not an HTTP status.
+            stringResource(if (reach.httpStatus == 401) R.string.nm_reach_auth_title else R.string.nm_reach_key_refused_title, host),
             stringResource(R.string.nm_reach_auth_body),
         )
         ProviderReach.Kind.ACCESS_DENIED -> Head(
             Icons.Outlined.Key, Color(0xFFE0772C),
-            stringResource(R.string.nm_reach_access_title, host),
+            stringResource(if (reach.httpStatus == 403) R.string.nm_reach_access_title else R.string.nm_reach_generic_title, host),
             stringResource(R.string.nm_reach_access_body),
         )
         ProviderReach.Kind.RATE_LIMITED -> Head(
             Icons.Outlined.HourglassEmpty, Color(0xFF7C5CFF),
-            stringResource(R.string.nm_reach_rate_title),
+            if (reach.httpStatus == 429) stringResource(R.string.nm_reach_rate_title)
+            else stringResource(R.string.nm_reach_quota_key_title, host),
             stringResource(R.string.nm_reach_rate_body),
         )
         ProviderReach.Kind.REQUEST_TOO_LARGE -> Head(

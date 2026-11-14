@@ -138,7 +138,8 @@ output size refusals, and rate limits (429). Tap the provider error card or *Det
 HTTP status, provider, model from the failed request, and a bounded provider message. The sheet
 can copy the message, retry the same unresolved turn, open the model picker or provider settings.
 An older error or a stream event may not have a status or model snapshot; the sheet says when a
-value is unavailable rather than guessing from the current picker. A retry from an old sheet is
+value is unavailable rather than guessing from the current picker. A numeric error code inside a
+successful event stream is not labelled as an HTTP status in the card or detail sheet. A retry from an old sheet is
 refused if the conversation or failure has changed. Relay and allowance refusals keep their
 special cards and actions.
 
@@ -399,8 +400,8 @@ Again starts the new request without waiting for the old picture to finish savin
 A failed turn whose error is the transport's (OkHttp's *failed to connect to chatgpt.com/… (port
 443)*, *Unable to resolve host*, a TLS or timeout line) or OpenAI's *region not supported* is
 shown as a card instead of the red banner: what happened, what helps (a VPN on this phone, the
-proxy under *Settings → Network*, another provider with a key of your own), *Try again*, and the
-raw line behind *Details*. The 401/403/429 and credit refusals are attached to their own
+proxy under *Settings → Network*, another provider with a key of your own), *Try again*, and a
+bounded, redacted message behind *Details*. The 401/403/429 and credit refusals are attached to their own
 `LLMError` in `OpenAIProvider` and written into the message as a versioned canonical reach line.
 A 413 or explicit input-size refusal is not sent unchanged to the next group member. An output
 limit refusal is retried once only when the provider gives an unambiguous smaller maximum; a

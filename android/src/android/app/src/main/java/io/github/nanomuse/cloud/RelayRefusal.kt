@@ -86,8 +86,18 @@ object RelayRefusal {
         val isAllowance: Boolean get() = kind == Kind.EXHAUSTED || kind == Kind.ALLOWANCE_PAUSED || kind == Kind.DAILY_CAP
 
         /** The [NanoMuseCloud.CloudException] [NanoMuseCloud.describe] turns into the sentence. */
-        fun toException(): NanoMuseCloud.CloudException =
-            NanoMuseCloud.CloudException(code, message, status, retryAfterS = retryAfterS, paused = paused)
+        fun toException(): NanoMuseCloud.CloudException {
+            // Stream error codes can resemble HTTP statuses but are not HTTP responses.
+            // Keep the existing human guidance for the three status-only relay refusals.
+            val streamCode = code.takeIf { it.startsWith("stream_") }?.removePrefix("stream_")?.toIntOrNull()
+            val descriptionCode = when (streamCode) {
+                413 -> "too_large"
+                401 -> "bad_key"
+                in 500..599 -> "upstream"
+                else -> code
+            }
+            return NanoMuseCloud.CloudException(descriptionCode, message, status, retryAfterS = retryAfterS, paused = paused)
+        }
     }
 
     /** The error type the relay stamps on every refusal (`docs/cloud.md` → Protocol). */
@@ -162,7 +172,7 @@ object RelayRefusal {
      * content check in a 400 or an unnumbered SSE error is [Kind.CONTENT_REJECTED] whoever
      * sent it, so a key of one's own gets the same sentence and the same end to retrying.
      */
-    fun parse(status: Int, body: String?, fromRelay: Boolean = false): Refusal? {
+    fun parse(status: Int, body: String?, fromRelay: Boolean = false, hasHttpStatus: Boolean = true): Refusal? {
         val err = errorObject(body)
         // Object-valued fields are opaque metadata, not a code or a sentence to retain.
         val code = (err?.opt("code") as? String)?.takeIf { it.isNotBlank() }
@@ -174,9 +184,11 @@ object RelayRefusal {
         val message = (err?.opt("message") as? String)?.takeIf { it.isNotBlank() }
             ?: body?.trim()?.takeIf { it.isNotBlank() && !it.startsWith("{") && !it.startsWith("<") }?.take(200)
             ?: ""
-        if (contentCheck) return Refusal(Kind.CONTENT_REJECTED, status, "content_rejected", message)
-        val relayCode = code ?: "http_$status"
-        return Refusal(classify(status, relayCode, paused), status, relayCode, message, retry, paused)
+        // Numeric stream codes can still classify the refusal, but are not HTTP statuses.
+        val reportedStatus = if (hasHttpStatus) status else 0
+        if (contentCheck) return Refusal(Kind.CONTENT_REJECTED, reportedStatus, "content_rejected", message)
+        val relayCode = code ?: if (hasHttpStatus) "http_$status" else "stream_$status"
+        return Refusal(classify(status, relayCode, paused), reportedStatus, relayCode, message, retry, paused)
     }
 
     /**
