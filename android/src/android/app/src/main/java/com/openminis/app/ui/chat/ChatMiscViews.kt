@@ -601,7 +601,14 @@ internal fun FallbackInfoBlock(
                         modifier = Modifier
                             .size(14.dp)
                             // nanoMuse: a hoisted owner survives the row leaving the viewport.
-                            .clickable { if (onOpenDetail != null) onOpenDetail() else showDetail = true },
+                            .clickable {
+                                if (block.toolName == "prompt_size") {
+                                    io.github.nanomuse.ui.chat.PromptSizeDetailTrace.record(
+                                        io.github.nanomuse.ui.chat.PromptSizeDetailTrace.Event.ROW_CLICK,
+                                    )
+                                }
+                                if (onOpenDetail != null) onOpenDetail() else showDetail = true
+                            },
                     )
                 }
             }

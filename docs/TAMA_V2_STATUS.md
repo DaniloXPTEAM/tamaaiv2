@@ -9,7 +9,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
 | T0a: build, testes e hash | PARCIAL | [Android 43602905594](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43602905594): build passou e APK instalado correspondeu ao selado; Pet, WebView, política de ANR e painel sintético passaram, mas jornada, saúde do emulador e PRoot falharam. | Investigar o painel e o PRoot sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | Em `43602905594`, os dois testes Compose isolados do painel passaram, mas a jornada real novamente expirou após tocar nos detalhes; não há tabela. | Diagnosticar a diferença na tela real e publicar a tabela do pedido ao servidor falso no Android. |
+| T0b: medir prompt | EM ANDAMENTO | Em `43602905594`, os dois testes Compose isolados do painel passaram, mas a jornada real novamente expirou após tocar nos detalhes; não há tabela. Um diagnóstico de eventos fixos foi preparado. | Verificar o novo diagnóstico na tela real e publicar a tabela do pedido ao servidor falso no Android. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
@@ -54,6 +54,20 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   terminou com sucesso geral; Linux, macOS, web, relay e Docker passaram, mas o job Windows
   experimental voltou a falhar nos testes. A tentativa anterior de corrigir LF não resolveu tudo;
   o log completo retornou EOF e a causa específica continua desconhecida.
+
+## Painel: diagnóstico preparado para a jornada
+
+- Para distinguir toque, callback do chat, abertura, montagem, fechamento e descarte do painel,
+  o próximo teste da jornada usa um observador em memória, ativo apenas em build debug e somente
+  quando o teste se inscreve. A falha publica no máximo 24 nomes fixos de eventos, além das
+  contagens de controles; não publica relatório, sessão, modelo ou conversa. O observador é
+  removido também em caso de falha. Isso é diagnóstico, não uma correção da causa ainda desconhecida.
+- Um terceiro teste Compose sintético foi preparado com linha reciclável, rodapé medido e campo
+  de texto com foco; o smoke e o resumo agora exigem os três testes. O primeiro também confere
+  a ordem dos eventos fixos. Passaram 116 testes Python direcionados (um pulado), Ruff, formato,
+  sintaxe Bash e parser Kotlin. O proprietário do painel e o teste focalizado foram verificados
+  pelo compilador Kotlin com stubs de Android/Compose, não executados como interface Android.
+  A nova instrumentação e o diagnóstico ainda aguardam CI.
 
 ## Segundo plano: investigação, aviso de bateria e recusa de serviço
 

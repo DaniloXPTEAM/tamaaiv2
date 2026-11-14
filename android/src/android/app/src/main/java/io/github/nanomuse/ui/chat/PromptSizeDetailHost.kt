@@ -1,6 +1,7 @@
 package io.github.nanomuse.ui.chat
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.res.stringResource
@@ -18,12 +19,25 @@ internal fun PromptSizeDetailHost(
     content: @Composable (openDetail: (String) -> Unit) -> Unit,
 ) {
     val detail = remember(sessionId) { mutableStateOf<String?>(null) }
-    content { report -> detail.value = report }
+    DisposableEffect(sessionId) {
+        onDispose { PromptSizeDetailTrace.record(PromptSizeDetailTrace.Event.HOST_UNMOUNT) }
+    }
+    content { report ->
+        PromptSizeDetailTrace.record(PromptSizeDetailTrace.Event.OPEN_REQUEST)
+        detail.value = report
+    }
     detail.value?.let { report ->
+        DisposableEffect(Unit) {
+            PromptSizeDetailTrace.record(PromptSizeDetailTrace.Event.SHEET_MOUNT)
+            onDispose { PromptSizeDetailTrace.record(PromptSizeDetailTrace.Event.SHEET_UNMOUNT) }
+        }
         CompactSummarySheet(
             summary = report,
             title = stringResource(R.string.nm_prompt_size_title),
-            onDismiss = { detail.value = null },
+            onDismiss = {
+                PromptSizeDetailTrace.record(PromptSizeDetailTrace.Event.SHEET_DISMISS)
+                detail.value = null
+            },
         )
     }
 }

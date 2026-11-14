@@ -17,7 +17,7 @@ CHECKS = (
     ("journey-instrumentation.log", "Real app journey", 1),
     ("restart-instrumentation.log", "Process restart", 1),
     ("sandbox-instrumentation.log", "Packaged sandbox", 2),
-    ("prompt-detail-instrumentation.log", "Prompt detail", 2),
+    ("prompt-detail-instrumentation.log", "Prompt detail", 3),
     ("background-service-instrumentation.log", "Background warning", 1),
     ("browser-guard-instrumentation.log", "Browser guard", 1),
     ("system-anr-policy-instrumentation.log", "System ANR dialog policy", 1),

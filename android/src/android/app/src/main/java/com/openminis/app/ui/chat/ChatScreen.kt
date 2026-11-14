@@ -4301,6 +4301,9 @@ fun ChatScreen(
                                 // nanoMuse: open this report from the stable chat owner, not the lazy row.
                                 onOpenDetail = if (item.block.toolName == "prompt_size") {
                                     {
+                                        io.github.nanomuse.ui.chat.PromptSizeDetailTrace.record(
+                                            io.github.nanomuse.ui.chat.PromptSizeDetailTrace.Event.CHAT_CALLBACK,
+                                        )
                                         keyboardController?.hide()
                                         focusManager.clearFocus()
                                         openPromptSizeDetail(item.block.toolArgs)

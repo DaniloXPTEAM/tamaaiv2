@@ -47,9 +47,12 @@ fails, is skipped, or reports no tests:
   markers, split UTF-8, consecutive commands and timeouts to the real shell reader through a
   synthetic process; they do not establish that packaged PRoot works on a device.
 - The prompt-size info row and report sheet in a synthetic Compose layout: opening the sheet,
-  disposing its originating row, closing it, and switching sessions without carrying the old
-  report into another chat. These focused tests run independently of the full journey and use
-  no provider. Their Android result must be checked in the individual instrumentation log.
+  disposing its originating row, closing it, switching sessions without carrying the old report
+  into another chat, and opening from a lazy row while the composer has focus. These focused
+  tests run independently of the full journey and use no provider. Their Android result must
+  be checked in the individual instrumentation log. A debug-only, in-memory observer in the
+  full journey can report at most 24 fixed lifecycle labels if the sheet times out; it contains
+  no report, session, model or conversation text and is cleared even when the test fails.
 - The background-service warning in a synthetic Compose layout: a fake rejected start and stop
   show different messages, and a retry changes only the test state. The check does not start a
   service, run a task in the background or prove Android will preserve the app. Its individual

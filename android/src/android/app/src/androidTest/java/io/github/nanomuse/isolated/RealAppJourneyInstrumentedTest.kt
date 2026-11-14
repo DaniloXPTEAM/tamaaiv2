@@ -38,6 +38,7 @@ import io.github.nanomuse.pet.PetCareAction
 import io.github.nanomuse.pet.PetMission
 import io.github.nanomuse.pet.PetStore
 import io.github.nanomuse.ui.chat.ChatBackground
+import io.github.nanomuse.ui.chat.PromptSizeDetailTrace
 import io.github.nanomuse.ui.onboarding.FirstRunSetup
 import java.io.File
 import java.util.Collections
@@ -66,6 +67,7 @@ class RealAppJourneyInstrumentedTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val app get() = context.applicationContext as MinisApp
     private val promptEvents = Collections.synchronizedList(mutableListOf<PromptSizeTrace.Event>())
+    private val promptDetailEvents = Collections.synchronizedList(mutableListOf<PromptSizeDetailTrace.Event>())
 
     private fun text(id: Int) = context.getString(id)
     private fun awaitText(value: String, timeout: Long = 30_000) {
@@ -103,8 +105,9 @@ class RealAppJourneyInstrumentedTest {
     }
 
     @After fun captureLastScreenForDiagnosis() {
-        // Remove the in-process, count-only observer even when an assertion fails.
+        // Remove the in-process, count-only and fixed-event observers even on failure.
         PromptSizeTrace.observer = null
+        PromptSizeDetailTrace.observer = null
         // The isolated-emulator guard prevents capturing a person's screen. Unlike the journey
         // previews, this full-display diagnostic deliberately includes Android system dialogs.
         if (InstrumentationRegistry.getArguments().getString("tama_isolated") == "true") {
@@ -230,6 +233,12 @@ class RealAppJourneyInstrumentedTest {
             compose.onAllNodes(hasSetTextAction())[0].performTextInput("/prompt-size")
             compose.onNodeWithContentDescription("Send").performClick()
             awaitDescription(text(R.string.nm_prompt_size_details), 45_000)
+            // Only fixed event names leave this synthetic test; no report or session data is logged.
+            PromptSizeDetailTrace.observer = { event ->
+                synchronized(promptDetailEvents) {
+                    if (promptDetailEvents.size < 24) promptDetailEvents.add(event)
+                }
+            }
             compose.onNodeWithContentDescription(text(R.string.nm_prompt_size_details)).performClick()
             try {
                 compose.waitUntil(30_000) {
@@ -239,8 +248,16 @@ class RealAppJourneyInstrumentedTest {
                 // nanoMuse: count fixed UI labels only, never dump the prompt or conversation.
                 val close = compose.onAllNodes(hasContentDescription(text(R.string.standard_sheet_close))).fetchSemanticsNodes().size
                 val titles = compose.onAllNodes(hasText(text(R.string.nm_prompt_size_title))).fetchSemanticsNodes().size
-                throw AssertionError("Prompt report did not appear; close controls=$close, titles=$titles", failure)
+                val stages = synchronized(promptDetailEvents) { promptDetailEvents.joinToString(",") { it.name } }
+                throw AssertionError("Prompt report did not appear; close controls=$close, titles=$titles, stages=$stages", failure)
             }
+            val detailStages = synchronized(promptDetailEvents) { promptDetailEvents.toList() }
+            assertTrue("Prompt detail did not use the expected host", detailStages.containsAll(listOf(
+                PromptSizeDetailTrace.Event.ROW_CLICK,
+                PromptSizeDetailTrace.Event.CHAT_CALLBACK,
+                PromptSizeDetailTrace.Event.OPEN_REQUEST,
+                PromptSizeDetailTrace.Event.SHEET_MOUNT,
+            )))
             assertEquals(postsBeforeMeasure, synchronized(fixture.posts) { fixture.posts.size })
             back()
             compose.waitUntil(30_000) {

@@ -232,7 +232,7 @@ else
 fi
 # Exercise the report host independently even if the full journey or the sandbox fails.
 run_instrumentation io.github.nanomuse.isolated.PromptSizeDetailInstrumentedTest prompt-detail-instrumentation.log \
-  'prompt detail instrumentation' 2 'Synthetic report, recycled row and session change' || failed=1
+  'prompt detail instrumentation' 3 'Synthetic report, recycled row, session change and focused composer' || failed=1
 run_instrumentation io.github.nanomuse.isolated.BackgroundServiceWarningInstrumentedTest background-service-instrumentation.log \
   'background warning instrumentation' 1 'Synthetic service rejection and retry warning' || failed=1
 # nanoMuse: exercise the browser guard against an inline page with networking disabled.

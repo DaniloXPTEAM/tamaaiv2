@@ -155,10 +155,12 @@ elif args[:3] == ["shell", "am", "instrument"]:
             or (mode == "browser-skipped" and is_browser) or (mode == "anr-policy-skipped" and is_anr_policy)):
         print("INSTRUMENTATION_STATUS_CODE: -4")
         print("OK (1 test)")
-    elif (mode == "few-screen-tests" and is_screen) or (mode == "few-prompt-detail-tests" and is_prompt_detail):
+    elif mode == "few-screen-tests" and is_screen:
         print("OK (1 test)")
+    elif mode == "few-prompt-detail-tests" and is_prompt_detail:
+        print("OK (2 tests)")
     else:
-        print("OK (8 tests)" if is_pet else "OK (2 tests)" if is_screen or is_sandbox or is_prompt_detail else "OK (1 test)")
+        print("OK (8 tests)" if is_pet else "OK (3 tests)" if is_prompt_detail else "OK (2 tests)" if is_screen or is_sandbox else "OK (1 test)")
 
 """
 
@@ -259,8 +261,8 @@ def test_smoke_runs_app_and_nonempty_instrumentation_in_one_shell(smoke) -> None
     assert "::notice title=app journey instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=process restart instrumentation::OK (1 test);" in result.stdout
     assert "::notice title=sandbox instrumentation::OK (2 tests);" in result.stdout
-    assert "::notice title=prompt detail instrumentation::OK (2 tests);" in result.stdout
-    assert (checkout / "prompt-detail-instrumentation.log").read_text().strip() == "OK (2 tests)"
+    assert "::notice title=prompt detail instrumentation::OK (3 tests);" in result.stdout
+    assert (checkout / "prompt-detail-instrumentation.log").read_text().strip() == "OK (3 tests)"
     assert "::notice title=background warning instrumentation::OK (1 test);" in result.stdout
     assert (
         checkout / "background-service-instrumentation.log"
