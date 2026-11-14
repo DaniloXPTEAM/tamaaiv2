@@ -23,8 +23,20 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
 | T8: imagem | PENDENTE | Consultar a configuração não equivale a gerar imagem. | Tool e mensagem de configuração ausente. |
 | T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
-| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de operação da tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, a suíte Python não-live passou no host. Arte e keystore dependem do dono. | Confirmar a suíte no CI; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
+| T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, Python passou no host e em Linux/macOS no CI; Windows experimental ainda falhou. Arte e keystore dependem do dono. | Investigar Windows; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI Python de `42f9e0d`
+
+- [Test Suite 43601067699](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43601067699)
+  terminou com sucesso geral: as três versões Python no Linux, macOS, web, relay e Docker passaram.
+  O job Windows experimental falhou nos testes e não bloqueou o workflow; o log completo não
+  pôde ser consultado, portanto a causa específica permanece desconhecida.
+- Um problema independente foi encontrado nos testes do retrato de processos: `write_text` pode
+  converter LF em CRLF no Windows, embora o formato recebido do emulador exija bytes LF exatos.
+  As fixtures agora gravam bytes explícitos, sem relaxar a validação; os 22 testes do publicador
+  passaram no host. Isso é uma possível causa da falha Windows, não uma identificação confirmada;
+  é necessário executar novamente no CI.
 
 ## Painel de medição: mudança preparada
 

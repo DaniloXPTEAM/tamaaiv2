@@ -86,7 +86,8 @@ def test_process_snapshot_is_published_only_as_a_valid_app_tree(
         "v1 process pid=21 ppid=1 state=R wait=zero_or_hidden kind=app tracer=unknown\n"
         "v1 process pid=42 ppid=21 state=S wait=futex kind=proot tracer=0\n"
     )
-    (tmp_path / "sandbox-process-snapshot.txt").write_text(data)
+    # The emulator emits exact LF bytes; Windows text-mode translation must not alter the fixture.
+    (tmp_path / "sandbox-process-snapshot.txt").write_bytes(data.encode("ascii"))
     assert summary.main() == 0
     output = capsys.readouterr().out
     assert "::notice title=Sandbox process snapshot::v1 root=21 truncated=0" in output
@@ -100,16 +101,16 @@ def test_truncated_process_snapshot_requires_the_exact_row_cap(tmp_path) -> None
         f"v1 process pid={pid} ppid=21 state=S wait=other kind=other tracer=0\n"
         for pid in range(100, 123)
     )
-    path.write_text("v1 root=21 truncated=1\n" + root + children)
+    path.write_bytes(("v1 root=21 truncated=1\n" + root + children).encode("ascii"))
     assert len(summary.read_process_snapshot(path) or []) == 25
-    path.write_text(path.read_text() + children.splitlines()[0] + "\n")
+    path.write_bytes(path.read_bytes() + (children.splitlines()[0] + "\n").encode("ascii"))
     assert summary.read_process_snapshot(path) is None
 
 
 def test_unavailable_process_snapshot_is_explicit(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "sandbox-process-snapshot.txt").write_text(
-        "v1 root=21 truncated=unknown\nv1 unavailable\n"
+    (tmp_path / "sandbox-process-snapshot.txt").write_bytes(
+        b"v1 root=21 truncated=unknown\nv1 unavailable\n"
     )
     assert summary.main() == 0
     assert "truncated=unknown | v1 unavailable" in capsys.readouterr().out
@@ -139,7 +140,7 @@ def test_unavailable_process_snapshot_is_explicit(tmp_path, monkeypatch, capsys)
 def test_invalid_process_snapshot_is_never_echoed(tmp_path, monkeypatch, capsys, contents) -> None:
     monkeypatch.chdir(tmp_path)
     path = tmp_path / "sandbox-process-snapshot.txt"
-    path.write_text(contents)
+    path.write_bytes(contents.encode("ascii"))
     assert summary.read_process_snapshot(path) is None
     assert summary.main() == 0
     output = capsys.readouterr().out
