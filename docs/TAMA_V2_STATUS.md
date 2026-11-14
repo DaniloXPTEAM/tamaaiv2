@@ -8,8 +8,8 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | [Android 43593761942](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43593761942): build passou e APK instalado correspondeu ao selado; Pet, WebView e política de ANR passaram, mas jornada e PRoot falharam. | Investigar o painel e o PRoot sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | Em `43593761942`, a jornada alcançou o cartão `/prompt-size`, mas expirou após tocar nos detalhes; não há tabela. O proprietário do painel foi movido para fora do layout medido, com novos testes de interface preparados. | Validar o painel e publicar a tabela do pedido real ao servidor falso no Android. |
+| T0a: build, testes e hash | PARCIAL | [Android 43601067705](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43601067705): build passou e APK instalado correspondeu ao selado; Pet, WebView e política de ANR passaram, mas jornada e PRoot falharam. | Investigar o painel e o PRoot sem reduzir os gates. Release ainda não comprovado. |
+| T0b: medir prompt | EM ANDAMENTO | Em `43601067705`, a jornada alcançou o cartão `/prompt-size`, mas expirou após tocar nos detalhes; não há tabela. O proprietário do painel foi movido em `d4f2626`, com novos testes de interface preparados. | Validar o painel e publicar a tabela do pedido real ao servidor falso no Android. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
@@ -25,6 +25,26 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T9: segundo plano | BLOQUEADA | Não há log do Poco X6 Pro que identifique a causa. `mediaPlayback` permanece inalterado. | Investigar serviço, fabricante e identidade, nessa ordem; registrar evidências antes de mexer no manifesto. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, Python passou no host e em Linux/macOS no CI; Windows experimental ainda falhou. Arte e keystore dependem do dono. | Investigar Windows; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI Android de `42f9e0d`: retrato de processos
+
+- [Android 43601067705](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43601067705)
+  passou build debug arm64, unitários, compilação instrumentada e previews. APK selado e leitura
+  instalada coincidiram em 70.658.672 bytes, SHA-256
+  `915d26f9e1b3332f6da5138831aecb5d0f3fda3dcd0da6a86572ff6e66f298c2`; certificado
+  `78bd9b49da837ff139c1060d78d66eef76c17de39bc789f67cbc3b3f9fe1d4e9`. A assinatura no telefone
+  permanece desconhecida: não desinstalar nem limpar dados. Release não foi comprovado.
+- Pet passou em oito testes de persistência e dois de tela; WebView sintética e política de ANR
+  também passaram. A jornada registrou `none` para recuperação de ANR e chegou ao cartão de
+  medição, mas novamente expirou após o toque: um título, nenhum controle de fechar. Não houve
+  tabela nem prova de recuperação de provedor ou restart. A mudança `d4f2626` ainda não estava
+  neste APK. O workflow Android terminou em falha; iOS, harness e Commits passaram.
+- O primeiro comando PRoot retornou 124 com processo vivo e saída vazia. Antes de encerrá-lo,
+  o diagnóstico de `42f9e0d` produziu no emulador um retrato não truncado de três processos:
+  o app, um filho em espera e um neto em parada de rastreamento, cujo `TracerPid` correspondia
+  ao PID do filho. Ambos descendentes ficaram na categoria `other`; o retrato não identifica
+  seus executáveis, não mostra o que levou à espera e não prova a causa ou o resultado em ARM
+  físico. Ele mostra apenas um instante. O smoke continuou em falha.
 
 ## CI Python de `42f9e0d`
 
@@ -52,7 +72,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   Android/Compose, não uma interface Android real. O resultado dos novos testes instrumentados
   e da jornada completa ainda precisa de CI.
 
-## Próximo diagnóstico do sandbox
+## Limites do diagnóstico do sandbox
 
 - Foi preparado um retrato somente para o emulador descartável: em falha do teste PRoot,
   antes de encerrar o shell, ele tenta registrar até 24 processos da árvore do próprio app,
@@ -62,11 +82,11 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   retorna `unknown`/`unavailable` se necessário. Um validador único recusa campos fora da
   lista, árvore desconectada, ciclos e arquivos grandes antes de guardar ou publicar o artefato.
 - Os casos sintéticos Kotlin passaram no host com Android substituído, incluindo erro, entrada
-  grande e timeout de 10.005 ms; isso **não** prova compatibilidade de `ps`/`/proc` no Android.
-  A suíte Python não-live no host, já com a correção `f2f3a77` e este diagnóstico, teve **1.663
-  passed, 9 skipped, 2 deselected e 33 subtests**; Ruff direcionado, formato, `bash -n` e
-  `git diff --check` passaram. O retrato não altera o resultado do smoke nem é uma correção do
-  PRoot. Sua execução no Android e a causa do timeout continuam não verificadas.
+  grande e timeout de 10.005 ms. A captura funcionou uma vez no emulador `43601067705`, sem
+  garantir disponibilidade de `ps`/`/proc` em outros Androids. A suíte Python não-live no host,
+  já com a correção `f2f3a77` e este diagnóstico, teve **1.663 passed, 9 skipped, 2 deselected
+  e 33 subtests**; Ruff direcionado, formato, `bash -n` e `git diff --check` passaram. O retrato
+  não altera o resultado do smoke nem é uma correção do PRoot; a causa do timeout segue incerta.
 
 ## CI de `ee68c6f`: recuperação diagnóstica e painel pendente
 

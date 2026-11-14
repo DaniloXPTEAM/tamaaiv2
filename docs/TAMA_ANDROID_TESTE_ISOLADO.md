@@ -41,8 +41,9 @@ fails, is skipped, or reports no tests:
   Paths, process names, arguments, environment and command output are not saved in the snapshot.
   A ten-second deadline, input limits and a truncation flag keep the diagnostic bounded; missing
   permissions or an unsupported `ps` format are recorded as unknown/unavailable. The smoke
-  validates the complete allowlisted tree before retaining or publishing it. This snapshot is a
-  diagnostic, not a fix or proof of the cause, and its Android execution remains to be checked.
+  validates the complete allowlisted tree before retaining or publishing it. One emulator run
+  captured such a snapshot; this does not guarantee access on other Android devices. It is a
+  diagnostic, not a fix or proof of the cause.
 - The prompt-size info row and report sheet in a synthetic Compose layout: opening the sheet,
   disposing its originating row, closing it, and switching sessions without carrying the old
   report into another chat. These focused tests run independently of the full journey and use
