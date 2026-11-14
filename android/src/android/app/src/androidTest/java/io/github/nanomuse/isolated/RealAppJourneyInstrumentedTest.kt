@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.os.Process
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsDisplayed
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -342,13 +344,11 @@ class RealAppJourneyInstrumentedTest {
                         "afterWait=$boundsAfterWait, windowFocus=$windowFocused",
                     failure,
                 )
-                // Do not send a diagnostic touch or Back to an unrecognized system window.
-                if (!compose.activity.hasWindowFocus()) throw promptTouchFailure!!
-                if (!retried && compose.onAllNodes(hasContentDescription(text(R.string.standard_sheet_close))).fetchSemanticsNodes().isNotEmpty()) {
-                    back()
-                    compose.waitUntil(30_000) {
-                        compose.onAllNodes(hasContentDescription(text(R.string.standard_sheet_close))).fetchSemanticsNodes().isEmpty()
-                    }
+                // An opened modal can take focus from the Activity. If it did not open,
+                // stop rather than interact with an unknown sheet or system window.
+                if (!retried && (!compose.activity.hasWindowFocus() ||
+                        compose.onAllNodes(hasContentDescription(text(R.string.standard_sheet_close))).fetchSemanticsNodes().isNotEmpty())) {
+                    throw promptTouchFailure!!
                 }
                 retried
             }
@@ -360,11 +360,17 @@ class RealAppJourneyInstrumentedTest {
                     PromptSizeDetailTrace.Event.OPEN_REQUEST,
                     PromptSizeDetailTrace.Event.SHEET_MOUNT,
                 )))
-                back()
+                // Cleanup only: invoke the known app sheet's semantic close, not a touch or
+                // Back on a possibly obscuring system window. The first physical click remains
+                // the gate; diagnostic recovery can collect data but cannot make it pass.
+                compose.onNodeWithContentDescription(text(R.string.standard_sheet_close))
+                    .performSemanticsAction(SemanticsActions.OnClick)
                 compose.waitUntil(30_000) {
                     compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isEmpty()
                 }
             }
+            // Do not type into the chat or send the fixture request behind another window.
+            compose.waitUntil(15_000) { compose.activity.hasWindowFocus() }
             assertEquals(postsBeforeMeasure, synchronized(fixture.posts) { fixture.posts.size })
 
             // nanoMuse: first show a terminal 413 without blindly resending it. A manual retry

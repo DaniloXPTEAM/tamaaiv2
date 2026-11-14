@@ -8,8 +8,8 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | [Android 43615334613](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43615334613): build, unitários e APK instalado correspondente passaram; jornada e PRoot falharam. | Investigar sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | Em `43615334613`, três testes Compose sintéticos passaram; na jornada, o alvo de 48 dp não recebeu clique e não houve tabela. Uma nova sonda de eventos e limites aguarda CI. | Investigar o toque e publicar a tabela do pedido ao servidor falso no Android. |
+| T0a: build, testes e hash | PARCIAL | [Android 43617802922](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43617802922): build, unitários e APK instalado correspondente passaram; jornada e PRoot falharam. | Investigar sem reduzir os gates. Release ainda não comprovado. |
+| T0b: medir prompt | EM ANDAMENTO | Em `43617802922`, o primeiro toque chegou à raiz, mas não à linha; o segundo abriu o painel. Não houve tabela. | Investigar o primeiro toque e publicar a tabela do pedido ao servidor falso no Android. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
@@ -25,6 +25,34 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; tracker e aviso sintético passaram no build e emulação `43608695720`. Isso não prova um turno em segundo plano nem o Poco. `mediaPlayback` permanece inalterado. | Testar turno lento e investigar o Poco com autorização. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, Python passou no host e em Linux/macOS no CI; Windows experimental ainda falhou. Arte e keystore dependem do dono. | Investigar Windows; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI de `085dc82`: primeiro toque na raiz, segundo abriu o painel
+
+- [Android 43617802922](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43617802922)
+  passou build, unitários, montagem da instrumentação, Pet (8 persistência e 2 tela), três testes
+  sintéticos do relatório, aviso de segundo plano, browser e política de ANR. O APK selado e o
+  instalado coincidiram em 70.683.612 bytes, SHA-256
+  `bded3d62647dac3010b939439ba4eaa90c3fe138b5171b298a4335845acd6b9a`. O certificado do build
+  foi `ee23931942ca5cab623a11a4948125040c002535f92e9d2b4b6606404808e750`, diferente do artefato
+  de `43447089686`. A assinatura instalada no telefone continua desconhecida: **não desinstalar
+  nem limpar dados**.
+- A jornada falhou no primeiro toque. A sonda registrou apenas `ROOT_DOWN,ROOT_END`; no segundo
+  toque, registrou também `ROW_DOWN,ROW_END,ROW_CLICK,CHAT_CALLBACK,OPEN_REQUEST,SHEET_MOUNT`, e
+  o relatório abriu. Os limites foram `y=1347..1473` antes e imediatamente depois do primeiro
+  toque, e `y=1164..1290` após a espera. A janela tinha foco antes do segundo toque. Os dados
+  mostram uma diferença entre as duas entregas, mas **não comprovam a causa** nem que o alvo
+  estivesse estável durante o primeiro evento. Não foram publicadas métricas do servidor falso;
+  a sequência de recuperação e o restart permanecem sem prova.
+- O primeiro comando do PRoot expirou com 124, processo vivo e saída vazia. O retrato mostrou app
+  em `poll`, filho em `wait` e neto em `ptrace`, sem identificar a causa. O Test Suite
+  [43617802943](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43617802943) teve sucesso
+  agregado; o job Windows experimental falhou. iOS e harness passaram. O download direto dos logs
+  retornou EOF, portanto estes dados vêm das anotações dos checks.
+- A continuação diagnóstica foi ajustada para fechar apenas o painel do app reconhecido, pela ação
+  semântica, e exigir foco na Activity antes de enviar o pedido local. Um modal pode retirar o foco
+  da Activity; não sabemos se isso causou a interrupção desta execução. O primeiro toque continua
+  obrigatório e uma segunda tentativa continua estritamente diagnóstica: ela não torna a jornada
+  verde. A alteração ainda depende de compilação e execução no Android.
 
 ## CI de `1ee47f7`: alvo maior não resolveu a jornada
 
