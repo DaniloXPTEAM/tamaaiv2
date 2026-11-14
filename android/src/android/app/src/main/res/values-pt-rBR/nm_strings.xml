@@ -1386,7 +1386,7 @@
     <string name="nm_prompt_size_image_yes">Modelo de imagem resolvido neste aparelho: sim. Isso não testa a geração de imagens.</string>
     <string name="nm_prompt_size_image_no">Modelo de imagem resolvido neste aparelho: não. Isso não testa a geração de imagens.</string>
     <string name="nm_prompt_size_image_unknown">Modelo de imagem resolvido neste aparelho: não foi possível verificar. Isso não testa a geração de imagens.</string>
-    <string name="nm_prompt_size_section_names">Identidade|Introdução|Ferramentas disponíveis|Sandbox|Links|Criação de arquivos|Estilo das chamadas|Tom|Ferramentas Android|Ambiente|Tarefas agendadas|Base sem divisão|Política de risco|Controle de tela|Habilidades|MCP|Nome inicial|Mídia|Computadores|Sessão|Objetivos|Feed|Ferramentas de memória|Orientação de memória|Memória global|Memória diária|Arquivo do usuário|Data e idioma|Separadores|Total</string>
+    <string name="nm_prompt_size_section_names">Identidade|Introdução|Ferramentas disponíveis|Sandbox|Links|Criação de arquivos|Estilo das chamadas|Tom|Ferramentas Android|Ambiente|Tarefas agendadas|Base sem divisão|Política de risco|Controle de tela|Habilidades|MCP|Nome inicial|Mídia|Computadores|Sessão|Objetivos|Feed|Ferramentas de memória|Orientação de memória|Memória global|Memória diária|Arquivo do usuário|Data e idioma|Separadores|Total|Prefixo do provedor</string>
     <!-- nanoMuse: bounded provider refusals and retries. -->
     <string name="nm_reach_request_large_title">Pedido grande demais para %1$s</string>
     <string name="nm_reach_request_large_body">O provedor recusou o tamanho do pedido. Instruções, histórico, ferramentas e anexos também entram na conta. Encurte a mensagem ou inicie outra conversa.</string>
@@ -1403,4 +1403,20 @@
     <string name="nm_background_start_rejected">Não consegui solicitar o serviço de segundo plano. Mantenha o TAMA aberto durante a tarefa; ela pode parar se você sair.</string>
     <string name="nm_background_stop_rejected">Não consegui solicitar o encerramento do serviço de segundo plano. A notificação pode continuar visível.</string>
     <string name="nm_background_service_retry">Tentar novamente</string>
+    <!-- nanoMuse: local routing and a user-editable provider budget. -->
+    <string name="nm_router_profile_auto">Automático</string>
+    <string name="nm_router_profile_lean">Modo leve</string>
+    <string name="nm_router_profile_basic">Modo agente</string>
+    <string name="nm_router_profile_full">Modo agente completo</string>
+    <string name="nm_router_profile_chip">Modo: %1$s</string>
+    <string name="nm_router_profile_totals">Totais estimados por modo (sem histórico, imagens e resposta):</string>
+    <string name="nm_router_profile_choose">Escolher modo</string>
+    <string name="nm_router_tpm_title">Limite de tokens por minuto (opcional)</string>
+    <string name="nm_router_tpm_help">Deixe em branco se não souber. Um valor sugerido é apenas uma observação e não garante a cota desta conta.</string>
+    <string name="nm_router_tpm_invalid">Digite um número inteiro positivo ou deixe o campo em branco.</string>
+    <string name="nm_router_retry_smaller">O pedido ficou grande demais. Vou tentar novamente com menos instruções e ferramentas.</string>
+    <string name="nm_router_lean_too_large">Até o pedido em modo leve ficou grande demais para este provedor.</string>
+    <string name="nm_router_budget_limited">O limite configurado só comporta o modo leve neste pedido. As ferramentas não estão disponíveis nesta tentativa.</string>
+    <string name="nm_router_lean_tool_notice">As ferramentas não estão disponíveis nesta tentativa em modo leve.</string>
+    <string name="nm_router_budget_exhausted">O pedido estimado ultrapassa o limite por minuto configurado, mesmo no modo leve.</string>
 </resources>

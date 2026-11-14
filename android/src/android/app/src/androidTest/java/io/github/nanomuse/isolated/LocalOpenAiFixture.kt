@@ -18,6 +18,7 @@ internal class LocalOpenAiFixture : AutoCloseable {
         const val MODEL_ID = "tama-local-fixture"
         const val MODEL_NAME = "TAMA local fixture"
         const val PROMPT = "Ola TAMA, este e um teste local."
+        const val FULL_PROMPT = "Pesquise e faça login no site do teste local."
         const val REPLY = "Ola! Resposta do teste local."
     }
 
@@ -30,9 +31,12 @@ internal class LocalOpenAiFixture : AutoCloseable {
     val errors: MutableList<String> = Collections.synchronizedList(mutableListOf())
     // nanoMuse: fail only the exact test prompt, not concurrent model-list or title requests.
     private val promptFailures = mutableListOf<Int>()
+    @Volatile private var targetPrompt = PROMPT
     val promptRequestNanos: MutableList<Long> = Collections.synchronizedList(mutableListOf())
-    fun failNextPrompt(vararg statuses: Int) = synchronized(promptFailures) {
-        require(statuses.all { it == 400 || it == 413 || it == 429 })
+    fun failNextPrompt(vararg statuses: Int) = failPrompt(PROMPT, *statuses)
+    fun failPrompt(text: String, vararg statuses: Int) = synchronized(promptFailures) {
+        require(text.isNotBlank() && statuses.all { it == 400 || it == 413 || it == 429 })
+        targetPrompt = text
         promptFailures.clear()
         promptFailures.addAll(statuses.toList())
         promptRequestNanos.clear()
@@ -110,7 +114,7 @@ internal class LocalOpenAiFixture : AutoCloseable {
                         val messages = post.optJSONArray("messages") ?: JSONArray()
                         val isPrompt = (0 until messages.length()).any {
                             val message = messages.optJSONObject(it)
-                            message?.optString("role") == "user" && message.optString("content") == PROMPT
+                            message?.optString("role") == "user" && message.optString("content") == targetPrompt
                         }
                         if (isPrompt) promptRequestNanos.add(System.nanoTime())
                         val failure = if (isPrompt) synchronized(promptFailures) {

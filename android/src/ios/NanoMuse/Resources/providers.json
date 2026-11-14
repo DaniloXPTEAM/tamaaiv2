@@ -337,6 +337,7 @@
     },
     {
       "id": "groq",
+      "limits": { "free_tpm": 8000, "max_output": null },
       "name": "Groq",
       "name_zh": "Groq",
       "protocol": "openai",

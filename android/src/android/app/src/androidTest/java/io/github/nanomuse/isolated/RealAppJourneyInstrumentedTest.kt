@@ -84,11 +84,11 @@ class RealAppJourneyInstrumentedTest {
     private fun back() = compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
 
     // Title generation also quotes the prompt, so match the exact user message.
-    private fun isFixtureChat(request: org.json.JSONObject): Boolean {
+    private fun isFixtureChat(request: org.json.JSONObject, prompt: String = LocalOpenAiFixture.PROMPT): Boolean {
         val messages = request.optJSONArray("messages") ?: return false
         return (0 until messages.length()).any { index ->
             val message = messages.optJSONObject(index)
-            message?.optString("role") == "user" && message.optString("content") == LocalOpenAiFixture.PROMPT
+            message?.optString("role") == "user" && message.optString("content") == prompt
         }
     }
 
@@ -96,8 +96,24 @@ class RealAppJourneyInstrumentedTest {
         "v1 rect $label " + if (rect == null) "unknown" else
             listOf(rect.left, rect.top, rect.right, rect.bottom).joinToString(" ") { it.toInt().toString() }
 
+    private fun checkLeanMetrics(chat: org.json.JSONObject) {
+        // The greeting really uses LEAN: no tools are serialized, and the count-only
+        // observer must describe precisely the system string that reached the fixture.
+        val messages = chat.getJSONArray("messages")
+        val system = (0 until messages.length()).map { messages.getJSONObject(it) }
+            .single { it.optString("role") == "system" }.getString("content")
+        assertTrue("The greeting did not use the light prompt", system.contains("No tools are available in this request"))
+        assertTrue("The light request advertised tools", (chat.optJSONArray("tools")?.length() ?: 0) == 0)
+        val events = synchronized(promptEvents) { promptEvents.toList() }
+        assertEquals(system.length, events.filterIsInstance<PromptSizeTrace.Event.System>().last().rows
+            .single { it.label == PromptSize.Section.TOTAL }.afterChars)
+        assertEquals(0, events.filterIsInstance<PromptSizeTrace.Event.Tools>().last().rows
+            .single { it.label == PromptSize.Tool.TOTAL }.afterChars)
+        assertEquals(system.length, events.filterIsInstance<PromptSizeTrace.Event.Request>().last().systemChars)
+    }
+
     private fun capturePromptMetrics(chat: org.json.JSONObject) {
-        // Check the actual request received by the local fixture, not just a source-level
+        // Check the first FULL request received by the local fixture, not just a source-level
         // call site. Publish lengths only, never prompt text, model messages or keys.
         val messages = chat.getJSONArray("messages")
         val system = (0 until messages.length()).map { messages.getJSONObject(it) }
@@ -110,9 +126,9 @@ class RealAppJourneyInstrumentedTest {
         val expectedBrowser = PromptDiet.tools(AgentTools.makeAgentTools()).single { it.name == "browser_use" }
         assertEquals(expectedBrowser.description, browser.getString("description"))
         val events = synchronized(promptEvents) { promptEvents.toList() }
-        val systemEvent = events.filterIsInstance<PromptSizeTrace.Event.System>().last()
-        val toolEvent = events.filterIsInstance<PromptSizeTrace.Event.Tools>().last()
-        val requestEvent = events.filterIsInstance<PromptSizeTrace.Event.Request>().last()
+        val systemEvent = events.filterIsInstance<PromptSizeTrace.Event.System>().first()
+        val toolEvent = events.filterIsInstance<PromptSizeTrace.Event.Tools>().first()
+        val requestEvent = events.filterIsInstance<PromptSizeTrace.Event.Request>().first()
         val systemTotal = systemEvent.rows.single { it.label == PromptSize.Section.TOTAL }
         val toolTotal = toolEvent.rows.single { it.label == PromptSize.Tool.TOTAL }
         assertEquals("System metric differs from the fixture's actual request", system.length, systemTotal.afterChars)
@@ -121,7 +137,8 @@ class RealAppJourneyInstrumentedTest {
         assertTrue("The base diet did not reduce this fixture", systemTotal.beforeChars > systemTotal.afterChars)
         val browserMetric = toolEvent.rows.single { it.label == PromptSize.Tool.BROWSER_USE }
         assertTrue("The browser diet did not reduce this fixture", browserMetric.beforeChars > browserMetric.afterChars)
-        val metricLines = events.flatMap { event ->
+        // Publish the FULL request only, not a mixture of FULL/BASIC/LEAN labels.
+        val metricLines = listOf(systemEvent, toolEvent, requestEvent).flatMap { event ->
             when (event) {
                 is PromptSizeTrace.Event.System -> PromptSize.logLines("system", event.rows) +
                     "v1 image READY ${when (event.imageReady) { true -> 1; false -> 0; null -> -1 }}"
@@ -390,12 +407,11 @@ class RealAppJourneyInstrumentedTest {
             }
             assertEquals("A 413 was sent again without shrinking it", 1,
                 synchronized(fixture.promptRequestNanos) { fixture.promptRequestNanos.size })
-            // Record a validated baseline from the actual failed wire request even if a later
-            // panel or recovery assertion fails. The publisher labels an incomplete journey.
-            val firstChats = synchronized(fixture.posts) { fixture.posts.filter(::isFixtureChat) }
+            // The greeting is LEAN; validate its actual wire shape before the error panel.
+            val firstChats = synchronized(fixture.posts) { fixture.posts.filter { isFixtureChat(it) } }
             assertEquals("Expected one fixture chat before the manual retry", 1, firstChats.size)
             assertEquals(LocalOpenAiFixture.MODEL_ID, firstChats.single().optString("model"))
-            capturePromptMetrics(firstChats.single())
+            checkLeanMetrics(firstChats.single())
             compose.onNodeWithText(text(R.string.nm_reach_request_large_body)).performScrollTo().assertIsDisplayed()
             // nanoMuse: the detail sheet must report the model on the failed wire request,
             // not the current picker, and its retry must reach the same guarded action.
@@ -420,7 +436,7 @@ class RealAppJourneyInstrumentedTest {
             }
             val requests = synchronized(fixture.posts) { fixture.posts.toList() }
             // Match the actual user message, not auxiliary title generation.
-            val chats = requests.filter(::isFixtureChat)
+            val chats = requests.filter { isFixtureChat(it) }
             val summary = requests.map { "${it.optString("model")}:stream=${it.optBoolean("stream")}" }
             assertTrue("The fixture did not receive the person's message; requests=$summary", chats.isNotEmpty())
             assertTrue("Expected streaming chat; requests=$summary", chats.all { it.optBoolean("stream") })
@@ -438,7 +454,38 @@ class RealAppJourneyInstrumentedTest {
             assertEquals(4, attempts.size)
             assertTrue("Retry-After was not respected", attempts[3] - attempts[2] >= 2_900_000_000L)
             awaitText(context.getString(R.string.nm_reach_output_adjusted, 128), 30_000)
-            capturePromptMetrics(chats.last()) // recheck the recovered wire request too
+            checkLeanMetrics(chats.last()) // recheck the recovered wire request too
+            assertTrue("Fixture errors: ${fixture.errors}", fixture.errors.isEmpty())
+
+            // A separate real chat exercises the 413 ladder. Keep the earlier terminal-LEAN
+            // and error-panel gates above; this adds rather than replaces wire validation.
+            synchronized(promptEvents) { promptEvents.clear() }
+            fixture.failPrompt(LocalOpenAiFixture.FULL_PROMPT, 413, 413)
+            compose.onAllNodes(hasSetTextAction())[0].performTextInput(LocalOpenAiFixture.FULL_PROMPT)
+            compose.onNodeWithContentDescription("Send").performClick()
+            compose.waitUntil(90_000) {
+                synchronized(fixture.promptRequestNanos) { fixture.promptRequestNanos.size >= 3 } &&
+                    compose.onAllNodes(hasContentDescription("Stop")).fetchSemanticsNodes().isEmpty()
+            }
+            val downsized = synchronized(fixture.posts) {
+                fixture.posts.filter { isFixtureChat(it, LocalOpenAiFixture.FULL_PROMPT) }
+            }
+            assertEquals("Expected FULL, BASIC and LEAN exactly once", 3, downsized.size)
+            fun fixedChars(request: org.json.JSONObject): Int {
+                val msgs = request.getJSONArray("messages")
+                val system = (0 until msgs.length()).map { msgs.getJSONObject(it) }
+                    .single { it.optString("role") == "system" }.getString("content")
+                return system.length + (request.optJSONArray("tools")?.toString()?.length ?: 0)
+            }
+            assertTrue("First 413 did not reduce the request", fixedChars(downsized[1]) < fixedChars(downsized[0]))
+            assertTrue("Second 413 did not reduce the request", fixedChars(downsized[2]) < fixedChars(downsized[1]))
+            val basicTools = downsized[1].getJSONArray("tools")
+            assertTrue("BASIC lost the requested browser", (0 until basicTools.length()).any {
+                basicTools.getJSONObject(it).getJSONObject("function").optString("name") == "browser_use"
+            })
+            assertTrue("LEAN retry still sent tools", (downsized[2].optJSONArray("tools")?.length() ?: 0) == 0)
+            assertTrue("Retries lost the user's request", downsized.all { isFixtureChat(it, LocalOpenAiFixture.FULL_PROMPT) })
+            capturePromptMetrics(downsized.first()) // FULL baseline and the diet must still match the wire
             assertTrue("Fixture errors: ${fixture.errors}", fixture.errors.isEmpty())
             // A later recovery and validated metrics are useful evidence, not a passing journey.
             promptTouchFailure?.let { throw AssertionError("${it.message}; recovery sequence and wire metrics passed", it) }

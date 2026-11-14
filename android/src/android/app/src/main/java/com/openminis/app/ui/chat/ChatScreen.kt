@@ -4869,6 +4869,16 @@ fun ChatScreen(
             io.github.nanomuse.ui.chat.ContinueAskHost(viewModel)
             // nanoMuse: the browser handed to the person (a login, a code) — "Your turn", Open, Done.
             io.github.nanomuse.ui.chat.BrowserHandOverHost(viewModel)
+            // nanoMuse: exposes the actual profile and the reversible next-turn override.
+            val nmRouteOverride by viewModel.nmProfileOverride.collectAsState()
+            val nmRouteActive by viewModel.nmActiveProfile.collectAsState()
+            io.github.nanomuse.ui.chat.RouteProfileChip(
+                active = nmRouteActive,
+                override = nmRouteOverride,
+                streaming = isStreaming,
+                onSelect = viewModel::nmSetProfileOverride,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
 
             // T-chat-title-pill-edit: reuse SessionEditSheet from the session
             // list (same composable, exposed `internal`) so title + category

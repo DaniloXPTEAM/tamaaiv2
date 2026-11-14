@@ -1358,7 +1358,7 @@
     <string name="nm_prompt_size_image_yes">Image model resolved locally: yes. This does not test image generation.</string>
     <string name="nm_prompt_size_image_no">Image model resolved locally: no. This does not test image generation.</string>
     <string name="nm_prompt_size_image_unknown">Image model resolved locally: could not check. This does not test image generation.</string>
-    <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total</string>
+    <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total|Provider prefix</string>
     <!-- nanoMuse: bounded provider refusals and retries. -->
     <string name="nm_reach_request_large_title">发送给 %1$s 的请求过大</string>
     <string name="nm_reach_request_large_body">服务商拒绝了请求的大小。指令、历史记录、工具和附件也计入其中。请缩短消息或开始新对话。</string>
@@ -1375,4 +1375,20 @@
     <string name="nm_background_start_rejected">无法请求后台服务。任务进行时请保持 TAMA 打开；离开后任务可能停止。</string>
     <string name="nm_background_stop_rejected">无法请求停止后台服务。其通知可能仍会显示。</string>
     <string name="nm_background_service_retry">重试</string>
+    <!-- nanoMuse: local routing and a user-editable provider budget. -->
+    <string name="nm_router_profile_auto">自动</string>
+    <string name="nm_router_profile_lean">轻量模式</string>
+    <string name="nm_router_profile_basic">助手模式</string>
+    <string name="nm_router_profile_full">完整助手模式</string>
+    <string name="nm_router_profile_chip">模式：%1$s</string>
+    <string name="nm_router_profile_totals">各模式估计总量（不含历史、图片和回复）：</string>
+    <string name="nm_router_profile_choose">选择模式</string>
+    <string name="nm_router_tpm_title">每分钟 token 限额（可选）</string>
+    <string name="nm_router_tpm_help">不知道时留空。建议值仅供参考，不能保证适用于此账号。</string>
+    <string name="nm_router_tpm_invalid">请输入正整数，或留空。</string>
+    <string name="nm_router_retry_smaller">请求过大，将减少指令和工具后重试。</string>
+    <string name="nm_router_lean_too_large">即使使用轻量模式，请求对该服务商仍然过大。</string>
+    <string name="nm_router_budget_limited">此请求在已设置的限额内只能使用轻量模式，本次不会提供工具。</string>
+    <string name="nm_router_lean_tool_notice">本次轻量模式不提供工具。</string>
+    <string name="nm_router_budget_exhausted">预计请求超过已设置的每分钟限额，轻量模式也无法发送。</string>
 </resources>

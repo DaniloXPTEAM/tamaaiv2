@@ -40,6 +40,21 @@ class ProviderCatalogueTest {
         for (p in shipped) assertTrue(p.id, p.verified.matches(Regex("\\d{4}-\\d{2}")))
     }
 
+    @Test fun `optional provider and exact model limits reject invalid observations`() {
+        assertEquals(8_000, shipped.first { it.id == "groq" }.limits.freeTpm)
+        assertNull(shipped.first { it.id == "groq" }.limits.maxOutput)
+        assertTrue(shipped.first { it.id == "groq" }.models.isEmpty())
+        assertNull(shipped.first { it.id == "gemini" }.limits.freeTpm)
+        val example = ProviderCatalogue.parse("""{"providers":[{"id":"example",
+            "limits":{"free_tpm":-1,"max_output":3.5,"context":2147483648},
+            "models":{"synthetic-id":{"capabilities":["chat","tools"],
+            "limits":{"free_tpm":10000,"max_output":2048,"context":32768}}}}]}""").single()
+        assertEquals(CatalogueLimits(), example.limits)
+        assertEquals(setOf("chat", "tools"), example.models.getValue("synthetic-id").capabilities)
+        assertEquals(CatalogueLimits(10_000, 2_048, 32_768), example.models.getValue("synthetic-id").limits)
+        assertNull(example.models["different-id"])
+    }
+
     @Test fun `a malformed entry is skipped, not the whole list`() {
         val list = ProviderCatalogue.parse(
             """{"providers":[{"name":"no id"},{"id":"x","name":"X","protocol":"openai","base_url":"https://x.example/v1","auth":["key"],"regions":["global"],"capabilities":["chat"]}]}""",

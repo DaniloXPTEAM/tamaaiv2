@@ -22,6 +22,15 @@ import io.github.nanomuse.chat.CompactSummaryOutputException // nanoMuse
 import io.github.nanomuse.chat.ContextBudget // nanoMuse
 import io.github.nanomuse.chat.ContextEstimate // nanoMuse
 import io.github.nanomuse.chat.PromptSize // nanoMuse: count-only prompt diagnostics
+import io.github.nanomuse.chat.PromptProfiles // nanoMuse: one snapshot for the actual outbound profile
+import io.github.nanomuse.router.Need
+import io.github.nanomuse.router.Profile
+import io.github.nanomuse.router.ProviderBudget
+import io.github.nanomuse.router.ProviderBudgetStore
+import io.github.nanomuse.router.Route
+import io.github.nanomuse.router.SessionState
+import io.github.nanomuse.router.TurnRequestPlanner
+import io.github.nanomuse.router.TurnRouter
 import io.github.nanomuse.chat.ContextCalibrationStore // nanoMuse
 import io.github.nanomuse.chat.ContextTrimming // nanoMuse
 import io.github.nanomuse.chat.ContextTrimStore // nanoMuse
@@ -1159,6 +1168,57 @@ class ChatViewModel(
     private var currentProvider: LLMProvider? = null
     private var currentModel: LLMModel? = null
 
+    // nanoMuse: a mode is a request shape, never an authorization to use tools.
+    private val _nmProfileOverride = MutableStateFlow<Profile?>(null)
+    val nmProfileOverride: StateFlow<Profile?> = _nmProfileOverride.asStateFlow()
+    private val _nmActiveProfile = MutableStateFlow<Profile?>(null)
+    val nmActiveProfile: StateFlow<Profile?> = _nmActiveProfile.asStateFlow()
+    @Volatile private var nmPreviousRoute = SessionState()
+
+    fun nmSetProfileOverride(profile: Profile?) {
+        _nmProfileOverride.value = profile
+    }
+
+    /** Reclassify a new user turn, including queued messages and attachments. */
+    private fun nmRouteLatest(): Route.Chat {
+        val user = agentHistory.lastOrNull { message ->
+            message.role == LLMMessage.Role.USER &&
+                !message.content.trimStart().startsWith("<system-reminder>") &&
+                (message.content.isNotBlank() || message.imageParts.isNotEmpty() ||
+                    message.contentParts.any { it is AgentContentPart.ImageData ||
+                        (it is AgentContentPart.Text && it.text.contains("<user-attached-files>")) })
+        }
+        return TurnRouter.route(
+            text = user?.content.orEmpty(),
+            session = nmPreviousRoute,
+            override = _nmProfileOverride.value,
+            hasImageAttachment = user?.let { message ->
+                message.imageParts.isNotEmpty() || message.contentParts.any { it is AgentContentPart.ImageData }
+            } == true,
+            hasFileAttachment = user?.contentParts?.any {
+                it is AgentContentPart.Text && it.text.contains("<user-attached-files>")
+            } == true,
+        )
+    }
+
+    /** No model inherits a different model's observed limit. Missing metadata stays unknown. */
+    private fun nmBudgetFor(provider: LLMProvider): ProviderBudget {
+        val config = providerRepository.config.value
+        val entry = config.modelEntries.find { it.id == _activeEntryId.value }
+            ?.takeIf { it.model.id == provider.model.id && this.currentProvider === provider }
+            ?: return ProviderBudget()
+        val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return ProviderBudget()
+        val vendor = io.github.nanomuse.cloud.ProviderCatalogue.match(
+            io.github.nanomuse.cloud.ProviderCatalogue.load(context), instance,
+        )
+        val modelLimits = vendor?.models?.get(provider.model.id)?.limits
+        val observedTpm = modelLimits?.freeTpm ?: vendor?.limits?.freeTpm
+        return ProviderBudget(
+            tokensPerMinute = ProviderBudgetStore.read(context, instance.id, observedTpm),
+            maxOutputTokens = modelLimits?.maxOutput ?: vendor?.limits?.maxOutput,
+        )
+    }
+
     // nanoMuse: model-scoped calibration survives Continue and process restart. The request
     // budget below is refreshed before each provider call, including model-group fallback.
     private val nmCalibrationStore by lazy { ContextCalibrationStore(context) }
@@ -1823,6 +1883,10 @@ class ChatViewModel(
             title = "Thinking",
             subtitle = "",
         ),
+        // nanoMuse: local profile commands change only subsequent request shapes.
+        SlashCommand(id = "leve", icon = Icons.Outlined.Build, title = "leve", subtitle = ""),
+        SlashCommand(id = "agente", icon = Icons.Outlined.Build, title = "agente", subtitle = ""),
+        SlashCommand(id = "auto", icon = Icons.Outlined.Build, title = "auto", subtitle = ""),
         // nanoMuse: a local, zero-request measurement of the current prompt and tools.
         SlashCommand(
             id = "prompt-size",
@@ -1891,6 +1955,9 @@ class ChatViewModel(
             "memory" -> toggleMemoryEnabled()
             "thinking" -> toggleThinking()
             "clear" -> _clearChatConfirmRequested.value = true
+            "leve" -> nmSetProfileOverride(Profile.LEAN) // nanoMuse: local, no model request
+            "agente" -> nmSetProfileOverride(Profile.BASIC)
+            "auto" -> nmSetProfileOverride(null)
             "prompt-size" -> nmShowPromptSize() // nanoMuse: no model call, private text stays local.
             else -> AppLogger.info(TAG, "[Slash] unrecognized id=${cmd.id} — no dispatch")
         }
@@ -2032,8 +2099,12 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val report = runCatching {
                 var sections: List<PromptSize.Measure<PromptSize.Section>>? = null
+                var input: PromptProfiles.Input? = null
                 var imageReady: Boolean? = null
-                buildSystemPrompt { measured, image -> sections = measured; imageReady = image }
+                buildSystemPrompt(
+                    onSnapshot = { input = it },
+                    onMeasured = { measured, image -> sections = measured; imageReady = image },
+                )
                 val before = originalAgentTools()
                 val tools = PromptSize.tools(before, io.github.nanomuse.chat.PromptDiet.tools(before))
                 val names = context.getString(R.string.nm_prompt_size_section_names).split('|')
@@ -2050,6 +2121,17 @@ class ChatViewModel(
                     for (row in tools) {
                         val label = row.label.name.lowercase(java.util.Locale.ROOT)
                         appendLine("$label: ${row.beforeChars} → ${row.afterChars} (~${row.beforeTokens} → ~${row.afterTokens})")
+                    }
+                    // nanoMuse: profile totals use the current snapshot and last turn's hints;
+                    // they are estimates only and do not include history, images or output.
+                    appendLine()
+                    appendLine(context.getString(R.string.nm_router_profile_totals))
+                    for (profile in Profile.entries) {
+                        val hints = nmPreviousRoute.previousHints
+                        val built = PromptProfiles.build(profile, checkNotNull(input), hints)
+                        val schemas = PromptProfiles.tools(profile, before, hints)
+                        val chars = built.prompt.length + PromptSize.tools(emptyList(), schemas).last().afterChars
+                        appendLine("${profile.name}: $chars (~${PromptSize.estimateTokens(chars)})")
                     }
                     appendLine()
                     append(context.getString(when (imageReady) {
@@ -5061,6 +5143,8 @@ class ChatViewModel(
         // Memory state — match iOS clearChat() field list one-for-one.
         _messages.value = emptyList()
         agentHistory.clear()
+        nmPreviousRoute = SessionState() // nanoMuse: a cleared chat has no prior tool turn
+        _nmActiveProfile.value = null
         _error.value = null
         _cachedLatestMarker = null
         toolLoopDetector.reset()
@@ -5706,12 +5790,8 @@ class ChatViewModel(
             }
         }
 
-        val baseSystemPrompt = buildSystemPrompt()
-        val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-            val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-            if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-            else "$prefix\n\n${baseSystemPrompt ?: ""}"
-        } else baseSystemPrompt
+        // nanoMuse: rebuild the provider-specific prefix for each actual request.
+        val nmPromptInput = nmCapturePromptInput()
 
         // _isStreaming was already set synchronously by the caller.
         val launchedProvider = provider
@@ -5737,7 +5817,7 @@ class ChatViewModel(
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop CALL")
                     runAgentLoop(
                         provider = launchedProvider,
-                        systemPrompt = systemPrompt,
+                        promptInput = nmPromptInput,
                         fallbackProviders = fallbackProviders,
                         fallbackStrategy = activeFallbackStrategy,
                         onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
@@ -6270,8 +6350,6 @@ class ChatViewModel(
      */
     private suspend fun drainQueuedPrompts(
         provider: LLMProvider,
-        systemPrompt: String?,
-        fallbackProviders: List<FallbackCandidate>,
         fallbackStrategy: com.openminis.app.data.model.FallbackStrategy,
         onTerminalFailure: () -> Unit,
     ) {
@@ -6352,9 +6430,9 @@ class ChatViewModel(
 
             try {
                 runAgentLoop(
-                    provider = provider,
-                    systemPrompt = systemPrompt,
-                    fallbackProviders = fallbackProviders,
+                    provider = this@ChatViewModel.currentProvider ?: provider,
+                    promptInput = nmCapturePromptInput(),
+                    fallbackProviders = buildFallbackProviders(this@ChatViewModel.currentProvider ?: provider),
                     fallbackStrategy = fallbackStrategy,
                     onTerminalFailure = onTerminalFailure,
                 )
@@ -7163,14 +7241,9 @@ class ChatViewModel(
                 }
             }
 
-            // Build system prompt
-            // Anthropic OAuth requires the Claude Code prefix in the system prompt
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                else "$prefix\n\n${baseSystemPrompt ?: ""}"
-            } else baseSystemPrompt
+            // nanoMuse: capture the session once; prefix and profile follow the actual provider.
+            // nanoMuse: rebuild the provider-specific prefix for each actual request.
+            val nmPromptInput = nmCapturePromptInput()
 
             // Start agent loop with fallback. _isStreaming was set synchronously at top.
             streamLaunched = true
@@ -7211,7 +7284,7 @@ class ChatViewModel(
                         AppLogger.info(TAG_STREAM, "send runAgentLoop CALL")
                         runAgentLoop(
                             provider = provider,
-                            systemPrompt = systemPrompt,
+                            promptInput = nmPromptInput,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
                             onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
@@ -7225,7 +7298,7 @@ class ChatViewModel(
                         nmAfterTurn() // nanoMuse: the first conversation steps forward when a turn completes
                         // Drain any prompts the user queued while this loop was running.
                         // Skipped on cancel: cancelled job won't reach here.
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy) {
+                        drainQueuedPrompts(provider, activeFallbackStrategy) {
                             SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                         }
                         AppLogger.info(TAG_STREAM, "send drainQueuedPrompts RETURN")
@@ -7579,12 +7652,8 @@ class ChatViewModel(
                 }
             }
 
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                else "$prefix\n\n${baseSystemPrompt ?: ""}"
-            } else baseSystemPrompt
+            // nanoMuse: rebuild the provider-specific prefix for each actual request.
+            val nmPromptInput = nmCapturePromptInput()
 
             // _isStreaming was already set synchronously at the top.
             streamLaunched = true
@@ -7610,14 +7679,14 @@ class ChatViewModel(
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop CALL")
                         runAgentLoop(
                             provider = provider,
-                            systemPrompt = systemPrompt,
+                            promptInput = nmPromptInput,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
                             onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop RETURN normal")
                         nmAfterTurn() // nanoMuse
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy) {
+                        drainQueuedPrompts(provider, activeFallbackStrategy) {
                             SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                         }
                         AppLogger.info(TAG_STREAM, "retryLast drainQueuedPrompts RETURN")
@@ -7800,7 +7869,7 @@ class ChatViewModel(
 
     private suspend fun runAgentLoop(
         provider: LLMProvider,
-        systemPrompt: String?,
+        promptInput: PromptProfiles.Input,
         fallbackProviders: List<FallbackCandidate> = emptyList(),
         fallbackStrategy: com.openminis.app.data.model.FallbackStrategy = com.openminis.app.data.model.FallbackStrategy.default,
         onTerminalFailure: () -> Unit,
@@ -7938,6 +8007,32 @@ class ChatViewModel(
         val trimStore = ContextTrimStore(java.io.File(context.filesDir,
             "minis-sessions/${realSessionId.ifEmpty { sessionId }}/offloads/tools"))
 
+        // nanoMuse: this state belongs to the user turn, not the provider. A fallback
+        // rebuilds prefix, tools, limits and estimates for its own actual request.
+        var nmRoute = nmRouteLatest()
+        var nmCurrentInput = promptInput
+        var nmUsedTools = false
+        var nmWarnedWithoutTools = false
+        var nmAttempt: TurnRequestPlanner.Attempt? = null
+        var nmSystemPrompt: String? = null
+        var nmRequestTools: List<AgentToolDefinition> = emptyList()
+        fun nmProviderPrefix(): String =
+            if ((currentProvider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true)
+                io.github.nanomuse.cloud.ClaudeSignIn.identifier else ""
+        fun nmPlan(messages: List<LLMMessage>, budget: ProviderBudget): TurnRequestPlanner.Attempt? =
+            TurnRequestPlanner.prepare(nmCurrentInput, originalAgentTools(), nmRoute, budget, nmProviderPrefix()) { prompt, tools ->
+                val raw = ContextEstimate.request(messages, prompt, tools, imageTokens = BPETokenizer::countImageTokens)
+                // Calibration can raise the estimate; never use a downward calibration as quota evidence.
+                maxOf(raw, contextEstimate.estimate(raw))
+            }
+        fun nmInstall(attempt: TurnRequestPlanner.Attempt) {
+            nmAttempt = attempt
+            nmRoute = attempt.route
+            nmSystemPrompt = attempt.system
+            nmRequestTools = attempt.tools
+            _nmActiveProfile.value = attempt.route.profile
+        }
+
         fun alignContextEstimate() {
             val config = providerRepository.config.value
             val entry = config.modelEntries.find { it.id == _activeEntryId.value }
@@ -7960,19 +8055,19 @@ class ChatViewModel(
             nmHistoryCalibration = contextEstimate
             val window = effectiveContextWindowTokens(currentProvider) ?: currentProvider.model.contextWindowTokens
             val fixed = contextEstimate.estimate(ContextEstimate.request(
-                emptyList(), systemPrompt, agentTools,
+                emptyList(), nmSystemPrompt, nmRequestTools,
             ))
             requestBudget = ContextBudget.forModel(window,
                 currentProvider.effectiveMaxOutputTokens(nmResolvedModel(currentProvider)), fixed)
             nmHistoryBudget = requestBudget
         }
         fun rawTokens(messages: List<LLMMessage>): Int = ContextEstimate.request(
-            messages, systemPrompt, agentTools, imageTokens = BPETokenizer::countImageTokens,
+            messages, nmSystemPrompt, nmRequestTools, imageTokens = BPETokenizer::countImageTokens,
         )
         fun measureRawTokens(): Int = rawTokens(preparedMessages ?:
             applyRequestImageBudget(effectiveAgentHistory(), preview = true))
         fun usageSnapshot(messages: List<LLMMessage>) = usageMeter.snapshot(
-            calibrationKey.orEmpty(), currentProvider.model.id, messages, systemPrompt, agentTools,
+            calibrationKey.orEmpty(), currentProvider.model.id, messages, nmSystemPrompt, nmRequestTools,
             requestVariant = "${currentProvider.javaClass.name}|${_thinkingLevel.value}",
         )
         fun measureContextTokens(): Int {
@@ -8147,6 +8242,13 @@ class ChatViewModel(
             // Sanitize history before each API call (mirrors iOS pre-API validation)
             sanitizeAgentHistory()
 
+            // nanoMuse: fit on the prospective request before the context guard. If the raw
+            // history is too large even for LEAN, let the existing trimming guard run first;
+            // the actual prepared request must still fit before it is sent.
+            alignContextEstimate()
+            val nmPreview = applyRequestImageBudget(effectiveAgentHistory(), preview = true)
+            nmInstall(nmPlan(nmPreview, nmBudgetFor(currentProvider))
+                ?: checkNotNull(nmPlan(nmPreview, ProviderBudget())))
             // nanoMuse: deterministic trimming runs first and never edits saved history.
             prepareContext()
             when (inLoopContextCheck(contextMaintenance, requestBudget,
@@ -8386,6 +8488,10 @@ class ChatViewModel(
                     // nanoMuse: a fallback provider must rebuild its own budgeted view.
                     alignContextEstimate()
                     if (preparedMessages == null) {
+                        // nanoMuse: fallback may change provider, model vision and OAuth prefix.
+                        val preview = applyRequestImageBudget(effectiveAgentHistory(), preview = true)
+                        nmInstall(nmPlan(preview, nmBudgetFor(currentProvider))
+                            ?: checkNotNull(nmPlan(preview, ProviderBudget())))
                         prepareContext()
                         // nanoMuse: fallback to a smaller model must pass the same guard.
                         when (inLoopContextCheck(contextMaintenance, requestBudget,
@@ -8400,21 +8506,37 @@ class ChatViewModel(
                         }
                     }
                     val requestMessages = checkNotNull(preparedMessages)
-                    // nanoMuse: the debug test observer receives only counts for the exact
-                    // schemas and system string sent here. It is absent during ordinary use.
-                    val originalRequestTools = originalAgentTools()
-                    val requestTools = io.github.nanomuse.chat.PromptDiet.tools(originalRequestTools)
+                    // nanoMuse: include the prepared history and images in this call's estimate.
+                    // A known limit that cannot fit LEAN is a stop, not permission to drop history.
+                    val requestBudgetLimit = nmBudgetFor(currentProvider)
+                    val planned = nmPlan(requestMessages, requestBudgetLimit)
+                        ?: throw LLMError.ProviderError(context.getString(R.string.nm_router_budget_exhausted))
+                    nmInstall(planned)
+                    alignContextEstimate()
+                    if (!nmWarnedWithoutTools && Need.TOOLS in planned.route.needs && planned.route.profile == Profile.LEAN) {
+                        nmWarnedWithoutTools = true
+                        withContext(Dispatchers.Main) {
+                            appendSystemInfo(context.getString(
+                                if (planned.route.budgetLimited) R.string.nm_router_budget_limited
+                                else R.string.nm_router_lean_tool_notice,
+                            ), "info")
+                        }
+                    }
+                    val requestTools = nmRequestTools
+                    // nanoMuse: the debug observer sees only counts for the exact outbound view.
                     val sizeObserver = if (com.openminis.app.BuildConfig.DEBUG) io.github.nanomuse.chat.PromptSizeTrace.observer else null
                     if (sizeObserver != null) runCatching {
+                        val imageReady = runCatching { io.github.nanomuse.media.MediaModels.imageEndpoint(context) != null }.getOrNull()
+                        sizeObserver(io.github.nanomuse.chat.PromptSizeTrace.Event.System(planned.systemSizes, imageReady))
                         sizeObserver(io.github.nanomuse.chat.PromptSizeTrace.Event.Tools(
-                            PromptSize.tools(originalRequestTools, requestTools),
+                            PromptSize.tools(originalAgentTools(), requestTools),
                         ))
-                        sizeObserver(io.github.nanomuse.chat.PromptSizeTrace.Event.Request(systemPrompt?.length ?: 0))
+                        sizeObserver(io.github.nanomuse.chat.PromptSizeTrace.Event.Request(planned.system.length))
                     }
                     var requestUsage: LLMUsage? = null
                     val requestSnapshot = usageSnapshot(requestMessages)
                     val requestEstimate = io.github.nanomuse.chat.ContextEstimate.request(
-                        requestMessages, systemPrompt, requestTools,
+                        requestMessages, nmSystemPrompt, requestTools,
                         imageTokens = BPETokenizer::countImageTokens,
                     )
                     alignContextEstimate()
@@ -8430,13 +8552,16 @@ class ChatViewModel(
                     val pendingLimit = pendingOutput?.takeIf {
                         it.provider === currentProvider && it.model == currentProvider.model.id && it.route == durableOutputKey
                     }?.limit
-                    lastRequestedOutput = io.github.nanomuse.net.ProviderRecovery.clamp(
+                    val proposedOutput = io.github.nanomuse.net.ProviderRecovery.clamp(
                         io.github.nanomuse.net.ProviderRecovery.clamp(dynamicMaxTokens(currentProvider, lastContextTokens), learnedLimit),
                         pendingLimit,
                     )
+                    lastRequestedOutput = TurnRequestPlanner.outputLimit(
+                        proposedOutput, requestBudgetLimit, maxOf(lastContextTokens, planned.inputEstimate),
+                    ) ?: throw LLMError.ProviderError(context.getString(R.string.nm_router_budget_exhausted))
                     currentProvider.streamMessage(
                         requestMessages,
-                        systemPrompt, lastRequestedOutput,
+                        nmSystemPrompt, lastRequestedOutput,
                         tools = requestTools,
                         thinkingLevel = if (currentModelSupportsReasoning) _thinkingLevel.value else ThinkingLevel.OFF,
                     ).collect { chunk ->
@@ -8878,10 +9003,25 @@ class ChatViewModel(
                         reach?.kind == io.github.nanomuse.net.ProviderReach.Kind.RESPONSE_LIMIT
                     val isTransient = !sizeRejection && (actual is com.openminis.app.data.model.LLMError.NetworkError ||
                         actual is com.openminis.app.data.model.LLMError.TransientError || is5xx)
+                    // nanoMuse: a real HTTP 413 descends the profile ladder before any
+                    // fallback. Retry only if the system and schema really got smaller;
+                    // the completed tool results in history are never executed again.
+                    val smallerProfile = if (reach?.httpStatus == 413 &&
+                        reach.kind == io.github.nanomuse.net.ProviderReach.Kind.REQUEST_TOO_LARGE) {
+                        nmAttempt?.let { rejected ->
+                            val history = preparedMessages ?: applyRequestImageBudget(effectiveAgentHistory(), preview = true)
+                            TurnRequestPlanner.smallerAfter413(
+                                rejected, nmCurrentInput, originalAgentTools(), nmProviderPrefix(),
+                            ) { prompt, tools ->
+                                val raw = ContextEstimate.request(history, prompt, tools, imageTokens = BPETokenizer::countImageTokens)
+                                maxOf(raw, contextEstimate.estimate(raw))
+                            }
+                        }
+                    } else null
                     // nanoMuse: one server-overflow retry is allowed only after local work
                     // measurably shrinks the same request. No blind resend of identical history.
                     var recoveredContext = false
-                    if (!contextOverflowRetried && isContextTooLargeError(actual)) {
+                    if (smallerProfile == null && !contextOverflowRetried && isContextTooLargeError(actual)) {
                         contextOverflowRetried = true
                         val before = measureRawTokens()
                         prepareContext(force = true)
@@ -8891,24 +9031,35 @@ class ChatViewModel(
                     // gets one bounded wait. Neither path repeats already executed tools.
                     val outputRetry = io.github.nanomuse.net.ProviderRecovery.outputRetry(reach, lastRequestedOutput, outputRetried)
                     val rateDelay = if (isRateLimit) io.github.nanomuse.net.ProviderRecovery.rateDelay(reach, rateRetried) else null
-                    if ((isTransient || recoveredContext || outputRetry != null || rateDelay != null) && retryAttempt < AUTO_RETRY_DELAYS_SEC.size) {
+                    if (smallerProfile != null ||
+                        ((isTransient || recoveredContext || outputRetry != null || rateDelay != null) && retryAttempt < AUTO_RETRY_DELAYS_SEC.size)) {
+                        if (smallerProfile != null) {
+                            nmInstall(smallerProfile)
+                            preparedMessages = null // recalculate the context view for this smaller shape
+                            withContext(Dispatchers.Main) {
+                                appendSystemInfo(context.getString(R.string.nm_router_retry_smaller), "info")
+                            }
+                        }
                         if (outputRetry != null) {
                             outputRetried = true
                             pendingOutput = PendingOutputLimit(currentProvider, durableOutputKey, currentProvider.model.id, outputRetry)
                         }
                         if (rateDelay != null) rateRetried = true
                         val delaySec = when {
-                            recoveredContext || outputRetry != null -> 0
+                            smallerProfile != null || recoveredContext || outputRetry != null -> 0
                             rateDelay != null -> rateDelay
                             else -> AUTO_RETRY_DELAYS_SEC[retryAttempt]
                         }
-                        retryAttempt += 1
+                        // Profile steps have their own finite ladder; they must not consume
+                        // or be suppressed by the unrelated transient retry counter.
+                        if (smallerProfile == null) retryAttempt += 1
                         val errDesc = actual.message ?: actual.javaClass.simpleName
                         Log.w(TAG, "🔁 Transient error on ${currentProvider.model.displayName}, retry $retryAttempt/${AUTO_RETRY_DELAYS_SEC.size} in ${delaySec}s: $errDesc")
                         withContext(Dispatchers.Main) {
                             _autoRetryAttempt.value = retryAttempt
                             // nanoMuse: the new retry paths state only what is actually happening.
                             val status = when {
+                                smallerProfile != null -> context.getString(R.string.nm_router_retry_smaller)
                                 outputRetry != null -> context.getString(R.string.nm_reach_output_retry, outputRetry)
                                 rateDelay != null -> context.getString(R.string.nm_reach_rate_wait, delaySec)
                                 is5xx -> context.getString(R.string.nm_reach_server_retry)
@@ -8971,6 +9122,13 @@ class ChatViewModel(
                         lastFileToolInputMs = 0L
                         lastOtherToolInputMs = 0L
                         continue  // retry on same provider
+                    }
+                    // nanoMuse: distinguish an exhausted LEAN request from a successful
+                    // downgrade; retain the original provider diagnostic on the error card.
+                    if (reach?.httpStatus == 413 && nmRoute.profile == Profile.LEAN) {
+                        withContext(Dispatchers.Main) {
+                            appendSystemInfo(context.getString(R.string.nm_router_lean_too_large), "info")
+                        }
                     }
                     // Retries exhausted or non-retryable — proceed to fallback / throw.
                     _autoRetryAttempt.value = 0
@@ -9165,6 +9323,8 @@ class ChatViewModel(
 
             // If no tool calls, we're done
             if (toolCalls.isEmpty()) {
+                // nanoMuse: keep the profile only when this user turn actually used tools.
+                nmPreviousRoute = SessionState(nmRoute.profile, nmRoute.hints, nmUsedTools)
                 AppLogger.info(TAG_STREAM, "runAgentLoop turn=$turn no tool calls → break (finishReason=$turnFinishReason)")
                 withContext(Dispatchers.Main) {
                     updateAssistantMessage(assistantId, accumulatedText, false, allToolBlocks)
@@ -9313,6 +9473,22 @@ class ChatViewModel(
             // Execute all tool calls
             val resultParts = mutableListOf<AgentContentPart>()
             for ((id, name, args) in toolCalls) {
+                // nanoMuse: an unsolicited or hallucinated tool name is never dispatched,
+                // especially after reducing to LEAN. RiskGate/OffloadGate still apply to
+                // every tool that was actually offered.
+                if (nmRequestTools.none { it.name == name }) {
+                    val reason = "Error: this tool was not offered in the current request and was not executed."
+                    val block = allToolBlocks.indexOfFirst { it.id == id }
+                    if (block >= 0) allToolBlocks[block] = allToolBlocks[block].copy(
+                        toolStatus = ToolBlockStatus.FAILED, content = reason,
+                    )
+                    toolLoopDetector.record(name, parseToolParams(args.toString()),
+                        result = null, errorMessage = reason, toolCallId = id)
+                    resultParts.add(AgentContentPart.ToolResult(id = id, name = name, content = reason, isError = true))
+                    toolInputChunkRings.remove(id)
+                    continue
+                }
+                nmUsedTools = true
                 // [T-android-overlay-tool-title] Pull tool_title uniformly
                 // from args for ALL tools — without this browser_use's
                 // tool_title never reached the overlay (only shell_execute
@@ -9334,7 +9510,7 @@ class ChatViewModel(
                 // the repaired payload. Mirrors iOS repairToolArgs in
                 // AIChatViewModel.swift.
                 val repairs = com.openminis.app.provider.ToolJsonRepair.repair(
-                    name, args, toolInputChunkRings[id]?.lastOrNull(), agentTools,
+                    name, args, toolInputChunkRings[id]?.lastOrNull(), nmRequestTools, // nanoMuse: validate the schemas actually sent
                 )
                 if (repairs.isNotEmpty()) {
                     AppLogger.warning(
@@ -9446,7 +9622,7 @@ class ChatViewModel(
                 // AIChatViewModel.swift. Synthesizes a tool_result error so the
                 // model can self-correct on the next turn without us spawning
                 // shells or touching the filesystem on `{}` args.
-                val preflightError = preflightValidateToolCall(name, args, agentTools)
+                val preflightError = preflightValidateToolCall(name, args, nmRequestTools) // nanoMuse: the outbound schema, not a different profile
                 if (preflightError != null) {
                     val chunkRing: List<String> = toolInputChunkRings.remove(id) ?: emptyList()
                     AppLogger.warning(
@@ -9635,6 +9811,7 @@ class ChatViewModel(
                 contentParts = resultParts,
                 dbMessageId = toolResultDbId,
             ))
+            nmPreviousRoute = SessionState(nmRoute.profile, nmRoute.hints, nmUsedTools) // nanoMuse: survive a later interrupted request
 
             // Auto-title after first exchange (mirrors iOS generateSessionTitleIfNeeded)
             if (turn == 0) {
@@ -9682,6 +9859,14 @@ class ChatViewModel(
                     null
                 }
                 if (handled != null) {
+                    // nanoMuse: a queued interruption is a new user turn, not the old
+                    // prompt under a new bubble. Keep continuity and classify its content.
+                    nmPreviousRoute = SessionState(nmRoute.profile, nmRoute.hints, nmUsedTools)
+                    nmRoute = nmRouteLatest()
+                    nmCurrentInput = nmCapturePromptInput()
+                    nmUsedTools = false
+                    nmWarnedWithoutTools = false
+                    preparedMessages = null
                     // Switch loop-scope state to the new bubble. Subsequent
                     // iterations populate `handled.newAssistantId` and slice
                     // `allToolBlocks` from the freshly-zeroed start index
@@ -10722,8 +10907,16 @@ class ChatViewModel(
         return entity.id
     }
 
+    // nanoMuse: retries and fallbacks derive their prompt from this exact session snapshot.
+    private fun nmCapturePromptInput(): PromptProfiles.Input {
+        var snapshot: PromptProfiles.Input? = null
+        buildSystemPrompt(onSnapshot = { snapshot = it })
+        return checkNotNull(snapshot)
+    }
+
     // nanoMuse: an optional local, count-only snapshot for /prompt-size.
     private fun buildSystemPrompt(
+        onSnapshot: ((io.github.nanomuse.chat.PromptProfiles.Input) -> Unit)? = null,
         onMeasured: ((List<PromptSize.Measure<PromptSize.Section>>, Boolean?) -> Unit)? = null,
     ): String? {
         // Cache-friendly layout: keep `base` byte-stable by stripping out anything
@@ -10842,13 +11035,12 @@ class ChatViewModel(
             PromptSize.Section.DAILY_MEMORY to dailyMemoryFragment,
             PromptSize.Section.USER_FILE to io.github.nanomuse.sysfiles.UserFile.promptFragment(context),
         )
-        val prompt = io.github.nanomuse.chat.PromptCacheLayout.build(
-            stableSections = listOf(dietedBase) + stable.mapNotNull { it.second },
-            volatileSections = volatile.map { it.second },
-            runtimeContext = runtimeContext,
-        ).prompt
-        val sizeObserver = if (com.openminis.app.BuildConfig.DEBUG) io.github.nanomuse.chat.PromptSizeTrace.observer else null
-        if (onMeasured != null || sizeObserver != null) runCatching {
+        // nanoMuse: capture the exact session fragments once; retries derive smaller profiles
+        // from this snapshot instead of re-reading memory or rebuilding completed tool results.
+        val profileInput = io.github.nanomuse.chat.PromptProfiles.Input(identitySection, base, stable, volatile, runtimeContext)
+        onSnapshot?.invoke(profileInput)
+        val prompt = io.github.nanomuse.chat.PromptProfiles.build(io.github.nanomuse.router.Profile.FULL, profileInput).prompt
+        if (onMeasured != null) runCatching {
             val rows = PromptSize.system(
                 beforeBase = base,
                 afterBase = dietedBase,
@@ -10859,8 +11051,7 @@ class ChatViewModel(
             )
             // nanoMuse: resolving a configured image endpoint is local; no image is generated.
             val imageReady = runCatching { io.github.nanomuse.media.MediaModels.imageEndpoint(context) != null }.getOrNull()
-            onMeasured?.invoke(rows, imageReady)
-            sizeObserver?.invoke(io.github.nanomuse.chat.PromptSizeTrace.Event.System(rows, imageReady))
+            onMeasured(rows, imageReady)
         }
         return prompt
     }
@@ -12055,13 +12246,6 @@ class ChatViewModel(
                 }
             }
 
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                else "$prefix\n\n${baseSystemPrompt ?: ""}"
-            } else baseSystemPrompt
-
             // T145: claim the streaming flag synchronously before launching
             // the streamJob so a concurrent send/retry tap is rejected by the
             // entry guard. Mirrors sendMessage discipline.
@@ -12089,13 +12273,9 @@ class ChatViewModel(
                             groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
                                 ?: com.openminis.app.data.model.FallbackStrategy.default
                         }
-                        val fallbackProviders = buildFallbackProviders(provider)
-
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drainQueuedPrompts CALL")
                         drainQueuedPrompts(
                             provider = provider,
-                            systemPrompt = systemPrompt,
-                            fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
                             onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
@@ -12356,13 +12536,8 @@ class ChatViewModel(
         }
 
         viewModelScope.launch {
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt =
-                if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                    val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                    if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                    else "$prefix\n\n${baseSystemPrompt ?: ""}"
-                } else baseSystemPrompt
+            // nanoMuse: rebuild the provider-specific prefix for each actual request.
+            val nmPromptInput = nmCapturePromptInput()
 
             AppLogger.info(TAG_STREAM, "resume _isStreaming=true (sid=$activeSessionId)")
             _isStreaming.value = true
@@ -12389,14 +12564,14 @@ class ChatViewModel(
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop CALL")
                         runAgentLoop(
                             provider = provider,
-                            systemPrompt = systemPrompt,
+                            promptInput = nmPromptInput,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
                             onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop RETURN normal")
                         nmAfterTurn() // nanoMuse
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy) {
+                        drainQueuedPrompts(provider, activeFallbackStrategy) {
                             SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                         }
                         AppLogger.info(TAG_STREAM, "resume drainQueuedPrompts RETURN")

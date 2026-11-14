@@ -23,7 +23,7 @@ depois T5, T6, T8 e T7; T9 aguarda o Poco e T12 fica na leitura estática já fe
 | T1: erros e recuperação | PARCIAL | `43626037252`: 413 terminal e painel com status/modelo/mensagem foram observados; após o toque em retry, a espera pelo contador expirou. | 400 → 429 → 200, teto e espera não verificados no emulador; não repetir investigação agora. |
 | T2: detalhes tocáveis | PARCIAL | `43626037252`: cinco testes Compose instrumentados passaram isoladamente; a jornada abriu os detalhes de 413, mas não comprovou a recuperação após o retry. | Jornada não verificada no emulador; paridade dos outros provedores continua pendente. |
 | T3: metas medidas | PARCIAL | Metas recalibradas pela fixture host e limiares de regressão abaixo; compilação e unitários no CI Android pendentes. | Integrar em T4 e usar orçamento real por chamada, sem tratar estimativas como contagem faturada. |
-| T4: roteador e perfis | EM ANDAMENTO | Templates e schemas dos perfis compartilhados com medição host; envio ainda não usa os perfis. | Integrar roteador, continuidade, orçamento e queda no 413; testar sem API paga. |
+| T4: roteador e perfis | PARCIAL | Envio, fila, continuidade, limites editáveis e queda 413 ligados no código; testes puros do planejador/roteador e de paridade passaram no host. Build/CI Android e jornada adaptada **não executados** nesta alteração. | Validar compilação e o wire no CI; confirmar no Poco sem apagar dados. A falta de ferramentas após redução é avisada, não considerada uma tarefa concluída. |
 | T4b: auto-combo | PENDENTE | Failover existente limitado a grupos não comprova a seleção pedida. | Selecionar modelos elegíveis, avisar e testar recuperação com provedores falsos. |
 | T12: subagentes | PARCIAL | `84436db`: investigação estática em [TAMA_V2_SUBAGENTES.md](TAMA_V2_SUBAGENTES.md): não foi encontrada no Android examinado uma orquestração conversa/executor independente; `minis-model-use`, fila e slots não bastam. Há um plano de implementação e testes. | Primeiro concluir T4b sequencial; não declarar execução paralela sem teste dinâmico. |
 | T5: atalhos sem modelo | PENDENTE | Nenhum atalho novo foi adicionado nesta etapa. | Reusar handlers e preservar `RiskGate` e `OffloadGate`. |
@@ -33,6 +33,36 @@ depois T5, T6, T8 e T7; T9 aguarda o Poco e T12 fica na leitura estática já fe
 | T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; tracker e aviso sintético passaram no build e emulação `43608695720`. Isso não prova um turno em segundo plano nem o Poco. `mediaPlayback` permanece inalterado. | Testar turno lento e investigar o Poco com autorização. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos em 17 locales e WebView sintética passou em `43593761942`. Após a correção de terminologia, Linux e macOS passaram na matriz Python de `20b44fa`; Windows experimental falhou. Arte e keystore dependem do dono. | Investigar Windows experimental e continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## T4: integração de perfis e limites, ainda sem prova Android
+
+O pré-filtro local escolhe LEAN/BASIC/FULL por texto, anexos, continuidade e seleção manual;
+`/leve`, `/agente` e `/auto` e o chip alteram a escolha para o turno seguinte. Para cada envio,
+o planejador usa o prompt, schemas e histórico preparado do provedor atual, estima também imagens,
+e reserva saída sob um TPM conhecido. A fórmula continua sendo uma **estimativa**, não contador
+real de uma janela de 60 segundos; chamadas auxiliares, concorrência e o tokenizer do provedor
+podem diferir. `null` é desconhecido e não uma promessa de cota ilimitada. O limite de 8.000 no
+catálogo Groq vem de uma observação relatada de uma conta, é editável ou pode ser limpo, e **não**
+comprova a cota de outro modelo, plano ou conta. Nenhum `max_output` do Qwen foi atribuído a um ID
+sem confirmação. A tela salva apenas o número, não credenciais.
+
+Um HTTP 413 tenta um perfil inferior somente se o prompt e os schemas realmente diminuírem;
+se LEAN também for recusado, há aviso específico e o diagnóstico original é preservado. A intenção
+original de ferramenta permanece no estado após a redução; o app avisa quando LEAN não pode
+oferecê-la, e um nome de ferramenta não anunciado é recusado antes do dispatch. Os gates de risco e
+offload continuam necessários. A fila é reclassificada, e cada fallback remonta prefixo, tools e
+orçamento do provedor atual; isso por si só **não implementa** o auto-combo T4b nem comprova que
+um segundo modelo seja capaz. A continuidade de perfil é local à sessão em memória, não uma
+persistência comprovada após reinício.
+
+No host, seis testes JUnit do roteador/planejador passaram, incluindo tabela PT/EN, orçamento com
+histórico sintético e um provedor falso 413 → 413 → 200; o falso usa os componentes compartilhados,
+mas não exercita `ChatViewModel` Android. Mais sete testes de medição, três de catálogo/entrada com
+stubs Android e seis de paridade de strings passaram; 28 testes Python direcionados passaram e o
+validador do catálogo e suas quatro cópias concordam. A jornada instrumentada foi **adaptada, não
+executada**: conserva o gate do 413 terminal em LEAN, verifica uma segunda sequência FULL → BASIC →
+LEAN no wire e mantém a medição FULL/dieta. Não há build Android, CI novo, API real ou Poco aprovado
+por estes resultados. Os rascunhos locais dos clientes de provedores permanecem separados.
 
 ## T0b/T3: fixture host por perfil, antes da integração no envio
 

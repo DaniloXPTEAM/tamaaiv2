@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions // nanoMuse: numeric optional budget
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -58,6 +59,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType // nanoMuse: numeric optional budget
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -136,6 +138,16 @@ fun ProviderDetailScreen(
     var isRefreshing by remember { mutableStateOf(false) }
 
     val exportContext = androidx.compose.ui.platform.LocalContext.current
+    // nanoMuse: an observed free-plan limit is a starting point, not a promise about this account.
+    val nmObservedTpm = remember(instance.id, instance.customBaseURL, instance.providerType) {
+        io.github.nanomuse.cloud.ProviderCatalogue.match(
+            io.github.nanomuse.cloud.ProviderCatalogue.load(exportContext), instance,
+        )?.limits?.freeTpm
+    }
+    var nmTpmText by remember(instance.id, nmObservedTpm) {
+        mutableStateOf(io.github.nanomuse.router.ProviderBudgetStore.read(exportContext, instance.id, nmObservedTpm)?.toString().orEmpty())
+    }
+    var nmTpmInvalid by remember(instance.id) { mutableStateOf(false) }
 
     SettingsScaffold(
         title = instance.label,
@@ -170,6 +182,38 @@ fun ProviderDetailScreen(
                         }
                     }
                 }
+            }
+        }
+
+        // nanoMuse: blank means unknown, not a guaranteed unlimited provider quota.
+        SettingsSection(
+            header = stringResource(R.string.nm_router_tpm_title),
+            footer = stringResource(R.string.nm_router_tpm_help),
+        ) {
+            SettingsCardBlock {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SectionTextField(
+                        value = nmTpmText,
+                        onValueChange = { nmTpmText = it; nmTpmInvalid = false },
+                        modifier = Modifier.weight(1f),
+                        isError = nmTpmInvalid,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        fieldModifier = Modifier.bringIntoViewOnFocus(),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    MinisSmallButton(onClick = {
+                        when (val parsed = io.github.nanomuse.router.ProviderBudgetStore.parse(nmTpmText)) {
+                            is io.github.nanomuse.router.ProviderBudgetStore.Input.Valid -> {
+                                io.github.nanomuse.router.ProviderBudgetStore.save(exportContext, instance.id, parsed.value)
+                                nmTpmText = parsed.value?.toString().orEmpty()
+                                nmTpmInvalid = false
+                            }
+                            io.github.nanomuse.router.ProviderBudgetStore.Input.Invalid -> nmTpmInvalid = true
+                        }
+                    }) { Text(stringResource(R.string.common_save)) }
+                }
+                if (nmTpmInvalid) Text(stringResource(R.string.nm_router_tpm_invalid), color = MaterialTheme.colorScheme.error)
             }
         }
 
