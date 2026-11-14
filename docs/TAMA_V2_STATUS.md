@@ -17,12 +17,12 @@ depois T5, T6, T8 e T7; T9 aguarda o Poco e T12 fica na leitura estática já fe
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
 | T0a: build, testes e hash | PARCIAL | [Android 43626037252](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43626037252): build, unitários e hash do APK instalado no emulador passaram; jornada e PRoot falharam. | Não investigar mais o emulador agora; manter os gates e registrar aparelho físico como não verificado. |
-| T0b: medir prompt | PARCIAL | `43626037252`: tabela conferida com o primeiro pedido da fixture. Fixture host por perfil e log count-only adicionados; CI Android desta alteração pendente. | Toque inicial, jornada e aparelho físico não verificados; não bloqueiam a tarefa seguinte. |
+| T0b: medir prompt | PARCIAL | `43626037252`: tabela conferida com o primeiro pedido da fixture. `f336cdc`: fixture host por perfil e log count-only adicionados; CI Android desta alteração pendente. | Toque inicial, jornada e aparelho físico não verificados; não bloqueiam a tarefa seguinte. |
 | T0c: verificar dieta | PARCIAL | `43626037252`: a fixture conferiu o sistema dietado e a descrição de `browser_use` no pedido; a tabela mostra as contagens. | Preservar paridade; a jornada não verificada não impede continuar. |
 | T0d: modelo de imagem resolvido | PARCIAL | `43626037252`: a medição instrumentada reportou **não** nesta configuração isolada. | Verificar configuração autorizada quando disponível; não implica teste de geração de imagem. |
 | T1: erros e recuperação | PARCIAL | `43626037252`: 413 terminal e painel com status/modelo/mensagem foram observados; após o toque em retry, a espera pelo contador expirou. | 400 → 429 → 200, teto e espera não verificados no emulador; não repetir investigação agora. |
 | T2: detalhes tocáveis | PARCIAL | `43626037252`: cinco testes Compose instrumentados passaram isoladamente; a jornada abriu os detalhes de 413, mas não comprovou a recuperação após o retry. | Jornada não verificada no emulador; paridade dos outros provedores continua pendente. |
-| T3: metas medidas | EM ANDAMENTO | Fixture host medida; tetos propostos abaixo ainda não aplicados como gate. | Acrescentar e testar os limites de regressão; CI Android pendente. |
+| T3: metas medidas | PARCIAL | Metas recalibradas pela fixture host e limiares de regressão abaixo; compilação e unitários no CI Android pendentes. | Integrar em T4 e usar orçamento real por chamada, sem tratar estimativas como contagem faturada. |
 | T4: roteador e perfis | EM ANDAMENTO | Templates e schemas dos perfis compartilhados com medição host; envio ainda não usa os perfis. | Integrar roteador, continuidade, orçamento e queda no 413; testar sem API paga. |
 | T4b: auto-combo | PENDENTE | Failover existente limitado a grupos não comprova a seleção pedida. | Selecionar modelos elegíveis, avisar e testar recuperação com provedores falsos. |
 | T12: subagentes | PARCIAL | `84436db`: investigação estática em [TAMA_V2_SUBAGENTES.md](TAMA_V2_SUBAGENTES.md): não foi encontrada no Android examinado uma orquestração conversa/executor independente; `minis-model-use`, fila e slots não bastam. Há um plano de implementação e testes. | Primeiro concluir T4b sequencial; não declarar execução paralela sem teste dinâmico. |
@@ -47,13 +47,13 @@ fixos e contagens em `testDebugUnitTest`; o workflow publica os números do XML,
 
 A execução local usou Kotlin 2.1, JSON-java 20231013 e JUnit 4.13.2 compilados das fontes oficiais,
 com stubs para tipos Android e dependências das ferramentas, sem executá-las; os **7 testes host**
-passaram. Não é
+passaram; outros quatro testes host da dieta e 104 testes Python direcionados também passaram. Não é
 build Android, instrumentação nem prova no Poco. O JSON-java do host difere da serialização Android
 observada na fixture anterior, e aqui `read_image` está habilitado; por isso os valores não devem ser
 confundidos com a tabela instrumentada mais abaixo. Não há dado pessoal na fixture nem no log.
 
 Caracteres são unidades UTF-16; a coluna de tokens usa `ceil(caracteres × 10 / 37)` sobre o total
-combinado. As seções individuais são arredondadas separadamente. Os tetos propostos serão **gates de regressão
+combinado. As seções individuais são arredondadas separadamente. Os tetos são **gates de regressão
 apenas desta fixture**, não limites para SOUL, memória, MCP ou histórico reais; histórico, imagens,
 overhead e resposta ficam fora. O CI Android desta alteração ainda não foi executado.
 

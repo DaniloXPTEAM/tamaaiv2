@@ -103,6 +103,13 @@ Reusable instruction sets stored at /var/minis/skills/<name>/SKILL.md. Read the 
                     "${row.beforeChars} ${row.afterChars} ${row.beforeTokens} ${row.afterTokens}")
             }
 
+            // Regression ceilings for this fixture, not a promise about a real account or turn.
+            val ceiling = mapOf(
+                "LEAN" to 400, "BASIC" to 3_400, "BASIC_WEB" to 4_800,
+                "BASIC_ANDROID" to 3_700, "FULL" to 11_500,
+            ).getValue(caseName)
+            val estimate = PromptSize.estimateTokens(systemTotal.afterChars + toolTotal.afterChars)
+            assertTrue("$caseName synthetic fixed prompt + tools: $estimate exceeds $ceiling", estimate <= ceiling)
         }
     }
 
