@@ -8,13 +8,13 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | [Android 43617802922](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43617802922): build, unitários e APK instalado correspondente passaram; jornada e PRoot falharam. | Investigar sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | Em `43617802922`, o primeiro toque chegou à raiz, mas não à linha; o segundo abriu o painel. Não houve tabela. | Investigar o primeiro toque e publicar a tabela do pedido ao servidor falso no Android. |
-| T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
-| T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
-| T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
-| T2: detalhes tocáveis | EM ANDAMENTO | [Android 43624883873](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43624883873): `assembleDebug` passou, mas o JUnit rejeitou a assinatura de um teste; instrumentação não executada. Assinatura corrigida, ainda não validada no Android. | Executar CI do APK e dos testes instrumentados; testar a jornada e corrigir eventuais falhas. |
-| T3: metas medidas | BLOQUEADA | Depende da tabela real de T0b. | Recalibrar perfis depois da medição. |
+| T0a: build, testes e hash | PARCIAL | [Android 43626037252](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43626037252): build, unitários e hash do APK instalado no emulador passaram; jornada e PRoot falharam. | Investigar sem reduzir os gates. Release e telefone ainda não comprovados. |
+| T0b: medir prompt | PARCIAL | `43626037252`: tabela real registrada abaixo e conferida com o primeiro pedido da fixture; o primeiro toque físico falhou. | Corrigir e comprovar o primeiro toque e a jornada inteira, sem aceitar o segundo toque diagnóstico como gate. |
+| T0c: verificar dieta | PARCIAL | `43626037252`: a fixture conferiu o sistema dietado e a descrição de `browser_use` no pedido; a tabela mostra as contagens. | Preservar paridade e concluir os gates da jornada; não extrapolar esta sessão. |
+| T0d: modelo de imagem resolvido | PARCIAL | `43626037252`: a medição instrumentada reportou **não** nesta configuração isolada. | Verificar configuração autorizada quando disponível; não implica teste de geração de imagem. |
+| T1: erros e recuperação | EM ANDAMENTO | `43626037252`: 413 terminal e painel com status/modelo/mensagem foram observados; após o toque em retry, a espera pelo contador expirou. | Diagnosticar o retry e provar 400 → 429 → 200, teto e espera no CI; não repetir 413 sem redução. |
+| T2: detalhes tocáveis | EM ANDAMENTO | `43626037252`: cinco testes Compose instrumentados passaram isoladamente; a jornada abriu os detalhes de 413, mas não comprovou a recuperação após o retry. | Investigar a jornada real e validar paridade dos outros provedores antes de concluir. |
+| T3: metas medidas | BLOQUEADA | A tabela real existe, mas os gates anteriores permanecem parciais. | Recalibrar perfis somente depois das provas exigidas; não promover fases antecipadamente. |
 | T4: roteador e perfis | PENDENTE | Perfis e orçamento ainda não integrados. | Criar roteador e testes por intenção, continuidade e orçamento. |
 | T4b: auto-combo | PENDENTE | Failover existente limitado a grupos não comprova a seleção pedida. | Selecionar modelos elegíveis, avisar e testar recuperação com provedores falsos. |
 | T12: subagentes | PARCIAL | `84436db`: investigação estática em [TAMA_V2_SUBAGENTES.md](TAMA_V2_SUBAGENTES.md): não foi encontrada no Android examinado uma orquestração conversa/executor independente; `minis-model-use`, fila e slots não bastam. Há um plano de implementação e testes. | Primeiro concluir T4b sequencial; não declarar execução paralela sem teste dinâmico. |
@@ -26,7 +26,96 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos em 17 locales e WebView sintética passou em `43593761942`. Após a correção de terminologia, Linux e macOS passaram na matriz Python de `20b44fa`; Windows experimental falhou. Arte e keystore dependem do dono. | Investigar Windows experimental e continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
 
-## T2: painel de erro preparado, execução Android pendente
+## CI de `ef368e6`: medições reais, jornada e sandbox ainda falham
+
+- [Android 43626037252](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43626037252)
+  compilou o APK debug arm64, unitários, APK de instrumentação e previews sintéticos. O APK tinha
+  **70.722.836 bytes** e SHA-256
+  `593d4118a3c1f833a1023e5247eff2c07456bcd821eb2ad94261e38499c93980`; a leitura do APK instalado
+  no emulador coincidiu em tamanho e hash. O certificado publicado,
+  `3935fc2fb8375b94dc5ab10e48b17e0bb4d220ef1c2b04083f4a5abeb082144e`, difere do artefato
+  anterior (`0145f8ffb97f619ce47fcd9820fdf55de5b45c7007ae95f401c0e965314cb1e8`). A assinatura
+  instalada no telefone é desconhecida: **não desinstalar nem limpar os dados**.
+- Na instrumentação do emulador passaram Pet persistência (8), Pet tela (2), detalhes de prompt
+  (3), detalhes de erro de provedor (5), aviso de serviço (1), guarda do navegador (1) e política
+  de ANR (1). A jornada abriu o cartão 413 e seu painel com HTTP, modelo e mensagem corretos,
+  mas expirou depois do toque no retry, esperando o contador da etapa 429; não se comprovou a
+  sequência completa, o teto 128, a espera ou o restart. A última captura mostra um cartão de
+  limite de resposta, mas não demonstra quantas chamadas chegaram à fixture nem a causa.
+- O primeiro toque físico em `/prompt-size` chegou à raiz, não à linha; o segundo abriu o painel
+  apenas para diagnóstico. A posição medida no fim da espera diferiu da posição inicial. O segundo
+  toque **não** aprova o primeiro, e não houve intervenção em ANR nessa jornada. O PRoot voltou a
+  expirar com código 124 após 60 s, processo vivo e saída vazia; o snapshot mostrou app em `poll`,
+  filho em `wait` e neto em `ptrace`. Não prova causa nem comportamento do aparelho ARM físico.
+- [Test Suite 43626037247](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43626037247)
+  ficou verde no agregado: Linux Python 3.11/3.12/3.13, macOS, web, relay e Docker passaram;
+  o Python Windows experimental falhou. iOS, harness e Commits passaram. No host, **42 testes**
+  `OpenAIProviderTest` e `OpenRouterErrorPathTest` passaram com o código commitado, OkHttp real,
+  MockWebServer reconstruído das fontes oficiais e stubs Android; não validam rascunhos posteriores
+  nem Compose/dispositivo físico.
+
+### Tabela da primeira requisição local que recebeu 413
+
+O observador instrumentado mediu antes e depois da dieta na mesma sessão sintética; os valores
+**depois** de sistema e tools foram confrontados com o JSON efetivamente recebido pela fixture
+loopback. O valor **antes** é a medição local da versão sem dieta, não um segundo pedido enviado.
+São unidades UTF-16, com tokens aproximados por `ceil(caracteres × 10 / 37)`. Excluem histórico,
+anexos, resposta e overhead de protocolo, variam por sessão e não representam faturamento. A
+resolução de modelo de imagem foi **não** nessa configuração, sem teste de geração.
+
+**Sistema**
+
+| Seção | Caracteres antes / depois | Tokens estimados antes / depois |
+|---|---:|---:|
+| IDENTITY | 888 / 888 | ~240 / ~240 |
+| INTRODUCTION | 217 / 217 | ~59 / ~59 |
+| AVAILABLE_TOOLS | 2.899 / 2.899 | ~784 / ~784 |
+| SANDBOX | 1.369 / 1.369 | ~370 / ~370 |
+| URLS | 2.967 / 2.967 | ~802 / ~802 |
+| FILES | 2.511 / 2.511 | ~679 / ~679 |
+| TOOL_STYLE | 632 / 632 | ~171 / ~171 |
+| TONE | 254 / 254 | ~69 / ~69 |
+| ANDROID_TOOLS | 9.104 / 6.655 | ~2.461 / ~1.799 |
+| ENVIRONMENT | 1.748 / 1.748 | ~473 / ~473 |
+| SCHEDULED | 489 / 489 | ~133 / ~133 |
+| RISK_POLICY | 1.678 / 1.678 | ~454 / ~454 |
+| HANDS | 689 / 689 | ~187 / ~187 |
+| SKILLS | 439 / 439 | ~119 / ~119 |
+| MCP | 0 / 0 | ~0 / ~0 |
+| NAMING | 2.095 / 2.095 | ~567 / ~567 |
+| MEDIA | 1.554 / 1.554 | ~420 / ~420 |
+| COMPUTERS | 489 / 489 | ~133 / ~133 |
+| SESSION | 0 / 0 | ~0 / ~0 |
+| GOALS | 0 / 0 | ~0 / ~0 |
+| FEED | 0 / 0 | ~0 / ~0 |
+| MEMORY_TOOLS | 275 / 275 | ~75 / ~75 |
+| MEMORY_GUIDANCE | 1.530 / 1.530 | ~414 / ~414 |
+| GLOBAL_MEMORY | 0 / 0 | ~0 / ~0 |
+| DAILY_MEMORY | 0 / 0 | ~0 / ~0 |
+| USER_FILE | 0 / 0 | ~0 / ~0 |
+| RUNTIME | 116 / 116 | ~32 / ~32 |
+| SEPARATORS | 18 / 18 | ~5 / ~5 |
+| TOTAL | 31.961 / 29.512 | ~8.639 / ~7.977 |
+
+**Tools**
+
+| Seção | Caracteres antes / depois | Tokens estimados antes / depois |
+|---|---:|---:|
+| SHELL_EXECUTE | 1.287 / 1.287 | ~348 / ~348 |
+| FILE_READ | 1.253 / 1.253 | ~339 / ~339 |
+| FILE_WRITE | 972 / 972 | ~263 / ~263 |
+| FILE_EDIT | 1.294 / 1.294 | ~350 / ~350 |
+| BROWSER_USE | 7.902 / 5.281 | ~2.136 / ~1.428 |
+| MEMORY_WRITE | 992 / 992 | ~269 / ~269 |
+| MEMORY_GET | 977 / 977 | ~265 / ~265 |
+| ARRAY_SEPARATORS | 8 / 8 | ~3 / ~3 |
+| TOTAL | 14.685 / 12.064 | ~3.969 / ~3.261 |
+
+A soma dos dois totais é 46.646 → 41.576 caracteres: menos 5.070 (aproximadamente 10,87%)
+para esta configuração. As estimativas de tokens são individuais, não uma contagem do provedor.
+T0–T2 seguem parciais ou em andamento; a tabela não transforma o smoke falho em gate aprovado.
+
+## T2: painel de erro — histórico da preparação
 
 - O cartão `ProviderReach` abre detalhes com HTTP, host, modelo capturado do pedido, mensagem
   redigida e limitada, cópia, troca de modelo, configurações e retry. Erros HTTP do cliente
@@ -36,9 +125,9 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   outros clientes de provedor e banners genéricos ainda não têm paridade comprovada.
 - O retry do painel conserva a identidade do objeto da falha, sessão e id, e recusa erros antigos,
   duplicados ou um turno em andamento. A identidade promovida do chat fecha o painel quando a
-  conversa muda. Há teste puro para a situação ABA e testes Compose preparados para descarte da
-  linha, restauração do diagnóstico, troca de sessão e ação sobre uma falha posterior. Ainda não
-  foram executados no Android; os testes preparados com MockWebServer também aguardam CI.
+  conversa muda. Há teste puro para a situação ABA e testes Compose para descarte da linha,
+  restauração do diagnóstico, troca de sessão e ação sobre uma falha posterior. Os cinco testes
+  instrumentados passaram em `43626037252`; a jornada completa com retry segue sem prova.
 - As credenciais dos cabeçalhos conhecidos são redigidas após decodificação do JSON; respostas
   opacas e SSE brutos deixaram de ser registrados nesse caminho. Os campos modelados de recusa e
   orientação do relay também são sanitizados. A proteção é heurística: segredos transformados ou
@@ -50,7 +139,7 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   real ou OkHttp. O parser Kotlin encontrou zero erros sintáticos nos arquivos desta correção;
   isso não é compilação Android. Também passaram 131 testes Python com dependências instaladas,
   incluindo os de terminologia, smoke e MCP, mais Ruff e `bash -n`. Os novos testes MockWebServer
-  e Compose ainda dependem do CI. As novas chaves estão nas 17 locales, mas 15 usam texto em inglês:
+  e Compose foram executados depois em `43626037252`, com os limites descritos acima. As novas chaves estão nas 17 locales, mas 15 usam texto em inglês:
   paridade técnica **não** é tradução revisada.
 
 ## CI de `20b44fa`: JUnit bloqueou a instrumentação
