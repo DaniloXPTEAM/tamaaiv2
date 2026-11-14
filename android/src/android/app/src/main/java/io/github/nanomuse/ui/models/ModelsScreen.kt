@@ -192,7 +192,7 @@ fun RecommendedMark() {
         text = stringResource(R.string.nm_media_recommended),
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
-        color = MuseTones.action,
+        color = MuseTones.accent,
         modifier = Modifier.padding(end = 8.dp),
     )
 }

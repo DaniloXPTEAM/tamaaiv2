@@ -187,7 +187,7 @@ fun SlotPickerScreen(slot: Slot, onBack: () -> Unit, onAddProvider: () -> Unit) 
                 title = stringResource(R.string.nm_media_checking),
                 titleColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 showDivider = false,
-                trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.action) },
+                trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.accent) },
             )
         }
         SettingsSection(

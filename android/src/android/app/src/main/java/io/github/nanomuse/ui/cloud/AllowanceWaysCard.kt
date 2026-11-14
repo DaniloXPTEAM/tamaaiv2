@@ -169,7 +169,7 @@ fun AllowanceWaysCard(
             val first = vendors.firstOrNull()
             Way(
                 Icons.Outlined.Key,
-                MuseTones.action,
+                MuseTones.accent,
                 stringResource(R.string.nm_ways_key_title),
                 stringResource(if (mainland) R.string.nm_ways_region_cn else R.string.nm_ways_region_global),
             ) {
@@ -195,7 +195,7 @@ fun AllowanceWaysCard(
                 Text(
                     stringResource(if (more) R.string.nm_ways_less else R.string.nm_ways_more),
                     fontSize = 13.sp,
-                    color = MuseTones.action,
+                    color = MuseTones.accent,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.clickable { more = !more }.padding(start = 28.dp, top = 6.dp, bottom = 4.dp, end = 8.dp),
                 )

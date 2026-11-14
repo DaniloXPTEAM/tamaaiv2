@@ -311,7 +311,7 @@ fun SystemFileScreen(kind: SystemFiles, onBack: () -> Unit, onOpenMemory: () -> 
                         lineHeight = 21.sp,
                         color = MaterialTheme.colorScheme.onSurface,
                     ),
-                    cursorBrush = SolidColor(MuseTones.action),
+                    cursorBrush = SolidColor(MuseTones.accent),
                     decorationBox = { inner ->
                         Box {
                             if (draft.isEmpty()) {

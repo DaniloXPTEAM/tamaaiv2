@@ -109,18 +109,19 @@ if [ -z "$TEST_APK" ] || ! adb install -t "$TEST_APK" > pet-install.log 2>&1; th
   [ ! -f pet-install.log ] || cat pet-install.log
   exit 1
 fi
-run_pet_tests() {
+run_instrumentation() {
   local class="$1" log="$2" label="$3" minimum="$4" details="$5" summary count
   if ! adb shell am instrument -w -r \
-    -e class "$class" ai.tama.assistant.test/androidx.test.runner.AndroidJUnitRunner > "$log" 2>&1; then
+    -e tama_isolated true -e class "$class" ai.tama.assistant.test/androidx.test.runner.AndroidJUnitRunner > "$log" 2>&1; then
     echo "::error title=$label::instrumentation command failed"
     tail -40 "$log"
     return 1
   fi
   cat "$log"
   if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' "$log" || \
-    grep -Eq '^FAILURES!!!|^INSTRUMENTATION_FAILED:|^INSTRUMENTATION_RESULT: shortMsg=' "$log"; then
-    tail -30 "$log" | while IFS= read -r line; do
+    grep -Eq '^FAILURES!!!|^INSTRUMENTATION_FAILED:|^INSTRUMENTATION_RESULT: shortMsg=|^INSTRUMENTATION_STATUS_CODE: -[34]([[:space:]]|$)' "$log"; then
+    # Preserve the assertion header as well as the tail when CI artifact storage is unreachable.
+    { grep -E -m 10 '^(INSTRUMENTATION_STATUS: (test|stack)=|java\.lang\.AssertionError|androidx\.compose\.ui\.test\.ComposeTimeoutException|Caused by:)' "$log" || true; tail -30 "$log"; } | while IFS= read -r line; do
       echo "::error title=$label::${line//$'\r'/}"
     done
     return 1
@@ -134,20 +135,49 @@ run_pet_tests() {
   fi
   echo "::notice title=$label::$summary; $details tests passed on the emulator"
 }
-run_pet_tests io.github.nanomuse.pet.PetPersistenceInstrumentedTest pet-instrumentation.log \
-  'pet instrumentation' 8 'Android SharedPreferences and tracker'
-run_pet_tests io.github.nanomuse.pet.PetScreenInstrumentedTest pet-screen-instrumentation.log \
-  'pet screen instrumentation' 2 'Android Compose Pet screen'
-# These screenshots are diagnostics from the isolated test preferences, not a visual approval.
-for image in pet-alive.png pet-memorial.png; do
+# Exercise independent layers even if an earlier one fails, then fail the job honestly at the end.
+# Only the journey writes real app preferences, and it requires the fresh-emulator flag above.
+failed=0
+run_instrumentation io.github.nanomuse.pet.PetPersistenceInstrumentedTest pet-instrumentation.log \
+  'pet instrumentation' 8 'Android SharedPreferences and tracker' || failed=1
+run_instrumentation io.github.nanomuse.pet.PetScreenInstrumentedTest pet-screen-instrumentation.log \
+  'pet screen instrumentation' 2 'Android Compose Pet screen' || failed=1
+if run_instrumentation io.github.nanomuse.isolated.RealAppJourneyInstrumentedTest journey-instrumentation.log \
+  'app journey instrumentation' 1 'First run, five tabs, Pet and local fake chat'; then
+  # This is a disposable emulator installed by this script, never the person's device. Do not
+  # clear data. The verification test checks both the persisted rows and a changed process ID.
+  if adb shell am force-stop ai.tama.assistant && [ -z "$(adb shell pidof ai.tama.assistant 2>/dev/null | tr -d '\r' || true)" ]; then
+    run_instrumentation io.github.nanomuse.isolated.AfterProcessStopInstrumentedTest restart-instrumentation.log \
+      'process restart instrumentation' 1 'Chat, Pet and appearance after force-stop' || failed=1
+  else
+    echo '::error title=process restart::Could not stop the disposable app process'
+    failed=1
+  fi
+else
+  echo '::error title=process restart::Journey did not finish, so persisted-state verification was not run'
+  failed=1
+fi
+run_instrumentation io.github.nanomuse.isolated.StrictSandboxInstrumentedTest sandbox-instrumentation.log \
+  'sandbox instrumentation' 1 'Packaged PRoot and persistent shell' || failed=1
+
+# These screenshots are synthetic test diagnostics, not a visual approval or real user content.
+for image in pet-alive.png pet-memorial.png journey-welcome.png journey-chat-light.png \
+  journey-feed.png journey-ideas.png journey-goals.png journey-library.png journey-pet.png \
+  journey-chat-reply.png journey-settings-light.png journey-appearance-dark.png \
+  journey-chat-dark-custom.png journey-restored.png journey-last-screen.png journey-process.txt; do
   if adb exec-out run-as ai.tama.assistant cat "cache/$image" > "$image" 2>/dev/null && [ -s "$image" ]; then
-    echo "::notice title=pet screenshot::$image captured"
+    echo "::notice title=test diagnostic::$image captured"
   else
     rm -f "$image"
-    echo "::warning title=pet screenshot::$image unavailable"
+    echo "::warning title=test diagnostic::$image unavailable"
   fi
 done
 # The emulator is stopped when the action returns, so publish the activity details here.
 grep -E 'Status:|Error:|Activity:' am.log | while IFS= read -r line; do
   echo "::notice title=am start::${line//$'\r'/}"
 done || true
+
+if (( failed )); then
+  echo '::error title=isolated tests::One or more required checks failed; see their individual logs'
+  exit 1
+fi

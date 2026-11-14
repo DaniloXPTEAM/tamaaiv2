@@ -134,7 +134,7 @@ fun VersionLines(modifier: Modifier = Modifier) {
         Text(
             text = if (s.newer) stringResource(R.string.nm_version_out_update, s.latest.orEmpty()) else statusLine(s),
             style = MaterialTheme.typography.bodyMedium,
-            color = if (s.newer) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (s.newer) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.clickable { onTap(context, s) }.padding(horizontal = 8.dp, vertical = 2.dp),
         )

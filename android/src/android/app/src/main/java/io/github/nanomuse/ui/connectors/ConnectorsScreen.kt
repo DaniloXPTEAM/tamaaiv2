@@ -451,7 +451,7 @@ private fun ConnectorSheet(connector: Connector, state: Connectors.State, elsewh
                     onClick = { connect() },
                     enabled = !busy && (!wantsKey || key.isNotBlank()) && (!wantsClient || wantsKey || clientId.isNotBlank()),
                     shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(containerColor = MuseTones.action),
+                    colors = ButtonDefaults.buttonColors(containerColor = MuseTones.action, contentColor = Color.White),
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                 ) {
                     if (busy) {

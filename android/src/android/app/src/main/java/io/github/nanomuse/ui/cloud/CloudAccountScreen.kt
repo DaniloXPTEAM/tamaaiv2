@@ -219,7 +219,7 @@ fun CloudAccountScreen(
                                 text = (a?.hint?.firstOrNull { it.isLetterOrDigit() } ?: 'n').uppercaseChar().toString(),
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = MuseTones.action,
+                                color = MuseTones.accent,
                             )
                         }
                         Spacer(Modifier.width(14.dp))
@@ -282,7 +282,7 @@ fun CloudAccountScreen(
                     Text(
                         text = it,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MuseTones.action,
+                        color = MuseTones.accent,
                         modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
                     )
                 }
@@ -329,7 +329,7 @@ fun CloudAccountScreen(
                                     color = when {
                                         a.exhausted -> MaterialTheme.colorScheme.error
                                         a.warn || a.spendFraction >= 0.8f -> Color(0xFFD97706)
-                                        else -> MuseTones.action
+                                        else -> MuseTones.accent
                                     },
                                     trackColor = MuseTones.fill,
                                     modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
@@ -392,7 +392,7 @@ fun CloudAccountScreen(
                             Spacer(Modifier.height(8.dp))
                             LinearProgressIndicator(
                                 progress = { a.fraction },
-                                color = MuseTones.action,
+                                color = MuseTones.accent,
                                 trackColor = MuseTones.fill,
                                 modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
                             )

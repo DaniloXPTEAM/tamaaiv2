@@ -572,7 +572,7 @@ private fun Dots(current: Int, total: Int, modifier: Modifier = Modifier) {
                     .height(6.dp)
                     .width(if (i == current) 18.dp else 6.dp)
                     .clip(CircleShape)
-                    .background(if (i == current) MuseTones.action else MuseTones.hairline),
+                    .background(if (i == current) MuseTones.accent else MuseTones.hairline),
             )
         }
     }

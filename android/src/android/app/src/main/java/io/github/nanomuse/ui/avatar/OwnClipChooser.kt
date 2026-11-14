@@ -113,7 +113,7 @@ fun OwnClipChooserHost(state: OwnClipChooserState) {
     if (busy) {
         Dialog(onDismissRequest = {}) {
             Box(Modifier.size(72.dp).clip(CircleShape).background(MuseTones.surface), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = MuseTones.action)
+                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = MuseTones.accent)
             }
         }
     }

@@ -274,7 +274,7 @@ private fun NeedRow(need: PetNeed, value: Int) {
                     .fillMaxWidth(value.coerceIn(0, 100) / 100f)
                     .fillMaxHeight()
                     .clip(CircleShape)
-                    .background(if (low) MaterialTheme.colorScheme.error else MuseTones.action),
+                    .background(if (low) MaterialTheme.colorScheme.error else MuseTones.accent),
             )
         }
         Spacer(Modifier.width(10.dp))
@@ -451,7 +451,7 @@ private fun LevelCard(pet: PetProgress) {
                         .fillMaxWidth(pet.levelFraction.coerceIn(0f, 1f))
                         .fillMaxHeight()
                         .clip(CircleShape)
-                        .background(MuseTones.action),
+                        .background(MuseTones.accent),
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -465,7 +465,7 @@ private fun LevelCard(pet: PetProgress) {
                         modifier = Modifier
                             .size(7.dp)
                             .clip(CircleShape)
-                            .background(if (reached) MuseTones.action else MuseTones.hairline),
+                            .background(if (reached) MuseTones.accent else MuseTones.hairline),
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(

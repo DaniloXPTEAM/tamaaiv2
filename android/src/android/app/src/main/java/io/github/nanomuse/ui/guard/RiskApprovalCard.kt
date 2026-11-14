@@ -328,7 +328,7 @@ private fun Preview(request: RiskRequest, expanded: Boolean, onToggle: () -> Uni
                     },
                     fontSize = 12.5.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = MuseTones.action,
+                    color = MuseTones.accent,
                     modifier = Modifier
                         .padding(top = 4.dp)
                         .clip(RoundedCornerShape(6.dp))

@@ -194,7 +194,7 @@ fun SettingsScreen(
                     Text(
                         text = stringResource(R.string.nm_settings_change_model),
                         style = MaterialTheme.typography.labelLarge,
-                        color = io.github.nanomuse.ui.home.MuseTones.action,
+                        color = io.github.nanomuse.ui.home.MuseTones.accent, // nanoMuse: readable on dark cards
                     )
                 }
                 io.github.nanomuse.ui.muse.MuseRowDivider(inset = 16.dp)

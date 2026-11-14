@@ -257,7 +257,7 @@ fun AvatarStudioScreen(onBack: () -> Unit, onOpenSoul: () -> Unit, onOpenMediaMo
                         Spacer(Modifier.height(10.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (p.running) {
-                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = MuseTones.action)
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = MuseTones.accent)
                                 Spacer(Modifier.width(8.dp))
                                 Text(stringResource(R.string.nm_avatar_moods_progress, p.done, p.total), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else {
@@ -311,7 +311,7 @@ fun AvatarStudioScreen(onBack: () -> Unit, onOpenSoul: () -> Unit, onOpenMediaMo
                                     style = preset.style
                                 },
                                 shape = RoundedCornerShape(18.dp),
-                                border = if (selectedPreset) BorderStroke(3.dp, MuseTones.action) else null,
+                                border = if (selectedPreset) BorderStroke(3.dp, MuseTones.accent) else null,
                                 color = MuseTones.fill,
                             ) {
                                 Column(Modifier.width(112.dp).padding(bottom = 8.dp)) {
@@ -543,7 +543,7 @@ private fun CandidateTile(slot: AvatarStudio.Slot, index: Int, selected: Boolean
             .aspectRatio(1f)
             .clip(shape)
             .background(MuseTones.fill)
-            .then(if (selected) Modifier.border(3.dp, MuseTones.action, shape) else Modifier)
+            .then(if (selected) Modifier.border(3.dp, MuseTones.accent, shape) else Modifier)
             .selectable(selected = selected, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

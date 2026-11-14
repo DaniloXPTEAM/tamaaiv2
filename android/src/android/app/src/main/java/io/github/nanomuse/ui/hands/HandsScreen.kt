@@ -193,7 +193,7 @@ private fun NeedRow(
                 text = stringResource(if (ok) R.string.nm_hands_need_ok else R.string.nm_hands_need_set_up),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (ok) MaterialTheme.colorScheme.onSurfaceVariant else MuseTones.action,
+                color = if (ok) MaterialTheme.colorScheme.onSurfaceVariant else MuseTones.accent,
             )
         },
     )

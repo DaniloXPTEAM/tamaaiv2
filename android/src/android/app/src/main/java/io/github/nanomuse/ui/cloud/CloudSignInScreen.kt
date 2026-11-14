@@ -345,7 +345,7 @@ fun CloudSignInScreen(
                     enabled = identifier.isNotBlank() && countdown == 0 && !sending && !verifying && !phoneAbroad,
                 ) {
                     if (sending) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.action)
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.accent)
                     } else {
                         Text(
                             text = when {
@@ -353,7 +353,7 @@ fun CloudSignInScreen(
                                 codeSent -> stringResource(R.string.nm_cloud_resend)
                                 else -> stringResource(R.string.nm_cloud_send_code)
                             },
-                            color = if (identifier.isNotBlank() && countdown == 0 && !phoneAbroad) MuseTones.action else muted,
+                            color = if (identifier.isNotBlank() && countdown == 0 && !phoneAbroad) MuseTones.accent else muted,
                             fontSize = 14.sp,
                         )
                     }
@@ -516,7 +516,7 @@ private fun RelayServerForm(enabled: Boolean, onClose: () -> Unit) {
                 modifier = Modifier.weight(1f).padding(start = 4.dp),
             )
             TextButton(onClick = { check() }, enabled = enabled && !checking && text.isNotBlank()) {
-                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MuseTones.action)
+                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MuseTones.accent)
                 else Text(stringResource(R.string.nm_cloud_server_check), color = MuseTones.accent, fontSize = 13.sp)
             }
             TextButton(

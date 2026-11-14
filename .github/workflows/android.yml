@@ -298,9 +298,23 @@ jobs:
 
       # Tiny previews contain fresh-emulator data only. They are useful where Actions artifact
       # storage cannot be reached; the original PNGs are still uploaded below.
+      - name: Prepare visual preview encoder
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tama-previews"
+          "$RUNNER_TEMP/tama-previews/bin/pip" install --disable-pip-version-check 'Pillow==11.3.0'
+
       - name: Publish isolated visual previews
         if: always()
-        run: python3 scripts/android/publish-test-previews.py launch.png pet-alive.png pet-memorial.png
+        run: |
+          encoder="$RUNNER_TEMP/tama-previews/bin/python"
+          [ -x "$encoder" ] || encoder=python3
+          "$encoder" scripts/android/publish-test-previews.py launch.png pet-alive.png pet-memorial.png \
+            journey-welcome.png journey-chat-light.png journey-feed.png journey-ideas.png \
+            journey-goals.png journey-library.png journey-pet.png journey-chat-reply.png \
+            journey-settings-light.png journey-appearance-dark.png journey-chat-dark-custom.png \
+            journey-restored.png journey-last-screen.png
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -310,11 +324,16 @@ jobs:
             launch.png
             pet-alive.png
             pet-memorial.png
+            journey-*.png
+            journey-process.txt
             am.log
             install.log
             pet-install.log
             pet-instrumentation.log
             pet-screen-instrumentation.log
+            journey-instrumentation.log
+            restart-instrumentation.log
+            sandbox-instrumentation.log
             arm-runtime.txt
             installed-apk-sha256.txt
           retention-days: 14

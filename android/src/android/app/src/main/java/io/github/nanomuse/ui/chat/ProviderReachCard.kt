@@ -125,7 +125,7 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
             stringResource(R.string.nm_reach_region_body),
         )
         ProviderReach.Kind.SIGNED_OUT -> Head(
-            Icons.Outlined.VpnKey, MuseTones.action,
+            Icons.Outlined.VpnKey, MuseTones.accent,
             stringResource(if (plan) R.string.nm_reach_signed_out_title else R.string.nm_reach_key_refused_title, host),
             stringResource(if (plan) R.string.nm_reach_signed_out_body else R.string.nm_reach_key_refused_body),
         )

@@ -12,6 +12,29 @@ it never clears, uninstalls or overwrites an existing installation. All emulator
 only and disappears with the runner. It records the reported ABIs and bridge, process start,
 tests and screenshots as `tama-device-smoke`. No credentials from a real account are needed.
 
+The expanded smoke script runs the following checks separately, and fails if a required test
+fails, is skipped, or reports no tests:
+
+- Pet persistence and the Pet screen with temporary preferences.
+- The real Activity's first-run setup, five navigation tabs, Pet feeding and a chat round trip.
+  The model list and streaming answer come from a loopback-only fake OpenAI-compatible service,
+  not a real provider or account.
+- After the journey, a force-stop on the disposable emulator, then a new app process verifying
+  the stored chat and its displayed answer, Pet state, provider and dark appearance settings.
+  No app data is cleared between the two runs.
+- The packaged PRoot sandbox executing commands, writing and rereading a session workspace file,
+  and reporting a failed shell command's exit code.
+
+Full-size PNGs, individual instrumentation logs and a process-id summary are uploaded as
+`tama-device-smoke`. Small JPEG check annotations are generated from synthetic emulator images
+only, so individual screens can be inspected even where artifact downloads are unavailable.
+The screenshots are diagnostics, not an approval of every screen or a test on the person's device.
+
+The earlier [run 43535956822](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43535956822)
+for commit `507d2a6` installed the sealed arm64 APK on the emulator with a matching installed
+SHA-256 and passed eight Pet persistence and two Pet-screen tests. It did not include the expanded
+journey, restart or shell checks above; those require their own newer run and result.
+
 **This procedure is not itself a test result.** Check the exact workflow run, its annotations,
 logs and artifacts before saying a step passed. An emulator with ARM translation is not a physical
 ARM phone; in particular, native sandbox execution and external services require their own evidence.
