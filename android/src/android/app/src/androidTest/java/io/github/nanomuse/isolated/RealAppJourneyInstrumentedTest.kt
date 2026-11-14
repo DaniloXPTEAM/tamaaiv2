@@ -239,7 +239,9 @@ class RealAppJourneyInstrumentedTest {
                     if (promptDetailEvents.size < 24) promptDetailEvents.add(event)
                 }
             }
-            compose.onNodeWithContentDescription(text(R.string.nm_prompt_size_details)).performClick()
+            val promptTarget = compose.onNodeWithContentDescription(text(R.string.nm_prompt_size_details))
+            val boundsBeforeTap = promptTarget.fetchSemanticsNode().boundsInRoot
+            promptTarget.assertIsDisplayed().performClick()
             try {
                 compose.waitUntil(30_000) {
                     compose.onAllNodes(hasText(text(R.string.nm_prompt_size_tools), substring = true)).fetchSemanticsNodes().isNotEmpty()
@@ -249,7 +251,13 @@ class RealAppJourneyInstrumentedTest {
                 val close = compose.onAllNodes(hasContentDescription(text(R.string.standard_sheet_close))).fetchSemanticsNodes().size
                 val titles = compose.onAllNodes(hasText(text(R.string.nm_prompt_size_title))).fetchSemanticsNodes().size
                 val stages = synchronized(promptDetailEvents) { promptDetailEvents.joinToString(",") { it.name } }
-                throw AssertionError("Prompt report did not appear; close controls=$close, titles=$titles, stages=$stages", failure)
+                val boundsAfterTap = runCatching { promptTarget.fetchSemanticsNode().boundsInRoot }.getOrNull()
+                val windowFocused = compose.activity.hasWindowFocus()
+                throw AssertionError(
+                    "Prompt report did not appear; close controls=$close, titles=$titles, stages=$stages, " +
+                        "target before=$boundsBeforeTap after=$boundsAfterTap, windowFocus=$windowFocused",
+                    failure,
+                )
             }
             val detailStages = synchronized(promptDetailEvents) { promptDetailEvents.toList() }
             assertTrue("Prompt detail did not use the expected host", detailStages.containsAll(listOf(

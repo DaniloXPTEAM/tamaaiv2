@@ -593,23 +593,35 @@ internal fun FallbackInfoBlock(
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 if (hasDetail) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        // nanoMuse: prompt measurements have their own accessible detail label.
-                        contentDescription = if (block.toolName == "prompt_size") stringResource(R.string.nm_prompt_size_details) else "Show full summary",
-                        tint = fg,
-                        modifier = Modifier
-                            .size(14.dp)
-                            // nanoMuse: a hoisted owner survives the row leaving the viewport.
-                            .clickable {
-                                if (block.toolName == "prompt_size") {
-                                    io.github.nanomuse.ui.chat.PromptSizeDetailTrace.record(
-                                        io.github.nanomuse.ui.chat.PromptSizeDetailTrace.Event.ROW_CLICK,
-                                    )
-                                }
-                                if (onOpenDetail != null) onOpenDetail() else showDetail = true
-                            },
-                    )
+                    val open = {
+                        if (block.toolName == "prompt_size") {
+                            io.github.nanomuse.ui.chat.PromptSizeDetailTrace.record(
+                                io.github.nanomuse.ui.chat.PromptSizeDetailTrace.Event.ROW_CLICK,
+                            )
+                        }
+                        if (onOpenDetail != null) onOpenDetail() else showDetail = true
+                    }
+                    if (block.toolName == "prompt_size") {
+                        // nanoMuse: the 14dp glyph remains subtle, but its actual measured
+                        // touch target is 48dp and stays inside the lazy row's bounds. An
+                        // expanded hit area outside a 14dp row can be clipped or overlap the
+                        // composer, particularly while the keyboard is visible.
+                        IconButton(onClick = open, modifier = Modifier.size(48.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = stringResource(R.string.nm_prompt_size_details),
+                                tint = fg,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Show full summary",
+                            tint = fg,
+                            modifier = Modifier.size(14.dp).clickable(onClick = open),
+                        )
+                    }
                 }
             }
         }.map { it.measure(androidx.compose.ui.unit.Constraints(maxWidth = labelMax)) }

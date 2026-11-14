@@ -4,6 +4,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Enlarged the Android prompt-report touch target and strengthened its isolated gesture diagnostics.
+
 - Added bounded debug-only prompt-sheet lifecycle diagnostics and a focused-composer emulator test without logging conversation content.
 
 - Made Android chat explain synchronous background-service request failures and retry the service request without repeating the person's task.

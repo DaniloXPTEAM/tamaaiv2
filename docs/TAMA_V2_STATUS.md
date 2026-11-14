@@ -8,8 +8,8 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 
 | ID | Estado | Commit / prova | Próximo passo |
 |---|---|---|---|
-| T0a: build, testes e hash | PARCIAL | [Android 43602905594](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43602905594): build passou e APK instalado correspondeu ao selado; Pet, WebView, política de ANR e painel sintético passaram, mas jornada, saúde do emulador e PRoot falharam. | Investigar o painel e o PRoot sem reduzir os gates. Release ainda não comprovado. |
-| T0b: medir prompt | EM ANDAMENTO | Em `43602905594`, os dois testes Compose isolados do painel passaram, mas a jornada real novamente expirou após tocar nos detalhes; não há tabela. Um diagnóstico de eventos fixos foi preparado. | Verificar o novo diagnóstico na tela real e publicar a tabela do pedido ao servidor falso no Android. |
+| T0a: build, testes e hash | PARCIAL | [Android 43608695720](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43608695720): build, unitários e APK instalado correspondente passaram; jornada e PRoot falharam. | Investigar sem reduzir os gates. Release ainda não comprovado. |
+| T0b: medir prompt | EM ANDAMENTO | Em `43608695720`, três testes Compose sintéticos passaram; na jornada, nenhum evento de clique foi registrado e não houve tabela. Aumento do alvo e teste com wrappers do chat aguardam CI. | Verificar o toque físico na tela real e publicar a tabela do pedido ao servidor falso no Android. |
 | T0c: verificar dieta | PARCIAL | O código chama `PromptDiet` para o texto e as tools; testes Kotlin no host confirmam os schemas, com dependências Android substituídas. | Confirmar no APK e registrar as medidas antes/depois, não estimar economia sem dados. |
 | T0d: modelo de imagem resolvido | EM ANDAMENTO | O medidor consulta `MediaModels.imageEndpoint` localmente e relata sim, não ou desconhecido. | Validar no teste instrumentado; isso não prova geração de imagem. |
 | T1: erros e recuperação | EM ANDAMENTO | `262b822`: build Android, unitários do pacote e paridade passaram no [CI 43589287294](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43589287294). Em `43590807353`, a jornada começou, mas parou na primeira captura, antes dos pedidos. | Provar 413 terminal e 400 → 429 → 200 no CI. Redução por perfil em 413 depende de T4; painel completo depende de T2. |
@@ -22,9 +22,30 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
 | T6: tools sob demanda | PENDENTE | Sem `load_tools` nesta alteração. | Carregar grupos sem alterar o prefixo estável. |
 | T7: onboarding | PENDENTE | As jornadas anteriores não validam o fluxo novo do plano. | Presets, explicações e teste de conexão seguro. |
 | T8: imagem | PENDENTE | Consultar a configuração não equivale a gerar imagem. | Tool e mensagem de configuração ausente. |
-| T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; o tracker agora sinaliza falhas síncronas da solicitação e permite repetir somente o pedido do serviço. Há testes host com stubs; Android e Poco ainda não comprovados. `mediaPlayback` permanece inalterado. | Validar a mudança no CI, testar turno lento e investigar o Poco com autorização. |
+| T9: segundo plano | PARCIAL / BLOQUEADA | [Investigação](TAMA_V2_SEGUNDO_PLANO.md) distingue chat local e remoto; tracker e aviso sintético passaram no build e emulação `43608695720`. Isso não prova um turno em segundo plano nem o Poco. `mediaPlayback` permanece inalterado. | Testar turno lento e investigar o Poco com autorização. |
 | T10: tradução e resíduos | PARCIAL / BLOQUEADA | `0e55075`: avisos de tela em 17 locales; WebView sintética passou em `43593761942`. Após `f2f3a77`, Python passou no host e em Linux/macOS no CI; Windows experimental ainda falhou. Arte e keystore dependem do dono. | Investigar Windows; continuar por erros, provedores, onboarding e permissões; preservar dados do Pet. |
 | T11: fechamento | BLOQUEADA | Depende das tarefas anteriores e dos testes físicos. | Consolidar as provas sem promover gates antecipadamente. |
+
+## CI de `14f8def`: toque não chegou ao painel na jornada
+
+- [Android 43608695720](https://github.com/DaniloXPTEAM/tamaaiv2/actions/runs/43608695720)
+  passou build do APK, unitários, compilação da instrumentação e previews. O APK selado e o
+  instalado coincidiram em 70.681.212 bytes, SHA-256
+  `2ad20474da8c0b8d4af5642b5117dcaf54f6f89fe66b7b22dff10d262673f59a`; certificado reportado
+  `e9c819142dd9922e462c21fef63154f4e05b6900132b2a4aa0f3167d5373e80c`, diferente daquele
+  reportado para o artefato anteriormente entregue. A assinatura no telefone não foi verificada:
+  **não desinstalar nem limpar dados**.
+- Os testes do Pet (8 persistência, 2 tela), três do relatório sintético, aviso de segundo plano,
+  WebView e política de ANR passaram. A jornada real expirou com `close controls=0, titles=1,
+  stages=`: nenhum dos eventos fixos de clique, callback, solicitação ou montagem ocorreu. Isso
+  indica que a ação do ícone não foi chamada, mas não identifica por si só o motivo. A captura
+  sintética de diagnóstico confirma que o painel não estava aberto; não comprova causa.
+- O primeiro comando PRoot expirou com 124, processo vivo e saída vazia. O retrato limitado mostra
+  app em `poll`, filho em `wait` e neto em `ptrace`; não identifica executáveis nem prova a causa.
+  A jornada parou antes de recuperação de provedor, medição e restart. O download direto do
+  artefato de smoke retornou EOF; estes resultados são das anotações do CI.
+- Test Suite `43608695701` terminou com sucesso agregado, mas o job Windows experimental falhou.
+  Os workflows iOS `43608695682` e harness `43608695685` passaram. Isso não promove T0 ou T11.
 
 ## CI de `a87af1d`: painel sintético passou, jornada e PRoot não
 
@@ -55,19 +76,18 @@ Este registro acompanha o plano completo fornecido pelo dono. O trabalho está s
   experimental voltou a falhar nos testes. A tentativa anterior de corrigir LF não resolveu tudo;
   o log completo retornou EOF e a causa específica continua desconhecida.
 
-## Painel: diagnóstico preparado para a jornada
+## Painel: alvo de toque e diagnóstico
 
-- Para distinguir toque, callback do chat, abertura, montagem, fechamento e descarte do painel,
-  o próximo teste da jornada usa um observador em memória, ativo apenas em build debug e somente
-  quando o teste se inscreve. A falha publica no máximo 24 nomes fixos de eventos, além das
-  contagens de controles; não publica relatório, sessão, modelo ou conversa. O observador é
-  removido também em caso de falha. Isso é diagnóstico, não uma correção da causa ainda desconhecida.
-- Um terceiro teste Compose sintético foi preparado com linha reciclável, rodapé medido e campo
-  de texto com foco; o smoke e o resumo agora exigem os três testes. O primeiro também confere
-  a ordem dos eventos fixos. Passaram 116 testes Python direcionados (um pulado), Ruff, formato,
-  sintaxe Bash e parser Kotlin. O proprietário do painel e o teste focalizado foram verificados
-  pelo compilador Kotlin com stubs de Android/Compose, não executados como interface Android.
-  A nova instrumentação e o diagnóstico ainda aguardam CI.
+- O observador debug registra somente nomes fixos de eventos e é removido após o teste. No CI
+  `43608695720`, os três testes sintéticos passaram, inclusive a ordem dos eventos e o compositor
+  focado; a jornada, porém, não registrou `ROW_CLICK`. O teste focado não confirma que o teclado
+  estava fisicamente exibido nem substitui a jornada.
+- O ícone de 14 dp agora ocupa um botão medido de 48 dp dentro da linha do relatório, em vez de
+  depender de um alvo expandido fora de uma linha pequena. É uma correção de acessibilidade e
+  uma hipótese para o toque perdido, não uma causa comprovada. O teste sintético foi ampliado
+  para usar os wrappers reais de rolagem e seleção e o rodapé medido; a jornada captura apenas
+  limites do alvo e foco da janela quando expira, sem registrar relatório ou conversa. Essas
+  alterações ainda precisam passar no CI Android e na jornada real.
 
 ## Segundo plano: investigação, aviso de bateria e recusa de serviço
 

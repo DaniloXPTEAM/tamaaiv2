@@ -1,22 +1,30 @@
 package io.github.nanomuse.isolated
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -29,7 +37,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.openminis.app.R
 import com.openminis.app.ui.chat.AssistantBlock
+import com.openminis.app.ui.chat.AlwaysStretchOverscrollBox
 import com.openminis.app.ui.chat.FallbackInfoBlock
+import com.openminis.app.ui.chat.SelectionController
+import com.openminis.app.ui.chat.minisTextKitSelectionGesture
 import com.openminis.app.ui.theme.MinisTheme
 import io.github.nanomuse.ui.chat.NmChatBottomLayout
 import io.github.nanomuse.ui.chat.PromptSizeDetailHost
@@ -151,22 +162,39 @@ class PromptSizeDetailInstrumentedTest {
             MinisTheme {
                 val focus = LocalFocusManager.current
                 val keyboard = LocalSoftwareKeyboardController.current
+                val listState = rememberLazyListState()
+                val selection = remember { SelectionController() }
+                var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
                 PromptSizeDetailHost("synthetic-focused-session") { open ->
                     NmChatBottomLayout(
                         modifier = Modifier.fillMaxSize().imePadding(),
                         bottomInset = 0.dp,
-                        content = {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                reverseLayout = true,
-                                contentPadding = PaddingValues(bottom = 72.dp),
-                            ) {
-                                item(key = "synthetic-report") {
-                                    FallbackInfoBlock(entry, onOpenDetail = {
-                                        keyboard?.hide()
-                                        focus.clearFocus()
-                                        open(entry.toolArgs)
-                                    })
+                        content = { bottomChromeHeight ->
+                            // Match the real scroll/selection wrappers and measured footer rather
+                            // than testing the row in a plain, unobstructed LazyColumn only.
+                            AlwaysStretchOverscrollBox { effect ->
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier.fillMaxSize()
+                                        .onGloballyPositioned { coordinates = it }
+                                        .minisTextKitSelectionGesture(
+                                            controller = selection,
+                                            listState = listState,
+                                            rootCoordinates = { coordinates },
+                                            reverseLayout = true,
+                                        ),
+                                    reverseLayout = true,
+                                    contentPadding = PaddingValues(bottom = bottomChromeHeight + 20.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.Bottom),
+                                    overscrollEffect = effect,
+                                ) {
+                                    item(key = "synthetic-report") {
+                                        FallbackInfoBlock(entry, onOpenDetail = {
+                                            keyboard?.hide()
+                                            focus.clearFocus()
+                                            open(entry.toolArgs)
+                                        })
+                                    }
                                 }
                             }
                         },
@@ -182,7 +210,8 @@ class PromptSizeDetailInstrumentedTest {
             }
         }
         compose.onNodeWithTag("synthetic-composer").performClick().assertIsFocused()
-        compose.onNodeWithContentDescription(details).performClick()
+        compose.onNodeWithContentDescription(details)
+            .assertIsDisplayed().assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp).performClick()
         waitForSheet(open = true)
         compose.onNodeWithText(report).assertIsDisplayed()
         compose.onNodeWithContentDescription(close).performClick()
