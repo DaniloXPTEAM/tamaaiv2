@@ -126,6 +126,11 @@ internal fun ChatViewModel.filteredSlashCommands(): List<SlashCommand> {
             "clear" -> cmd.copy(
                 subtitle = context.getString(R.string.slash_clear_subtitle),
             )
+            // nanoMuse: these controls and diagnostics never call a model.
+            "leve" -> cmd.copy(subtitle = context.getString(R.string.nm_router_profile_lean))
+            "agente" -> cmd.copy(subtitle = context.getString(R.string.nm_router_profile_basic))
+            "auto" -> cmd.copy(subtitle = context.getString(R.string.nm_router_profile_auto))
+            "prompt-size" -> cmd.copy(subtitle = context.getString(R.string.nm_prompt_size_subtitle))
             else -> cmd
         }
     }

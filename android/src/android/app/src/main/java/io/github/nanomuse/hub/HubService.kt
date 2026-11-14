@@ -85,7 +85,7 @@ class HubService : Service() {
             else -> resources.getQuantityString(R.plurals.nm_hub_service_devices, others, others)
         }
         return NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_nanomuse)
+            .setSmallIcon(R.drawable.ic_stat_tama)
             .setContentTitle(getString(R.string.nm_hub_service_title))
             .setContentText(text)
             .setOngoing(true)

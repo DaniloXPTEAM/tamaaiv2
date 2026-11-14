@@ -69,15 +69,16 @@ object ModelsDevApi {
             }
         }
 
-        // Phase 2: Hostname fallback
-        val inputHost = extractHost(forBaseURL)
-        if (inputHost != null) {
+        // nanoMuse: host fallback must include the scheme and effective port. Two local
+        // servers can share 127.0.0.1 but have different model catalogs and preferences.
+        val inputEndpoint = extractEndpoint(forBaseURL)
+        if (inputEndpoint != null) {
             for ((_, provider) in registry) {
                 val api = provider.api ?: continue
-                val providerHost = extractHost(api) ?: continue
-                if (inputHost == providerHost) {
+                val providerEndpoint = extractEndpoint(api) ?: continue
+                if (inputEndpoint == providerEndpoint) {
                     val models = buildModels(provider)
-                    Log.d(TAG, "Host match ${provider.id} (host=$providerHost) — ${models.size} models")
+                    Log.d(TAG, "Host match ${provider.id} (host=$providerEndpoint) — ${models.size} models")
                     return models
                 }
             }
@@ -206,9 +207,16 @@ object ModelsDevApi {
         return r
     }
 
-    private fun extractHost(urlString: String): String? {
+    // nanoMuse: preserve scheme and normalize implicit HTTP(S) ports without resolving DNS.
+    private fun extractEndpoint(urlString: String): Triple<String, String, Int>? {
         return try {
-            URL(stripTrailingSlash(urlString)).host?.lowercase()
+            val url = URL(stripTrailingSlash(urlString))
+            val scheme = url.protocol.lowercase(java.util.Locale.ROOT)
+            if (scheme != "http" && scheme != "https") return null
+            val host = url.host?.lowercase(java.util.Locale.ROOT)?.takeIf { it.isNotBlank() }
+                ?: return null
+            val port = if (url.port == -1) url.defaultPort else url.port
+            if (port in 1..65535) Triple(scheme, host, port) else null
         } catch (_: Exception) {
             null
         }

@@ -311,7 +311,7 @@ fun SystemFileScreen(kind: SystemFiles, onBack: () -> Unit, onOpenMemory: () -> 
                         lineHeight = 21.sp,
                         color = MaterialTheme.colorScheme.onSurface,
                     ),
-                    cursorBrush = SolidColor(MuseTones.action),
+                    cursorBrush = SolidColor(MuseTones.accent),
                     decorationBox = { inner ->
                         Box {
                             if (draft.isEmpty()) {
@@ -435,7 +435,7 @@ fun MemoryImportScreen(onBack: () -> Unit) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         Surface(
                             onClick = {
-                                clipboard.setPlainText("nanoMuse", prompt)
+                                clipboard.setPlainText("TAMA AI", prompt)
                                 Toast.makeText(context, R.string.nm_sysfile_copied, Toast.LENGTH_SHORT).show()
                             },
                             shape = CircleShape,
@@ -459,7 +459,7 @@ fun MemoryImportScreen(onBack: () -> Unit) {
                 singleLine = true,
                 placeholder = { Text(stringResource(R.string.nm_import_from_hint)) },
                 shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(10.dp))
@@ -468,7 +468,7 @@ fun MemoryImportScreen(onBack: () -> Unit) {
                 onValueChange = { pasted = it },
                 placeholder = { Text(stringResource(R.string.nm_import_paste_hint)) },
                 shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp),
             )
             Spacer(Modifier.height(18.dp))

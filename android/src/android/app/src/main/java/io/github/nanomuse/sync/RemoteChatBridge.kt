@@ -33,15 +33,28 @@ class RemoteChatBridge(
         fun clearDraft()
         fun restoreDraft(text: String)
         suspend fun session(): String
-        suspend fun user(sessionId: String, text: String)
+        /** Persist the outgoing user row and return its stable identity. */
+        suspend fun user(sessionId: String, text: String): String
         fun started(sessionId: String) {}
         fun ended(sessionId: String, completed: Boolean) {}
+        /** An incomplete remote run may have failed rather than being stopped by the person. */
+        fun ended(sessionId: String, completed: Boolean, failed: Boolean) = ended(sessionId, completed)
         fun show(id: String, task: Task)
         suspend fun finish(sessionId: String, id: String, task: Task)
         fun afterTurn()
     }
-    private class Active(val id: String, val task: Task) { var job: Job? = null }
-    private var active: Active? = null
+    private class Active(val id: String, val task: Task) {
+        @Volatile var job: Job? = null
+        @Volatile var cancellationRequested = false
+            private set
+
+        @Synchronized fun requestCancellation(): Boolean {
+            if (cancellationRequested) return false
+            cancellationRequested = true
+            return true
+        }
+    }
+    @Volatile private var active: Active? = null
 
     private fun refuse(text: String, issue: Issue, device: String = ""): Boolean {
         // The composer clears its field before dispatch; a refusal must put it back.
@@ -51,7 +64,13 @@ class RemoteChatBridge(
     }
 
     /** True means addressed here, including a refusal. It must not fall into the local model. */
-    fun send(text: String, devices: List<Device>, attachments: Boolean, compacting: Boolean): Boolean {
+    fun send(
+        text: String,
+        devices: List<Device>,
+        attachments: Boolean,
+        compacting: Boolean,
+        onUserSaved: (String) -> Unit = {},
+    ): Boolean {
         val route = RemoteDeviceRoute.resolve(text, devices)
         if (route == RemoteDeviceRoute.None) return false
         if (route !is RemoteDeviceRoute.Selected) return refuse(text, Issue.AMBIGUOUS)
@@ -70,14 +89,18 @@ class RemoteChatBridge(
             var taskReturned = false
             try {
                 sessionId = host.session()
-                host.user(sessionId, text)
+                val userId = host.user(sessionId, text)
                 userShown = true
+                // Side effects such as the Pet's local reward cannot abort a remote task.
+                runCatching { onUserSaved(userId) }
                 host.started(sessionId)
                 host.show(id, run.task)
+                // UNDISPATCHED can enter callbacks before launch returns and exposes the Job.
+                if (run.cancellationRequested) throw CancellationException("Remote task stopped")
                 run.task.run(sessionId) { if (active === run) host.show(id, run.task) }
                 taskReturned = true
             } catch (e: CancellationException) {
-                run.task.stop()
+                if (run.requestCancellation()) run.task.stop()
                 throw e
             } catch (_: Exception) {
                 host.error(Issue.FAILED, route.device.name)
@@ -94,7 +117,11 @@ class RemoteChatBridge(
                         host.error(Issue.FAILED, route.device.name)
                     } finally {
                         if (userShown && sessionId != null) {
-                            host.ended(sessionId, saved && taskReturned && !run.task.failed && !run.task.stopped)
+                            val stopped = run.cancellationRequested || run.task.stopped
+                            val completed = saved && taskReturned && !run.task.failed && !stopped
+                            // Incomplete runs caused by cancellation are distinct from failures.
+                            val failed = !completed && !stopped
+                            host.ended(sessionId, completed, failed)
                         }
                         if (active === run) {
                             active = null
@@ -105,13 +132,17 @@ class RemoteChatBridge(
                 }
             }
         }
+        // A stop may have arrived while the undispatched coroutine had not assigned its Job yet.
+        if (run.cancellationRequested) run.job?.cancel()
         return true
     }
 
     fun cancel(): Boolean {
         val run = active ?: return false
-        run.task.stop()
-        host.show(run.id, run.task)
+        if (run.requestCancellation()) {
+            run.task.stop()
+            host.show(run.id, run.task)
+        }
         run.job?.cancel()
         return true
     }

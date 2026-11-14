@@ -4,6 +4,52 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Added a tappable Android provider-error detail sheet with the failed request's model, redacted message and guarded retry. Stream error codes are not labelled as HTTP statuses.
+
+- Enlarged the Android prompt-report touch target and strengthened its isolated gesture diagnostics.
+
+- Added bounded debug-only prompt-sheet lifecycle diagnostics and a focused-composer emulator test without logging conversation content.
+
+- Made Android chat explain synchronous background-service request failures and retry the service request without repeating the person's task.
+
+- Clarified that exempting Android battery optimization can reduce restrictions but cannot guarantee uninterrupted background work.
+
+- Made the Android persistent shell decode completion markers and UTF-8 across process-read boundaries, without clearing a later command's callback.
+
+- Moved the Android prompt-size detail host outside the measured chat layout and added isolated report-sheet checks.
+
+- Added a bounded, app-tree-only process snapshot for diagnosing failed packaged-sandbox checks on the disposable Android emulator.
+
+- Added fail-closed emulator-health reporting and a narrowly scoped system-ANR diagnostic so later synthetic checks can run without treating an interrupted journey as a clean smoke.
+
+- Expanded Android screen and browser checks for common Portuguese labels, refused browser clicks or typing when the target cannot be inspected, and clarified the limits of detection, Stop and screenshot privacy.
+
+- Added bounded readback diagnostics to the isolated Android APK integrity check without bypassing a mismatch.
+
+- Kept the Android prompt-size report outside the recycled message row and dismissed the keyboard when opening it.
+
+- Distinguished Android provider size and output-limit refusals, and added bounded retries for an explicit output limit and short rate-limit waits.
+
+- Added a local Android `/prompt-size` diagnostic and isolated fixture for estimating prompt and tool sizes without sending private content to the model or general logs.
+
+- Kept Android's model-catalogue fallback from borrowing a different server's models when two endpoints share a hostname but use different ports or schemes.
+
+- Gave the Android app a warm TAMA palette across onboarding, chat, navigation and settings, and added a direct Pet shortcut beside the agent name without removing the profile route.
+
+- Prepared an isolated emulator check that installs the sealed arm64 phone APK rather than a separate x86 build, and compares the installed APK's hash with the artifact.
+
+- Extended the isolated Android checks to exercise first-run navigation, Pet care, a local model fixture, a process restart and the packaged shell, with bounded synthetic visual diagnostics and separate failure reports.
+
+- Kept action text and icons legible against dark TAMA surfaces while retaining white text on filled actions.
+
+- Prevented cancelled Android chat waits and overlapping runs from leaving or releasing the wrong concurrency slot.
+
+- Preserved the Android Pet's care history and corrected its needs, local-day streaks and chat-cycle rewards when returning to the app.
+
+- Kept queued Android chat rewards with the Pet present at submission, counted only saved goals, and distinguished unavailable Pet activities from low energy.
+
+- Distinguished Android provider authentication, access, credit and request-limit refusals, keeping the provider's message with credentials redacted instead of calling every 403 an invalid key.
+
 - Prevented failed coding runs from retrying in a new conversation after a tool had already started or returned a result.
 
 - Preserved desktop device-chat drafts edited while a send request was awaiting its response. For #815.
@@ -191,6 +237,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ### Android
 
+- Added six Pet stages, a shared daily XP limit, local missions and mini-games, and feeding, memorial and generation history without replacing custom avatars.
+- Kept a damaged Pet preference from interrupting completion of an Android agent task.
 - Paused automatic following as soon as a person scrolled towards older messages, and kept new reply chunks, tool cards and keyboard layout changes from resuming it. For #898.
 - Reserved output space before summarizing long conversations, so nearly full inputs were split instead of leaving the summary only a few output tokens. For #719.
 - Added progress rings to active main and side chats in the Muse drawer, using this phone's existing task tracking while preserving unread reply markers. Approval and per-chat step indicators remain separate work. For #531.

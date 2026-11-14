@@ -485,7 +485,13 @@ internal sealed class FlatChatItem {
         override val contentType = "nm_thumbs"
     }
 
-    data class AssistantError(val messageId: String, val error: String) : FlatChatItem() {
+    data class AssistantError(
+        val messageId: String,
+        val error: String,
+        // nanoMuse: dedupe may suffix the lazy key, but retries must use the exact
+        // source id. IDs containing '#' cannot safely be recovered by splitting.
+        val sourceMessageId: String = messageId,
+    ) : FlatChatItem() {
         override val key = "error:$messageId"
         override val contentType = "error"
     }

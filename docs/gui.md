@@ -138,6 +138,12 @@ On the computer there is one more ask, per application: the first `computer_act`
 
 Passwords, one-time codes, CAPTCHAs and payment confirmations are the person's to type. The operator's `hand_over` action (and `computer_act` / `phone_act` / `browser` → `hand_over`, with a `reason`) puts a *Your turn: <reason>* card with a **Done** button in the chat (on the desktop, on the run's trajectory card) and on the capsule, and waits up to ten minutes. While the hold is on, every action of that tool on that thread waits; the person does their part and presses **Done**; the operator takes a fresh screenshot and is told *the user took over for a while; look again*. A password field in focus turns a `type` into a hand-over on its own. The person can also take over first: *Take over* on the Hands or browser card, or `POST /api/holds {"thread","tool","reason"}`; `POST /api/holds/{id}/done` ends it, and `GET /api/state` lists the open holds.
 
+Android's built-in Hands and browser have their own guards and can honor earlier grants. Their
+field and label checks are heuristic and can miss an action; they do not guarantee that a prompt
+appears for every payment or secret. The browser click/type guard does not cover arbitrary
+JavaScript. Screenshots may be stored and sent to the configured screen model, including a remote
+provider. See [Android screen-operation privacy](android.md#what-the-phone-does).
+
 Since the observation is a picture, Sentinel judges by the *label* (the model's own words for what it is about to press) and, where the device reported one, by the element under the point; it does not depend on a tree being there. That is honest about what the operator knows, and it is why the label is required, why payment steps are also covered by the operator's own rule to stop and ask, and why grants are once-only.
 
 ## Traces

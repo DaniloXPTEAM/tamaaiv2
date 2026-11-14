@@ -193,7 +193,7 @@ fun ConnectorsScreen(onBack: () -> Unit, onOpenMcp: () -> Unit) {
                                 )
                             }
                             if (connector != null) {
-                                Text(stringResource(R.string.nm_connectors_sign_in), fontSize = 13.sp, color = MuseTones.action)
+                                Text(stringResource(R.string.nm_connectors_sign_in), fontSize = 13.sp, color = MuseTones.accent)
                             }
                         }
                     }
@@ -251,7 +251,7 @@ private fun ConnectorRow(connector: Connector, state: Connectors.State, onClick:
             Text(connector.about(), fontSize = 12.5.sp, lineHeight = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         when (state) {
-            Connectors.State.Connected -> Icon(Icons.Outlined.Check, contentDescription = stringResource(R.string.nm_connectors_connected), tint = MuseTones.action, modifier = Modifier.size(20.dp))
+            Connectors.State.Connected -> Icon(Icons.Outlined.Check, contentDescription = stringResource(R.string.nm_connectors_connected), tint = MuseTones.accent, modifier = Modifier.size(20.dp))
             Connectors.State.NeedsSignIn -> Text(stringResource(R.string.nm_connectors_needs_sign_in), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Connectors.State.Off -> Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f), modifier = Modifier.size(20.dp))
         }
@@ -351,9 +351,9 @@ private fun ConnectorSheet(connector: Connector, state: Connectors.State, elsewh
                     Modifier.clickable { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(connector.docs))) } }.padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(stringResource(R.string.nm_connectors_docs), fontSize = 13.sp, color = MuseTones.action)
+                    Text(stringResource(R.string.nm_connectors_docs), fontSize = 13.sp, color = MuseTones.accent)
                     Spacer(Modifier.width(4.dp))
-                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, tint = MuseTones.action, modifier = Modifier.size(14.dp))
+                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, tint = MuseTones.accent, modifier = Modifier.size(14.dp))
                 }
             }
             if (wantsClient && !wantsKey && state != Connectors.State.Connected && !done) {
@@ -364,9 +364,9 @@ private fun ConnectorSheet(connector: Connector, state: Connectors.State, elsewh
                         Modifier.clickable { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(dev))) } }.padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(stringResource(R.string.nm_connectors_client_developer, connector.name), fontSize = 13.sp, color = MuseTones.action)
+                        Text(stringResource(R.string.nm_connectors_client_developer, connector.name), fontSize = 13.sp, color = MuseTones.accent)
                         Spacer(Modifier.width(4.dp))
-                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, tint = MuseTones.action, modifier = Modifier.size(14.dp))
+                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, tint = MuseTones.accent, modifier = Modifier.size(14.dp))
                     }
                 }
                 Text(stringResource(R.string.nm_connectors_client_redirect), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -380,7 +380,7 @@ private fun ConnectorSheet(connector: Connector, state: Connectors.State, elsewh
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(redirectUri, fontSize = 13.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-                    Icon(Icons.Outlined.ContentCopy, contentDescription = stringResource(R.string.nm_connectors_client_copy), tint = MuseTones.action, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = stringResource(R.string.nm_connectors_client_copy), tint = MuseTones.accent, modifier = Modifier.size(16.dp))
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
@@ -390,7 +390,7 @@ private fun ConnectorSheet(connector: Connector, state: Connectors.State, elsewh
                     singleLine = true,
                     placeholder = { Text(stringResource(R.string.nm_connectors_client_id)) },
                     shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 )
                 Spacer(Modifier.height(8.dp))
@@ -403,7 +403,7 @@ private fun ConnectorSheet(connector: Connector, state: Connectors.State, elsewh
                     visualTransformation = secretTransformation(showSecrets),
                     trailingIcon = { SecretEye(showSecrets) { showSecrets = !showSecrets } },
                     shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                 )
             }
@@ -418,7 +418,7 @@ private fun ConnectorSheet(connector: Connector, state: Connectors.State, elsewh
                     visualTransformation = secretTransformation(showSecrets),
                     trailingIcon = { SecretEye(showSecrets) { showSecrets = !showSecrets } },
                     shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                 )
             }
@@ -429,7 +429,7 @@ private fun ConnectorSheet(connector: Connector, state: Connectors.State, elsewh
             Spacer(Modifier.height(16.dp))
             if (done || state == Connectors.State.Connected) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Check, contentDescription = null, tint = MuseTones.action, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Outlined.Check, contentDescription = null, tint = MuseTones.accent, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(stringResource(R.string.nm_connectors_connected_sub, connector.serverId), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
                 }
@@ -451,7 +451,7 @@ private fun ConnectorSheet(connector: Connector, state: Connectors.State, elsewh
                     onClick = { connect() },
                     enabled = !busy && (!wantsKey || key.isNotBlank()) && (!wantsClient || wantsKey || clientId.isNotBlank()),
                     shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(containerColor = MuseTones.action),
+                    colors = ButtonDefaults.buttonColors(containerColor = MuseTones.action, contentColor = Color.White),
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                 ) {
                     if (busy) {

@@ -180,7 +180,7 @@ fun NetworkScreen(onBack: () -> Unit) {
                     title = stringResource(R.string.nm_network_test),
                     value = if (testing) null else stringResource(R.string.nm_network_test_target, "chatgpt.com"),
                     chevron = false,
-                    titleColor = MuseTones.action,
+                    titleColor = MuseTones.accent,
                     onClick = { test() },
                     trailing = { if (testing) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp) },
                 )

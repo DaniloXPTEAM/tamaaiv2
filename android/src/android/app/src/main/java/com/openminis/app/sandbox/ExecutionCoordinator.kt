@@ -65,6 +65,11 @@ object ExecutionCoordinator {
     // observe a shell's lifetime without reflection (the old single mountedSessionId is gone).
     internal fun hasShell(sessionId: String): Boolean = shells.containsKey(sessionId)
 
+    // nanoMuse: bounded diagnostics for isolated instrumentation; does not change shell state.
+    internal fun testShellDiagnostics(sessionId: String): String = shells[sessionId]?.let {
+        "alive=${it.isAlive}; exit=${it.lastExitCode}; output=${it.deathTail().take(400)}"
+    } ?: "no shell"
+
     /**
      * Execute a command in the session's persistent shell.
      *

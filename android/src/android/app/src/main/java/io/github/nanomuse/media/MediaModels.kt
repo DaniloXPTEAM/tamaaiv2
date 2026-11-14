@@ -259,28 +259,15 @@ object MediaModels {
      * The system-prompt paragraph. English on purpose (the prompt is), short, and honest about
      * what is missing so the agent explains and links the setting instead of inventing a picture.
      */
+    // nanoMuse: share the exact paragraph with a synthetic host measurement.
     fun promptParagraph(context: Context): String {
         val image = imageEndpoint(context)
         val video = videoEndpoint(context)
-        return buildString {
-            append("Media models. Unlike Muse, whose image and video models are built in, nanoMuse runs on three models the user configures: ")
-            append("the chat model (you), an image model (avatar changes, pictures the user asks for) and a video model (the animated avatar, short clips). ")
-            append("Image model: ").append(image?.let { "${it.model} via ${it.label}" } ?: "NOT SET").append(". ")
-            append("Video model: ").append(video?.let { "${it.model} via ${it.label}" } ?: "NOT SET").append(".\n")
-            append("- To make a picture the user asks for, run `nanomuse-media image --prompt \"...\" [--from <image path>]`; ")
-            append("for a short clip, `nanomuse-media video --prompt \"...\" [--from <image path>] [--seconds 4-15]` (takes 1-5 minutes; say so first). ")
-            append("Both print JSON with a `markdown` field — put that line in your reply so the file shows inline. `nanomuse-media status` prints what is configured.\n")
-            append("- Avatar changes are handled by the app itself when the user writes \"change your avatar to ...\"; you only need to explain when it cannot work.\n")
-            if (image == null) {
-                append("- No image model is set: if the user asks to change your avatar or for a picture, say plainly that pictures need a provider with image models ")
-                append("(Alibaba Cloud Bailian, OpenAI with an API key, Gemini or OpenRouter; a ChatGPT plan signed in through Codex, DeepSeek, Claude, Kimi and Groq have none), and give the link [Image & video models](")
-                append(DEEP_LINK).append(") — it opens the setting. Never pretend to have drawn something.\n")
-            }
-            if (video == null) {
-                append("- No video model is set: the avatar stays as still pictures, and clips cannot be made. If asked, explain that clips need a provider with video models ")
-                append("(Alibaba Cloud Bailian: a Wan video model such as wan2.2-i2v-flash, picked in the setting) and give the link [Image & video models](").append(DEEP_LINK).append(").")
-            }
-        }.trimEnd()
+        return MediaPrompt.build(
+            image?.let { "${it.model} via ${it.label}" },
+            video?.let { "${it.model} via ${it.label}" },
+            DEEP_LINK,
+        )
     }
 
     /** The one-turn addendum when an avatar change was asked for but cannot be drawn. */
@@ -288,6 +275,6 @@ object MediaModels {
         "The user just asked you to change your avatar, but no image model is configured, so the app could not start the change. " +
             "Answer in the user's language: say that changing your look needs a provider with image models " +
             "(Alibaba Cloud Bailian, OpenAI with an API key, Gemini or OpenRouter — not a ChatGPT plan signed in through Codex, nor DeepSeek, Claude, Kimi or Groq), " +
-            "that nanoMuse ships no image model of its own, so this is something they set up themselves, and give the link [Image & video models]($DEEP_LINK) to open the setting. " +
+            "that TAMA AI ships no image model of its own, so this is something they set up themselves, and give the link [Image & video models]($DEEP_LINK) to open the setting. " +
             "Keep it to a few sentences and do not describe or invent a new look."
 }

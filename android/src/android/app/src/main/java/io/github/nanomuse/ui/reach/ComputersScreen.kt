@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -77,7 +78,7 @@ fun ComputersScreen(onBack: () -> Unit, onOpenAccount: () -> Unit = {}) {
         // ── the one way in: the desktop app on the same account ──
         Surface(
             shape = RoundedCornerShape(18.dp),
-            color = MuseTones.action.copy(alpha = 0.08f),
+            color = MuseTones.accent.copy(alpha = 0.08f),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 16.dp),
         ) {
             Column(Modifier.padding(16.dp)) {
@@ -94,14 +95,14 @@ fun ComputersScreen(onBack: () -> Unit, onOpenAccount: () -> Unit = {}) {
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (signedIn == true) MuseTones.action else MaterialTheme.colorScheme.error,
+                    color = if (signedIn == true) MuseTones.accent else MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(top = 8.dp),
                 )
                 Row(Modifier.fillMaxWidth().padding(top = 12.dp)) {
                     Button(
                         onClick = { openExternalUrl(context, DESKTOP_DOWNLOAD_URL) },
                         shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MuseTones.action),
+                        colors = ButtonDefaults.buttonColors(containerColor = MuseTones.action, contentColor = Color.White),
                         modifier = Modifier.weight(1f),
                     ) {
                         androidx.compose.material3.Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
@@ -131,7 +132,7 @@ fun ComputersScreen(onBack: () -> Unit, onOpenAccount: () -> Unit = {}) {
                     title = d.name,
                     subtitle = checks[d.id] ?: listOf(d.os.ifBlank { "?" }, state, stringResource(R.string.nm_pc_last_seen, seen)).joinToString(" · "),
                     icon = Icons.Outlined.Computer,
-                    iconColor = if (d.online) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+                    iconColor = if (d.online) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                     onClick = {
                         checks[d.id] = context.getString(R.string.nm_pc_checking)
                         scope.launch {

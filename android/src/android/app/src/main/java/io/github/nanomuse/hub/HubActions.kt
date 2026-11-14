@@ -85,7 +85,7 @@ object HubActions {
                 "file.put" -> call.result(filePut(context, call.args.optString("path"), call.args.optString("data"), call.args.optBoolean("force")))
                 "open" -> call.result(open(context, call.args.optString("url")))
                 "screen" -> call.result(screen())
-                "notify" -> call.result(notify(context, call.args.optString("text"), call.args.optString("title").ifBlank { "nanoMuse" }, call.senderName))
+                "notify" -> call.result(notify(context, call.args.optString("text"), call.args.optString("title").ifBlank { "TAMA AI" }, call.senderName))
                 "task" -> call.result(task(context, call))
                 "task.status" -> call.result(PersistentTaskEndpoint.get(context).status(
                     PersistentTaskEndpoint.owner(context, call), call.args.optString("turn_id"),
@@ -126,7 +126,7 @@ object HubActions {
         .put("name", Hub.name(context))
         .put("os", "Android ${Build.VERSION.RELEASE}")
         .put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
-        .put("app", "nanoMuse ${Hub.VERSION}")
+        .put("app", "TAMA AI ${Hub.VERSION}")
         .put("sandbox", if (PRootKernel.isBooted) "ready" else "not booted")
         .put("screen", MinisAccessibilityService.getInstance() != null)
         .put("actions", JSONArray(Hub.ACTIONS))
@@ -262,7 +262,7 @@ object HubActions {
             PendingIntent.getActivity(context, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
         val n = NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_nanomuse)
+            .setSmallIcon(R.drawable.ic_stat_tama)
             .setContentTitle(title)
             .setContentText(text)
             .setSubText(from)
@@ -277,13 +277,13 @@ object HubActions {
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                 nm.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE)
         if (blocked) {
-            return JSONObject().put("ok", false).put("shown", false).put("message", "notifications are not allowed for nanoMuse on this phone")
+            return JSONObject().put("ok", false).put("shown", false).put("message", "notifications are not allowed for TAMA AI on this phone")
         }
         return try {
             nm.notify((System.currentTimeMillis() % 100_000).toInt() + 40_000, n)
             JSONObject().put("ok", true).put("shown", true)
         } catch (e: SecurityException) {
-            JSONObject().put("ok", false).put("shown", false).put("message", "notifications are not allowed for nanoMuse on this phone")
+            JSONObject().put("ok", false).put("shown", false).put("message", "notifications are not allowed for TAMA AI on this phone")
         }
     }
 
@@ -293,7 +293,7 @@ object HubActions {
         val text = call.args.optString("text").trim()
         if (text.isEmpty()) throw Refused("usage", "text is required")
         val app = context.applicationContext as? MinisApp
-        if (app == null || !app.subsystemsReady()) throw Refused("not_ready", "nanoMuse on the phone is still starting")
+        if (app == null || !app.subsystemsReady()) throw Refused("not_ready", "TAMA AI on the phone is still starting")
         val senderId = call.from.optString("id")
         val conversation = running.conversationKey(senderId, call.args.optString("conversation"))
         if (call.args.has("turn_id")) {
@@ -310,7 +310,7 @@ object HubActions {
             }
         }
         val sessionId = runBlocking { sessionFor(app, conversation, call.senderName) }
-            ?: throw Refused("no_model", "the phone has no model to think with; sign in to nanoMuse Cloud there")
+            ?: throw Refused("no_model", "the phone has no model to think with; sign in to TAMA AI Cloud there")
         return executeTask(app, call, text, conversation, sessionId)
     }
 

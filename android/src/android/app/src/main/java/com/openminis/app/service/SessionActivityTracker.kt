@@ -28,10 +28,38 @@ object SessionActivityTracker {
 
     // nanoMuse: cancellation is distinct from both failure and a completed reply.
     private val cancelledReplies = java.util.Collections.synchronizedSet(mutableSetOf<String>())
-    fun markReplyIncomplete(sessionId: String) { cancelledReplies.add(sessionId) }
 
     private val _activeSessions = MutableStateFlow<Set<String>>(emptySet())
     val activeSessions: StateFlow<Set<String>> = _activeSessions.asStateFlow()
+
+    // Protect the active edge, outcome flags and run identity together. A tracker run can contain
+    // several queued prompts; these identities are not per-message ids.
+    private val petTurnIds = io.github.nanomuse.pet.PetRunIds()
+    // nanoMuse: bind each run to the Pet generation that was alive when it started.
+    private val petGenerations = mutableMapOf<String, Long>()
+    private data class FinishedRun(
+        val wasActive: Boolean,
+        val petTurnId: String?,
+        val wasError: Boolean,
+        val cancelled: Boolean,
+        val petGeneration: Long?, // nanoMuse: late completions cannot pay a new generation.
+    )
+
+    fun markReplyIncomplete(sessionId: String, expectedTurnId: String? = null) {
+        synchronized(petTurnIds) {
+            if (expectedTurnId == null || petTurnIds.isCurrent(sessionId, expectedTurnId)) {
+                cancelledReplies.add(sessionId)
+            }
+        }
+    }
+
+    fun isCurrentRun(sessionId: String, turnId: String): Boolean =
+        synchronized(petTurnIds) { petTurnIds.isCurrent(sessionId, turnId) }
+
+    // nanoMuse: a stale job must not borrow the Pet generation of its replacement.
+    fun petGenerationForRun(sessionId: String, turnId: String): Long = synchronized(petTurnIds) {
+        if (petTurnIds.isCurrent(sessionId, turnId)) petGenerations[sessionId] ?: -1L else -1L
+    }
 
     /**
      * T166: sessions the user is currently *present in* (composing /
@@ -194,6 +222,9 @@ object SessionActivityTracker {
     }
 
     private var appContext: Context? = null
+    // nanoMuse: a rejected Android request is visible; success is not proof of service survival.
+    private val serviceRequests = io.github.nanomuse.service.ServiceRequestState()
+    internal val serviceRequestIssue = serviceRequests.issue
 
     /**
      * The service should run iff at least one session is streaming OR
@@ -299,18 +330,26 @@ object SessionActivityTracker {
      * loop's cancel callback — captured here so the notification's Stop
      * action can fan out to every running session.
      */
-    fun setActive(sessionId: String, onStop: (() -> Unit)? = null) {
-        // nanoMuse: begin a distinct unread-completion lifecycle.
-        SessionBadgeStore.replies.started(sessionId)
-        cancelledReplies.remove(sessionId)
+    fun setActive(sessionId: String, onStop: (() -> Unit)? = null): String {
         val wasIdle = !shouldRunService()
-        // [T-android-live-update-completed] Capture BEFORE mutating: a run
-        // "begins" only on the empty → non-empty edge. A second concurrent
-        // session joining an in-flight run must not restart the clock.
-        val wasRunIdle = _activeSessions.value.isEmpty()
-        _activeSessions.value = _activeSessions.value + sessionId
-        if (onStop != null) {
-            synchronized(streamCancellers) { streamCancellers[sessionId] = onStop }
+        // nanoMuse: reconcile before binding the run, including a Pet already in mourning.
+        val petGeneration = appContext?.let { ctx ->
+            runCatching { io.github.nanomuse.pet.PetStore.generationForRun(ctx) }.getOrDefault(-1L)
+        } ?: -1L // nanoMuse: a Pet read failure must not prevent the agent from starting.
+        // nanoMuse: a new start replaces an older run in this session, even if its cleanup is late.
+        val (wasRunIdle, petTurnId) = synchronized(petTurnIds) {
+            val idle = _activeSessions.value.isEmpty()
+            cancelledReplies.remove(sessionId)
+            synchronized(pendingErrorFlag) { pendingErrorFlag.remove(sessionId) }
+            val turnId = petTurnIds.begin(sessionId)
+            petGenerations[sessionId] = petGeneration // nanoMuse: the id and generation move together.
+            _activeSessions.value = _activeSessions.value + sessionId
+            SessionBadgeStore.replies.started(sessionId)
+            synchronized(streamCancellers) {
+                if (onStop != null) streamCancellers[sessionId] = onStop
+                else streamCancellers.remove(sessionId)
+            }
+            idle to turnId
         }
         // [T-android-overlay-reply-status-34599] Track which session is
         // driving the overlay so the tap-to-open intent lands in the
@@ -336,6 +375,7 @@ object SessionActivityTracker {
         } else {
             updateService()
         }
+        return petTurnId
     }
 
     /**
@@ -343,14 +383,29 @@ object SessionActivityTracker {
      * sessions remain active *and* the user is no longer present in any
      * chat.
      */
-    fun setInactive(sessionId: String) {
-        val wasActive = sessionId in _activeSessions.value
-        _activeSessions.value = _activeSessions.value - sessionId
-        synchronized(streamCancellers) { streamCancellers.remove(sessionId) }
-        val wasError = synchronized(pendingErrorFlag) { pendingErrorFlag.remove(sessionId) }
-        // nanoMuse: duplicate, failed, cancelled, and visible completions do not create unread badges.
-        val cancelled = cancelledReplies.remove(sessionId)
-        SessionBadgeStore.replies.finished(sessionId, wasActive && !wasError && !cancelled, sessionId in _presentSessions.value)
+    fun setInactive(sessionId: String, expectedTurnId: String? = null) {
+        val finished = synchronized(petTurnIds) {
+            // A cancelled coroutine may finish after a new run has started in the same session.
+            // It must not consume that run or its outcome flags.
+            if (expectedTurnId != null && !petTurnIds.isCurrent(sessionId, expectedTurnId)) return
+            val active = sessionId in _activeSessions.value
+            if (active) _activeSessions.value = _activeSessions.value - sessionId
+            synchronized(streamCancellers) { streamCancellers.remove(sessionId) }
+            val result = FinishedRun(
+                wasActive = active,
+                petTurnId = if (active) petTurnIds.finish(sessionId, expectedTurnId) else null,
+                wasError = synchronized(pendingErrorFlag) { pendingErrorFlag.remove(sessionId) },
+                cancelled = cancelledReplies.remove(sessionId),
+                petGeneration = petGenerations.remove(sessionId), // nanoMuse: consume only this run's generation.
+            )
+            // nanoMuse: finish the badge before another run can start in the same session.
+            SessionBadgeStore.replies.finished(
+                sessionId, result.wasActive && !result.wasError && !result.cancelled,
+                sessionId in _presentSessions.value,
+            )
+            result
+        }
+        val (wasActive, petTurnId, wasError, cancelled, petGeneration) = finished // nanoMuse: generation follows the completed run.
         Log.d(TAG, "Session deactivated: $sessionId (total: ${_activeSessions.value.size})")
 
         if (_activeSessions.value.isEmpty()) {
@@ -392,6 +447,25 @@ object SessionActivityTracker {
         // the "completed" semantic honest).
         if (wasActive) {
             completionListener?.invoke(sessionId, wasError)
+            // This seam accounts for one active tracker lifecycle. It can include multiple
+            // queued prompts; it does not claim per-message accounting. The stable id lets the
+            // Pet reject repeated reports of this lifecycle even after other reports arrive.
+            if (petTurnId != null) appContext?.let { ctx ->
+                // nanoMuse: a damaged Pet preference must not break completion of the agent run.
+                runCatching {
+                    io.github.nanomuse.pet.PetTurnRecorder.onTurnFinished(
+                        context = ctx,
+                        sessionId = sessionId,
+                        turnId = petTurnId,
+                        outcome = when {
+                            cancelled -> io.github.nanomuse.pet.PetTurnOutcome.CANCELLED
+                            wasError -> io.github.nanomuse.pet.PetTurnOutcome.FAILURE
+                            else -> io.github.nanomuse.pet.PetTurnOutcome.SUCCESS
+                        },
+                        expectedGeneration = petGeneration ?: -1L, // nanoMuse: do not pay a later Pet.
+                    )
+                }.onFailure { Log.w(TAG, "Could not record the Pet run", it) }
+            }
         }
     }
 
@@ -401,8 +475,12 @@ object SessionActivityTracker {
      * inside setInactive). If never called, the completion listener fires
      * with `isError=false`.
      */
-    fun markStreamError(sessionId: String) {
-        synchronized(pendingErrorFlag) { pendingErrorFlag.add(sessionId) }
+    fun markStreamError(sessionId: String, expectedTurnId: String? = null) {
+        synchronized(petTurnIds) {
+            if (expectedTurnId == null || petTurnIds.isCurrent(sessionId, expectedTurnId)) {
+                synchronized(pendingErrorFlag) { pendingErrorFlag.add(sessionId) }
+            }
+        }
     }
 
     /**
@@ -415,7 +493,11 @@ object SessionActivityTracker {
     fun setPresent(sessionId: String) {
         // nanoMuse: opening a reply marks it read, without clearing its pause indicator.
         SessionBadgeStore.replies.opened(sessionId)
-        if (sessionId in _presentSessions.value) return
+        if (sessionId in _presentSessions.value) {
+            // nanoMuse: an earlier rejected start must not make presence permanently skip retry.
+            if (serviceRequestIssue.value != null) updateService()
+            return
+        }
         val wasIdle = !shouldRunService()
         _presentSessions.value = _presentSessions.value + sessionId
         Log.d(TAG, "Presence set: $sessionId (present total: ${_presentSessions.value.size})")
@@ -560,25 +642,24 @@ object SessionActivityTracker {
         }
     }
 
-    private fun startServiceIfNeeded() {
-        val context = appContext ?: run {
-            Log.w(TAG, "Context not initialized, cannot start service")
-            return
+    // nanoMuse: service request failures must not strand a real turn or skip Pet cleanup.
+    // A successful request is not evidence that Android kept the service alive afterward.
+    private fun startServiceIfNeeded() = requestServiceStart()
+    private fun updateService() = requestServiceStart()
+
+    private fun requestServiceStart() {
+        val accepted = serviceRequests.attempt(io.github.nanomuse.service.ServiceRequestIssue.START) {
+            val context = checkNotNull(appContext) { "Service context not initialized" }
+            check(AgentForegroundService.startService(context, sessionCountForNotification(), statusForNotification())) {
+                "Android did not identify a service component"
+            }
         }
-        AgentForegroundService.startService(
-            context,
-            sessionCountForNotification(),
-            statusForNotification(),
-        )
+        if (!accepted) Log.w(TAG, "Background service start request was rejected")
     }
 
-    private fun updateService() {
-        val context = appContext ?: return
-        AgentForegroundService.startService(
-            context,
-            sessionCountForNotification(),
-            statusForNotification(),
-        )
+    // nanoMuse: retry only the request appropriate to current tracker state, never rerun a task.
+    internal fun retryServiceRequest() {
+        if (shouldRunService()) requestServiceStart() else stopService()
     }
 
     /**
@@ -630,11 +711,12 @@ object SessionActivityTracker {
     }
 
     private fun stopService() {
-        val context = appContext ?: run {
-            Log.w(TAG, "Context not initialized, cannot stop service")
-            return
+        // nanoMuse: an Android refusal must not prevent completion listeners or Pet accounting.
+        val accepted = serviceRequests.attempt(io.github.nanomuse.service.ServiceRequestIssue.STOP) {
+            val context = checkNotNull(appContext) { "Service context not initialized" }
+            AgentForegroundService.stopService(context)
         }
-        AgentForegroundService.stopService(context)
-        Log.d(TAG, "All sessions complete, service stopped")
+        if (accepted) Log.d(TAG, "All sessions complete, service stop requested")
+        else Log.w(TAG, "Background service stop request was rejected")
     }
 }

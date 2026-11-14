@@ -16,10 +16,10 @@ import java.io.File
  * every window from 64k up.
  */
 class PromptDietTest {
-    private val viewModelSource: String by lazy {
+    private val templateSource: String by lazy {
         val f = listOf(
-            "src/main/java/com/openminis/app/ui/chat/ChatViewModel.kt",
-            "app/src/main/java/com/openminis/app/ui/chat/ChatViewModel.kt",
+            "src/main/java/io/github/nanomuse/chat/AgentBasePrompt.kt",
+            "app/src/main/java/io/github/nanomuse/chat/AgentBasePrompt.kt",
         ).map(::File).first { it.exists() }
         f.readText()
     }
@@ -50,8 +50,8 @@ class PromptDietTest {
     @Test
     fun `the Android tools section keeps its android lines and condenses the minis paragraphs`() {
         // the upstream prompt still has the section where this expects it
-        assertTrue(viewModelSource.contains(PromptDiet.SECTION_HEAD))
-        assertTrue(viewModelSource.contains(PromptDiet.SECTION_END))
+        assertTrue(templateSource.contains(PromptDiet.SECTION_HEAD))
+        assertTrue(templateSource.contains(PromptDiet.SECTION_END))
         val base = "Tone and style:\n- Be concise.\n" +
             PromptDiet.SECTION_HEAD +
             "CLI tools at /usr/local/bin with the `android-` prefix give you access to Android framework capabilities.\n" +

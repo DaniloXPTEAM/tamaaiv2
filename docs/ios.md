@@ -283,8 +283,8 @@ Ours, in `NanoMuse/`:
   `mapHTTPError` drops are kept for a few seconds by `NanoMuseReachSignal` and written into the
   message as a canonical `nm_reach:` line by `friendlyErrorMessage`: an expired ChatGPT
   sign-in reads *Sign in again*, a spent plan window *The ChatGPT plan has nothing left for now*
-  with OpenAI's sentence and the reset time. The same kinds, lines and rules as Android's
-  `ProviderReach`.
+  with OpenAI's sentence and the reset time. Android additionally distinguishes own-key
+  authentication, access and credit refusals; this iOS path has not received that change.
 - **When the relay refuses a turn** (`NanoMuseRelayRefusal.swift`,
   `NanoMuseRelayRefusalCard.swift`): every refusal nanoMuse Cloud sends is one plain sentence in
   the phone's language and the button that fits, never a status code, the relay's JSON or

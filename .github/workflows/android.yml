@@ -17,6 +17,9 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
+  # TAMA: download-artifact talks to the artifacts API, and without this it returns nothing and
+  # exits zero. That is what made three runs say "no apk" while the upload had succeeded.
+  actions: read
 
 env:
   NDK_VERSION: 27.2.12479018
@@ -84,9 +87,66 @@ jobs:
 
       - name: assembleDebug
         working-directory: android/src/android
+        # No ABI override here, on purpose. This artifact is the one a person downloads and
+        # installs, and a phone is arm64-v8a: pointing this at x86_64 for the emulator's sake made
+        # the published APK uninstallable ("app not installed") on a real device.
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          ./gradlew :app:assembleDebug --console=plain --no-daemon
+          ./gradlew :app:assembleDebug --console=plain --no-daemon 2>&1 | tee /tmp/gradle.log
+          exit "${PIPESTATUS[0]}"
+
+      # TAMA: the installed arm64 artifact was produced by an earlier debug runner. Debug signing
+      # can differ between runners; compare certificates before suggesting an in-place update.
+      # The old artifact expires, so a failed download is explicitly "unknown", not a build failure.
+      - name: Fetch the earlier arm64 APK for a signing comparison
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        continue-on-error: true
+        with:
+          name: nanoMuse-debug-apk
+          run-id: 43447089686
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: /tmp/tama-baseline-apk
+
+      - name: Compare debug APK signatures
+        id: phone-signature
+        shell: bash
+        run: |
+          # Use the explicitly installed version, not an arbitrary preinstalled SDK directory.
+          signer="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          new=android/src/android/app/build/outputs/apk/debug/app-debug.apk
+          old=/tmp/tama-baseline-apk/app-debug.apk
+          phone_sha="$(sha256sum "$new" | cut -d' ' -f1)"
+          echo "sha256=$phone_sha" >> "$GITHUB_OUTPUT"
+          echo "::notice title=apk-sha256::$phone_sha"
+          if [ ! -x "$signer" ]; then
+            echo "::warning title=apk-signature::apksigner 35.0.0 is unavailable; update compatibility is unverified. Do not uninstall the existing app."
+            exit 0
+          fi
+          new_cert=""
+          if "$signer" verify --print-certs "$new" > /tmp/tama-new-cert.log 2>&1; then
+            new_cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/tama-new-cert.log)"
+          else
+            echo "::warning title=new-apk-signature::$(tail -1 /tmp/tama-new-cert.log | cut -c1-700)"
+          fi
+          [ -z "$new_cert" ] || echo "::notice title=new-apk-cert-sha256::$new_cert"
+          if [ ! -f "$old" ]; then
+            echo "::warning title=apk-signature::Earlier artifact unavailable; update compatibility is unverified. Do not uninstall the existing app."
+            exit 0
+          fi
+          old_cert=""
+          if "$signer" verify --print-certs "$old" > /tmp/tama-old-cert.log 2>&1; then
+            old_cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/tama-old-cert.log)"
+          else
+            echo "::warning title=old-apk-signature::$(tail -1 /tmp/tama-old-cert.log | cut -c1-700)"
+          fi
+          [ -z "$old_cert" ] || echo "::notice title=old-apk-cert-sha256::$old_cert"
+          if [ -z "$old_cert" ] || [ -z "$new_cert" ]; then
+            echo "::warning title=apk-signature::A signing certificate could not be read. Update compatibility is unverified; do not uninstall the existing app."
+          elif [ "$old_cert" = "$new_cert" ]; then
+            echo "::notice title=apk-signature::Matches artifact from run 43447089686; confirm that is the installed APK before updating."
+          else
+            echo "::warning title=apk-signature::Certificate differs from run 43447089686. Do not uninstall the existing app."
+          fi
 
       # Our unit tests (io.github.nanomuse.*: the guards, the hub client, the sandbox paths, the
       # strings' parity), plus the upstream provider and sandbox tests, the two OpenMinis packages
@@ -98,24 +158,294 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
           ./gradlew :app:testDebugUnitTest --tests 'io.github.nanomuse.*' \
             --tests 'com.openminis.app.provider.*' --tests 'com.openminis.app.sandbox.*' \
-            --console=plain --no-daemon
+            --console=plain --no-daemon 2>&1 | tee /tmp/gradle-unit.log
+          exit "${PIPESTATUS[0]}"
 
-      # The on-device tests cannot run here (no emulator), but the source set must keep
-      # compiling or io.github.nanomuse.reach.ReachHubInstrumentedTest never runs anywhere (#332).
-      - name: androidTest compiles
+      # Publish only enum labels and counts from the synthetic host fixture; never prompt text.
+      - name: Publish host prompt profile measurements
+        run: |
+          python3 scripts/android/publish-profile-sizes.py \
+            android/src/android/app/build/test-results/testDebugUnitTest/TEST-io.github.nanomuse.chat.PromptProfileMeasurementTest.xml
+
+      # Build the test APK in the SAME job and with the SAME debug key as the phone APK.
+      # The emulator installs the original phone artifact, never an x86 rebuild.
+      - name: Assemble instrumentation APK
         working-directory: android/src/android
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          ./gradlew :app:compileDebugAndroidTestKotlin --console=plain --no-daemon
+          ./gradlew :app:assembleDebugAndroidTest --console=plain --no-daemon 2>&1 | tee /tmp/gradle-androidtest.log
+          exit "${PIPESTATUS[0]}"
+
+      # TAMA: Actions logs may be hosted where this checkout cannot reach them. Publish compile
+      # errors and failing assertions after both test steps, including androidTest compilation.
+      - name: Publish build and test failures as annotations
+        if: failure()
+        run: |
+          for log in /tmp/gradle.log /tmp/gradle-unit.log /tmp/gradle-androidtest.log; do
+            if [ -f "$log" ]; then
+              grep -E '^e: |^> Task .*FAILED|error: |AAPT2|Execution failed for task|Could not find |Could not resolve ' "$log" \
+                | head -40 | while IFS= read -r line; do
+                  echo "::error title=gradle::${line//$'\n'/ }"
+                done || true
+            fi
+          done
+          python3 - <<'PY' || true
+          import glob, xml.etree.ElementTree as ET
+          for f in glob.glob('android/src/android/app/build/test-results/testDebugUnitTest/*.xml'):
+              for case in ET.parse(f).getroot().iter('testcase'):
+                  for fail in list(case.findall('failure')) + list(case.findall('error')):
+                      msg = ' '.join((fail.get('message') or '') .split())[:900]
+                      print(f"::error file={case.get('classname')},line=1,title={case.get('name')}::{msg}")
+          PY
 
       - name: Badging
         run: |
           bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           "$bt/aapt" dump badging android/src/android/app/build/outputs/apk/debug/app-debug.apk | grep -E "^package:|application-label:|native-code"
 
+      - name: Seal the exact phone APK after all builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=android/src/android/app/build/outputs/apk/debug/app-debug.apk
+          actual="$(sha256sum "$apk" | cut -d' ' -f1)"
+          expected="${{ steps.phone-signature.outputs.sha256 }}"
+          if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+            echo "::error title=apk-integrity::Phone APK changed after signature verification"
+            exit 1
+          fi
+          printf '%s\n' "$actual" > android/src/android/app/build/outputs/apk/debug/phone-apk.sha256
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" \
+            > android/src/android/app/build/outputs/apk/debug/phone-apk-signature.txt
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nanoMuse-debug-apk
-          path: android/src/android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            android/src/android/app/build/outputs/apk/debug/app-debug.apk
+            android/src/android/app/build/outputs/apk/debug/phone-apk.sha256
+            android/src/android/app/build/outputs/apk/debug/phone-apk-signature.txt
           retention-days: 14
           if-no-files-found: error
+
+      - name: Upload the matching instrumentation APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tama-arm64-instrumentation
+          path: android/src/android/app/build/outputs/apk/androidTest/debug/*.apk
+          retention-days: 14
+          if-no-files-found: error
+
+  # A fresh Google APIs x86_64 emulator with an ARM native bridge installs the *same*
+  # arm64 APK uploaded above. A successful translation is evidence about that runtime,
+  # not a substitute for testing an actual ARM phone or its existing signing key.
+  device-smoke:
+    name: device smoke · arm64 APK on emulator
+    needs: debug-apk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: platforms;android-36 build-tools;35.0.0
+
+      - name: Fetch the exact phone APK and its hash
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: nanoMuse-debug-apk
+          path: android/src/android/app/build/outputs/apk/debug
+
+      - name: Fetch the matching instrumentation APK
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: tama-arm64-instrumentation
+          path: android/src/android/app/build/outputs/apk/androidTest/debug
+
+      - name: Verify the phone APK ABI, hash and signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=android/src/android/app/build/outputs/apk/debug/app-debug.apk
+          hash=android/src/android/app/build/outputs/apk/debug/phone-apk.sha256
+          test "$(sha256sum "$apk" | cut -d' ' -f1)" = "$(tr -d '\r\n' < "$hash")"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk"
+          badging="$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk")"
+          printf '%s\n' "$badging" | grep -E '^package:|^native-code:'
+          if ! printf '%s\n' "$badging" | grep -F "native-code: 'arm64-v8a'"; then
+            echo '::error title=phone ABI::The tested APK does not contain arm64-v8a native code.'
+            exit 1
+          fi
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install and test the exact arm64 APK in an isolated emulator
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          # The action splits multi-line inputs and runs each line under sh.
+          script: bash scripts/android/device-smoke.sh
+
+      - name: Publish individual test results
+        if: always()
+        run: python3 scripts/android/publish-test-summary.py
+
+      # nanoMuse: publish only count-only metrics verified against the loopback request.
+      - name: Publish prompt size baseline
+        if: always()
+        run: python3 scripts/android/publish-prompt-size.py
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: tama-device-smoke
+          path: |
+            launch.png
+            pet-alive.png
+            pet-memorial.png
+            journey-*.png
+            restart-system-anr.png
+            journey-process.txt
+            journey-system-anr-recovery.txt
+            restart-system-anr-recovery.txt
+            am.log
+            install.log
+            pet-install.log
+            pet-instrumentation.log
+            pet-screen-instrumentation.log
+            journey-instrumentation.log
+            restart-instrumentation.log
+            sandbox-instrumentation.log
+            sandbox-process-snapshot.txt
+            prompt-detail-instrumentation.log
+            provider-detail-instrumentation.log
+            background-service-instrumentation.log
+            browser-guard-instrumentation.log
+            system-anr-policy-instrumentation.log
+            android-runtime.log
+            prompt-size.log
+            prompt-touch.log
+            prompt-size-summary.md
+            arm-runtime.txt
+            installed-apk-sha256.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # A check run can stop recording after 50 annotations, even when the messages
+  # themselves are shorter than 4 KB. Split screenshots across separate jobs,
+  # at most eight images per job and five annotations per image. Full synthetic
+  # PNGs remain in the smoke artifact; previews are diagnostics, not approval.
+  visual-previews:
+    name: synthetic previews · ${{ matrix.group }}
+    needs: device-smoke
+    if: always() && needs.device-smoke.result != 'skipped' && needs.device-smoke.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [core, extras, recovery]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch synthetic screenshots
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        continue-on-error: true
+        with:
+          name: tama-device-smoke
+          path: .
+
+      - name: Prepare visual preview encoder
+        continue-on-error: true
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tama-previews"
+          echo "$RUNNER_TEMP/tama-previews/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/tama-previews/bin/pip" install --disable-pip-version-check 'Pillow==11.3.0'
+
+      - name: Preview Last screen
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-last-screen.png
+
+      - name: Preview Welcome
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-welcome.png
+
+      - name: Preview Launch
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py launch.png
+
+      - name: Preview Chat
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-chat-light.png
+
+      - name: Preview Chat reply
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-chat-reply.png
+
+      - name: Preview Dark appearance
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-appearance-dark.png
+
+      - name: Preview Dark chat
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-chat-dark-custom.png
+
+      - name: Preview Restored chat
+        if: matrix.group == 'core'
+        run: python3 scripts/android/publish-test-previews.py journey-restored.png
+
+      - name: Preview Pet care
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py pet-alive.png
+
+      - name: Preview Pet memorial
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py pet-memorial.png
+
+      - name: Preview Feed
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-feed.png
+
+      - name: Preview Ideas
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-ideas.png
+
+      - name: Preview Goals
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-goals.png
+
+      - name: Preview Library
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-library.png
+
+      - name: Preview Pet shortcut
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-pet.png
+
+      - name: Preview Settings
+        if: matrix.group == 'extras'
+        run: python3 scripts/android/publish-test-previews.py journey-settings-light.png
+
+      - name: Preview system ANR dialog during journey
+        if: matrix.group == 'recovery'
+        run: python3 scripts/android/publish-test-previews.py journey-system-anr.png
+
+      - name: Preview system ANR dialog after restart
+        if: matrix.group == 'recovery'
+        run: python3 scripts/android/publish-test-previews.py restart-system-anr.png

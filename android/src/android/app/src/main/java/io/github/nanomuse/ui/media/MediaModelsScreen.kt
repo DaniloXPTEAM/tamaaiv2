@@ -265,7 +265,7 @@ fun MediaModelsScreen(
                                 text = stringResource(if (running) R.string.nm_media_clips_running else if (clips.isEmpty()) R.string.nm_media_clips_make else R.string.nm_media_clips_redo),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = if (running) MaterialTheme.colorScheme.onSurfaceVariant else MuseTones.action,
+                                color = if (running) MaterialTheme.colorScheme.onSurfaceVariant else MuseTones.accent,
                             )
                         },
                     )
@@ -283,7 +283,7 @@ private fun StatusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, rea
         title = line,
         subtitle = if (ready) stringResource(R.string.nm_media_ready) else offLine,
         icon = icon,
-        iconColor = if (ready) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+        iconColor = if (ready) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
         minHeight = 72.dp,
     )
 }
@@ -320,7 +320,7 @@ private fun ModelList(
                     text = stringResource(R.string.nm_media_recommended),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
-                    color = MuseTones.action,
+                    color = MuseTones.accent,
                     modifier = Modifier.padding(end = 8.dp),
                 )
             }) else null,
@@ -331,7 +331,7 @@ private fun ModelList(
             title = stringResource(R.string.nm_media_checking),
             titleColor = MaterialTheme.colorScheme.onSurfaceVariant,
             showDivider = false,
-            trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.action) },
+            trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.accent) },
         )
         models.isEmpty() -> SettingsRow(
             title = empty,
@@ -344,7 +344,7 @@ private fun ModelList(
         )
         else -> SettingsRow(
             title = stringResource(R.string.nm_media_recheck),
-            titleColor = MuseTones.action,
+            titleColor = MuseTones.accent,
             onClick = onCheck,
             showChevron = false,
             showDivider = false,
@@ -364,7 +364,7 @@ private fun ModelField(value: String, placeholder: String, onChange: (String) ->
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
         )
     }
 }

@@ -2,8 +2,7 @@ package io.github.nanomuse.ui.chat
 
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -20,6 +19,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.HourglassEmpty
@@ -35,19 +35,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboard
-import io.github.nanomuse.ui.muse.setPlainText
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,7 +65,13 @@ const val NETWORK_DEEP_LINK = "minis://settings/network"
  * adds *Use nanoMuse Cloud this time* under either: one turn on the relay, no slot changed.
  */
 @Composable
-fun NmProviderErrorOrBanner(error: String, onRetry: () -> Unit, onRetryOnCloud: (() -> Unit)? = null, banner: @Composable () -> Unit) {
+fun NmProviderErrorOrBanner(
+    error: String,
+    onRetry: () -> Unit,
+    onRetryOnCloud: (() -> Unit)? = null,
+    onOpenDetails: ((ProviderReach.Reach, String) -> Unit)? = null,
+    banner: @Composable () -> Unit,
+) {
     // the relay's refusals (413 too large, busy, the operator's switches …): one sentence and a button
     val refusal = remember(error) { io.github.nanomuse.cloud.RelayRefusal.fromCanonical(error) }
     if (refusal != null) {
@@ -79,7 +80,8 @@ fun NmProviderErrorOrBanner(error: String, onRetry: () -> Unit, onRetryOnCloud: 
     }
     val reach = remember(error) { ProviderReach.classify(error) }
     if (reach != null) {
-        ProviderReachCard(reach, onRetry, onRetryOnCloud = onRetryOnCloud)
+        ProviderReachCard(reach, onRetry, onRetryOnCloud = onRetryOnCloud,
+            onOpenDetails = onOpenDetails?.let { open -> { guidance -> open(reach, guidance) } })
         return
     }
     Column {
@@ -92,23 +94,27 @@ fun NmProviderErrorOrBanner(error: String, onRetry: () -> Unit, onRetryOnCloud: 
 @Composable
 fun CloudThisTimeButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     TextButton(onClick = onClick, modifier = modifier) {
-        Icon(Icons.Outlined.CloudQueue, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.action)
+        Icon(Icons.Outlined.CloudQueue, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
         Spacer(Modifier.width(5.dp))
-        Text(stringResource(R.string.nm_retry_on_cloud), fontSize = 13.sp, color = MuseTones.action)
+        Text(stringResource(R.string.nm_retry_on_cloud), fontSize = 13.sp, color = MuseTones.accent)
     }
 }
 
 /**
  * What happened, in one sentence a person can act on; what helps, as a short list; the
- * actions: *Try again*, the Network setting, *Sign in again* or a key of one's own. The raw
- * line sits behind *Details* for a bug report — long-press copies it.
+ * actions: *Try again*, the Network setting, *Sign in again* or a key of one's own. When a
+ * stable chat host is provided, the card and its Details button open the same detail sheet.
  */
-@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier: Modifier = Modifier, onRetryOnCloud: (() -> Unit)? = null) {
+fun ProviderReachCard(
+    reach: ProviderReach.Reach,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+    onRetryOnCloud: (() -> Unit)? = null,
+    onOpenDetails: ((String) -> Unit)? = null,
+) {
     val context = LocalContext.current
-    val clipboard = LocalClipboard.current
-    var details by remember { mutableStateOf(false) }
     val host = reach.host.ifBlank { stringResource(R.string.nm_reach_the_provider) }
     val plan = reach.isChatGptPlan
 
@@ -124,7 +130,7 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
             stringResource(R.string.nm_reach_region_body),
         )
         ProviderReach.Kind.SIGNED_OUT -> Head(
-            Icons.Outlined.VpnKey, MuseTones.action,
+            Icons.Outlined.VpnKey, MuseTones.accent,
             stringResource(if (plan) R.string.nm_reach_signed_out_title else R.string.nm_reach_key_refused_title, host),
             stringResource(if (plan) R.string.nm_reach_signed_out_body else R.string.nm_reach_key_refused_body),
         )
@@ -133,18 +139,61 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
             stringResource(if (plan) R.string.nm_reach_quota_title else R.string.nm_reach_quota_key_title, host),
             stringResource(if (plan) R.string.nm_reach_quota_body else R.string.nm_reach_quota_key_body),
         )
+        ProviderReach.Kind.NO_CREDIT -> Head(
+            Icons.Outlined.AccountBalanceWallet, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_no_credit_title, host),
+            stringResource(R.string.nm_reach_no_credit_body),
+        )
+        ProviderReach.Kind.AUTH_REJECTED -> Head(
+            Icons.Outlined.VpnKey, Color(0xFFE0772C),
+            // An SSE error code or an old saved diagnostic is not an HTTP status.
+            stringResource(if (reach.httpStatus == 401) R.string.nm_reach_auth_title else R.string.nm_reach_key_refused_title, host),
+            stringResource(R.string.nm_reach_auth_body),
+        )
+        ProviderReach.Kind.ACCESS_DENIED -> Head(
+            Icons.Outlined.Key, Color(0xFFE0772C),
+            stringResource(if (reach.httpStatus == 403) R.string.nm_reach_access_title else R.string.nm_reach_generic_title, host),
+            stringResource(R.string.nm_reach_access_body),
+        )
         ProviderReach.Kind.RATE_LIMITED -> Head(
             Icons.Outlined.HourglassEmpty, Color(0xFF7C5CFF),
-            stringResource(R.string.nm_reach_rate_title),
+            if (reach.httpStatus == 429) stringResource(R.string.nm_reach_rate_title)
+            else stringResource(R.string.nm_reach_quota_key_title, host),
             stringResource(R.string.nm_reach_rate_body),
+        )
+        ProviderReach.Kind.REQUEST_TOO_LARGE -> Head(
+            Icons.Outlined.HourglassEmpty, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_request_large_title, host),
+            stringResource(R.string.nm_reach_request_large_body),
+        )
+        ProviderReach.Kind.RESPONSE_LIMIT -> Head(
+            Icons.Outlined.HourglassEmpty, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_output_limit_title, host),
+            if (reach.outputLimit != null) stringResource(R.string.nm_reach_output_limit_known, reach.outputLimit)
+            else stringResource(R.string.nm_reach_output_limit_unknown),
+        )
+        ProviderReach.Kind.SERVER_ERROR -> Head(
+            Icons.Outlined.CloudOff, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_server_error_title, host),
+            stringResource(R.string.nm_reach_server_error_body),
+        )
+        ProviderReach.Kind.PROVIDER_ERROR -> Head(
+            Icons.Outlined.CloudOff, Color(0xFFE0772C),
+            stringResource(R.string.nm_reach_generic_title, host),
+            stringResource(R.string.nm_reach_generic_body),
         )
     }
 
+    // nanoMuse: the whole card is a discoverable target; nested action buttons keep their own clicks.
+    val detailsLabel = stringResource(R.string.nm_reach_details)
+    val detailsTarget = if (onOpenDetails != null) {
+        Modifier.testTag("provider-error-card").clickable(onClickLabel = detailsLabel) { onOpenDetails(body) }
+    } else Modifier
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MuseTones.surface,
         border = BorderStroke(1.dp, MuseTones.hairline),
-        modifier = modifier.fillMaxWidth().widthIn(max = 400.dp).padding(top = 4.dp),
+        modifier = modifier.fillMaxWidth().widthIn(max = 400.dp).padding(top = 4.dp).then(detailsTarget),
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.Top) {
@@ -152,6 +201,15 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurface)
+                    // The failed request, not the current picker, supplies the model. Old or
+                    // transport-only errors do not invent one when no snapshot exists.
+                    Text(
+                        "${stringResource(R.string.model_entry_provider)}: $host · " +
+                            "${stringResource(R.string.nm_chat_menu_model)}: " +
+                            reach.modelId.ifBlank { stringResource(R.string.nm_reach_sheet_unavailable) },
+                        fontSize = 12.sp, lineHeight = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
                     Text(body, fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
                     if (reach.detail.isNotBlank() && reach.kind != ProviderReach.Kind.UNREACHABLE) {
                         Text(
@@ -183,7 +241,11 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                 )
                 ProviderReach.Kind.QUOTA -> listOf(R.string.nm_reach_help_wait, R.string.nm_reach_help_other)
                 ProviderReach.Kind.RATE_LIMITED -> listOf(R.string.nm_reach_help_moment)
-                ProviderReach.Kind.SIGNED_OUT -> emptyList()
+                ProviderReach.Kind.SIGNED_OUT, ProviderReach.Kind.AUTH_REJECTED,
+                ProviderReach.Kind.ACCESS_DENIED, ProviderReach.Kind.REQUEST_TOO_LARGE,
+                ProviderReach.Kind.RESPONSE_LIMIT, ProviderReach.Kind.SERVER_ERROR,
+                ProviderReach.Kind.PROVIDER_ERROR -> emptyList()
+                ProviderReach.Kind.NO_CREDIT -> listOf(R.string.nm_reach_help_credit, R.string.nm_reach_help_free_model)
             }
             if (helps.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
@@ -200,17 +262,19 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
             // the actions
             FlowRow(verticalArrangement = Arrangement.Center, modifier = Modifier.padding(top = 10.dp)) {
                 when (reach.kind) {
-                    ProviderReach.Kind.SIGNED_OUT -> {
+                    ProviderReach.Kind.SIGNED_OUT, ProviderReach.Kind.AUTH_REJECTED,
+                    ProviderReach.Kind.ACCESS_DENIED, ProviderReach.Kind.NO_CREDIT -> {
+                        val signIn = reach.kind == ProviderReach.Kind.SIGNED_OUT && plan
                         Button(
-                            onClick = { if (plan) signInAgain(context) else ChatLinkResolver.dispatchDeepLink(context, "minis://settings/providers") },
+                            onClick = { if (signIn) signInAgain(context) else ChatLinkResolver.dispatchDeepLink(context, "minis://settings/providers") },
                             shape = CircleShape,
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = MuseTones.action, contentColor = Color.White),
                         ) {
-                            Text(stringResource(if (plan) R.string.nm_reach_sign_in else R.string.nm_reach_open_provider), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text(stringResource(if (signIn) R.string.nm_reach_sign_in else R.string.nm_reach_open_provider), fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                         Spacer(Modifier.width(6.dp))
-                        TextButton(onClick = onRetry) { Text(stringResource(R.string.nm_reach_try_again), fontSize = 13.sp, color = MuseTones.action) }
+                        TextButton(onClick = onRetry) { Text(stringResource(R.string.nm_reach_try_again), fontSize = 13.sp, color = MuseTones.accent) }
                     }
                     else -> {
                         Button(
@@ -224,16 +288,17 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                         Spacer(Modifier.width(6.dp))
                         if (reach.kind == ProviderReach.Kind.UNREACHABLE || reach.kind == ProviderReach.Kind.REGION_BLOCKED) {
                             TextButton(onClick = { ChatLinkResolver.dispatchDeepLink(context, NETWORK_DEEP_LINK) }) {
-                                Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.action)
+                                Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
                                 Spacer(Modifier.width(5.dp))
-                                Text(stringResource(R.string.nm_reach_network), fontSize = 13.sp, color = MuseTones.action)
+                                Text(stringResource(R.string.nm_reach_network), fontSize = 13.sp, color = MuseTones.accent)
                             }
                         }
-                        if (reach.kind != ProviderReach.Kind.RATE_LIMITED) {
+                        if (reach.kind == ProviderReach.Kind.UNREACHABLE || reach.kind == ProviderReach.Kind.REGION_BLOCKED ||
+                            reach.kind == ProviderReach.Kind.QUOTA) {
                             TextButton(onClick = { ChatLinkResolver.dispatchDeepLink(context, OwnKeyPresets.deepLink(firstKeyVendor(context))) }) {
-                                Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.action)
+                                Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(15.dp), tint = MuseTones.accent)
                                 Spacer(Modifier.width(5.dp))
-                                Text(stringResource(R.string.nm_reach_own_key), fontSize = 13.sp, color = MuseTones.action)
+                                Text(stringResource(R.string.nm_reach_own_key), fontSize = 13.sp, color = MuseTones.accent)
                             }
                         }
                     }
@@ -242,26 +307,9 @@ fun ProviderReachCard(reach: ProviderReach.Reach, onRetry: () -> Unit, modifier:
                 if (onRetryOnCloud != null) CloudThisTimeButton(onRetryOnCloud)
             }
 
-            // the raw line, for a bug report
-            if (reach.detail.isNotBlank() && reach.kind == ProviderReach.Kind.UNREACHABLE) {
-                Text(
-                    stringResource(if (details) R.string.nm_reach_details_hide else R.string.nm_reach_details),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.combinedClickable(onClick = { details = !details }).padding(top = 6.dp, end = 8.dp),
-                )
-                if (details) {
-                    Text(
-                        reach.detail,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .combinedClickable(onClick = {}, onLongClick = { clipboard.setPlainText("nanoMuse", reach.detail) }),
-                    )
-                }
+            // nanoMuse: an explicit label remains available for accessibility and discovery.
+            if (onOpenDetails != null) {
+                TextButton(onClick = { onOpenDetails(body) }) { Text(detailsLabel, fontSize = 12.sp) }
             }
         }
     }
@@ -284,8 +332,8 @@ private fun firstKeyVendor(context: Context): String {
 
 /** "2 h 05 min" / "40 min", for a Retry-After. */
 fun duration(context: Context, seconds: Int): String {
-    val minutes = (seconds + 59) / 60
-    val h = minutes / 60
-    val m = minutes % 60
-    return if (h > 0) context.getString(R.string.nm_reach_hours_minutes, h, m) else context.getString(R.string.nm_reach_minutes, maxOf(m, 1))
+    val minutes = (seconds.toLong() + 59L) / 60L
+    val h = minutes / 60L
+    val m = minutes % 60L
+    return if (h > 0L) context.getString(R.string.nm_reach_hours_minutes, h, m) else context.getString(R.string.nm_reach_minutes, maxOf(m, 1L))
 }

@@ -31,9 +31,12 @@ object UpdateCheck {
     private const val KEY_FAILED = "failed"
 
     /** Where "Update" goes on Android: the download page, with the APK and the store links. */
-    const val DOWNLOAD_URL = "https://nanomuse.cn/dl/"
-    const val INDEX_URL = "https://nanomuse.cn/dl/index.json"
-    const val GITHUB_LATEST_URL = "https://api.github.com/repos/nano-muse/nanoMuse/releases/latest"
+    // TAMA: this candidate has no download index of its own yet; its release page is
+    // the only place its APK is published.
+    const val DOWNLOAD_URL = "https://github.com/DaniloXPTEAM/tamaaiv2/releases"
+    // TAMA: see DOWNLOAD_URL; an upstream index would name upstream builds.
+    const val INDEX_URL = ""
+    const val GITHUB_LATEST_URL = "https://api.github.com/repos/DaniloXPTEAM/tamaaiv2/releases/latest"
 
     /** A check is repeated at most this often on its own. */
     const val FRESH_MS = 24L * 60 * 60 * 1000
@@ -117,7 +120,7 @@ object UpdateCheck {
 
     private fun get(url: String): String? = try {
         val req = Request.Builder().url(url).get()
-            .header("User-Agent", "nanoMuse-Android/${BuildConfig.VERSION_NAME}")
+            .header("User-Agent", "TAMA-AI-Android/${BuildConfig.VERSION_NAME}")
             .header("Accept", "application/json")
             .build()
         http.newCall(req).execute().use { r ->

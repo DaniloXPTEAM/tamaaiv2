@@ -54,7 +54,7 @@ class RiskApprovalNotifier(
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_nanomuse)
+            .setSmallIcon(R.drawable.ic_stat_tama)
             .setLargeIcon(NanoMuseIdentity.face(context))
             .setContentTitle(title)
             .setContentText(body.lines().first())

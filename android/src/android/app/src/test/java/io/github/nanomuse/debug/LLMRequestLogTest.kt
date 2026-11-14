@@ -15,7 +15,8 @@ import org.junit.Test
 class LLMRequestLogTest {
     private val credentialNames = listOf(
         "Authorization", "PROXY-AUTHORIZATION", "x-api-key", "Api-Key", "apikey",
-        "X-Goog-Api-Key", "cookie", "Set-Cookie", "X-Access-Token",
+        "X-Goog-Api-Key", "cookie", "Set-Cookie", "X-Access-Token", "X-Custom-Key",
+        "X-Secret", "X-Password", "X-Credential",
     )
 
     private fun entry(headers: Map<String, String>, body: String = "{\"model\":\"m\"}") =

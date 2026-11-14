@@ -257,7 +257,7 @@ fun AvatarStudioScreen(onBack: () -> Unit, onOpenSoul: () -> Unit, onOpenMediaMo
                         Spacer(Modifier.height(10.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (p.running) {
-                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = MuseTones.action)
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = MuseTones.accent)
                                 Spacer(Modifier.width(8.dp))
                                 Text(stringResource(R.string.nm_avatar_moods_progress, p.done, p.total), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else {
@@ -311,7 +311,7 @@ fun AvatarStudioScreen(onBack: () -> Unit, onOpenSoul: () -> Unit, onOpenMediaMo
                                     style = preset.style
                                 },
                                 shape = RoundedCornerShape(18.dp),
-                                border = if (selectedPreset) BorderStroke(3.dp, MuseTones.action) else null,
+                                border = if (selectedPreset) BorderStroke(3.dp, MuseTones.accent) else null,
                                 color = MuseTones.fill,
                             ) {
                                 Column(Modifier.width(112.dp).padding(bottom = 8.dp)) {
@@ -336,7 +336,7 @@ fun AvatarStudioScreen(onBack: () -> Unit, onOpenSoul: () -> Unit, onOpenMediaMo
                         maxLines = 4,
                         placeholder = { Text(stringResource(R.string.nm_avatar_default_description), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)) },
                         shape = RoundedCornerShape(16.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
                     )
                     Spacer(Modifier.height(12.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -385,7 +385,7 @@ fun AvatarStudioScreen(onBack: () -> Unit, onOpenSoul: () -> Unit, onOpenMediaMo
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
                         )
-                        Text(stringResource(R.string.nm_avatar_change), fontSize = 12.sp, color = MuseTones.action, fontWeight = FontWeight.Medium)
+                        Text(stringResource(R.string.nm_avatar_change), fontSize = 12.sp, color = MuseTones.accent, fontWeight = FontWeight.Medium)
                     }
                     if (error != null) {
                         Spacer(Modifier.height(6.dp))
@@ -543,7 +543,7 @@ private fun CandidateTile(slot: AvatarStudio.Slot, index: Int, selected: Boolean
             .aspectRatio(1f)
             .clip(shape)
             .background(MuseTones.fill)
-            .then(if (selected) Modifier.border(3.dp, MuseTones.action, shape) else Modifier)
+            .then(if (selected) Modifier.border(3.dp, MuseTones.accent, shape) else Modifier)
             .selectable(selected = selected, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -569,7 +569,7 @@ private fun CandidateTile(slot: AvatarStudio.Slot, index: Int, selected: Boolean
                 Spacer(Modifier.height(6.dp))
                 Text(slot.message, fontSize = 11.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 3)
                 Spacer(Modifier.height(4.dp))
-                Text(stringResource(R.string.nm_avatar_retry), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MuseTones.action)
+                Text(stringResource(R.string.nm_avatar_retry), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MuseTones.accent)
             }
             AvatarStudio.Slot.Empty -> {}
         }

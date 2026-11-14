@@ -45,9 +45,9 @@ import java.util.concurrent.atomic.AtomicReference
  * One task on the phone's screen, start to finish: screenshot → screen model → one action →
  * again, until the model says it is done, the user says stop, or the step budget runs out.
  *
- * Perception is the screenshot alone. The accessibility service performs the gestures and
- * takes the screenshot; the only node it ever touches is the field that has the cursor, to
- * type into it — and to refuse when that field is a password field.
+ * The screen model receives screenshots. Locally, accessibility also reads the focused
+ * field for typing and nearby labels through ScreenWords when checking a tap for risk.
+ * These checks are heuristic and can miss a sensitive field or action.
  *
  * Runs on the sandbox worker thread that carries the `nanomuse-hands` call, so everything here
  * blocks; the capsule's buttons arrive from the main thread through flags and latches.
@@ -60,7 +60,7 @@ class HandsOperator(private val context: Context) {
         /** A cap on steps for callers that want one; 0 (the default) means the run goes on until the task is done, the person stops it, or the time limit. */
         val maxSteps: Int = DEFAULT_MAX_STEPS,
         val sessionId: String? = null,
-        val agentName: String = "nanoMuse",
+        val agentName: String = "TAMA AI",
         val language: String = "the user's language",
     )
 

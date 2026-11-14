@@ -163,7 +163,7 @@ class HubClient(
     private fun connect() {
         if (stopped) return
         onState(false, "connecting")
-        val req = Request.Builder().url(url).header("Authorization", "Bearer $key").header("User-Agent", "nanoMuse-Android/${Hub.VERSION}").build()
+        val req = Request.Builder().url(url).header("Authorization", "Bearer $key").header("User-Agent", "TAMA-AI-Android/${Hub.VERSION}").build()
         ws = http.newWebSocket(req, listener)
     }
 

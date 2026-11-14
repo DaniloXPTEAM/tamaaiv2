@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- nanoMuse: strings added on top of upstream; kept in their own file so an
+<!-- TAMA AI: strings added on top of upstream; kept in their own file so an
      upstream pull never touches them. Anything missing here falls back to English. -->
 <resources>
     <string name="nm_about_build">Binaan ini</string>
@@ -7,7 +7,7 @@
     <string name="nm_about_upstream">Berasaskan OpenMinis 1.13</string>
     <string name="nm_about_upstream_detail">GPL-3.0 · diubah suai sejak 2026-09-24 · sumber di GitHub</string>
     <string name="nm_about_trademark">Tidak berkaitan dengan Meta</string>
-    <string name="nm_about_trademark_detail">Muse ialah tanda dagangan Meta Platforms, Inc. nanoMuse ialah projek perisian bebas yang berasingan.</string>
+    <string name="nm_about_trademark_detail">Muse ialah tanda dagangan Meta Platforms, Inc. TAMA AI ialah projek perisian bebas yang berasingan.</string>
 
     <!-- Chat header -->
     <string name="nm_avatar_content_description">Ejen anda. Ketik untuk menukar nama, ikon atau gayanya.</string>
@@ -22,26 +22,26 @@
     <string name="nm_star_action">Beri bintang di GitHub</string>
     <string name="nm_star_later">Bukan sekarang</string>
     <string name="nm_star_done">Sudah saya beri bintang</string>
-    <string name="nm_star_signed_in">Selamat datang. nanoMuse percuma, sumber terbuka dan bukan untuk keuntungan: ejen peribadi untuk sesiapa yang menjalankannya. Jika ia bermakna bagi anda, bintang di GitHub ialah cara orang seterusnya menjumpainya.</string>
+    <string name="nm_star_signed_in">Selamat datang. TAMA AI percuma, sumber terbuka dan bukan untuk keuntungan: ejen peribadi untuk sesiapa yang menjalankannya. Jika ia bermakna bagi anda, bintang di GitHub ialah cara orang seterusnya menjumpainya.</string>
     <plurals name="nm_star_tasks">
-        <item quantity="other">%1$d tugas selesai. Jika nanoMuse berguna, bintang di GitHub membantu orang seterusnya menjumpainya.</item>
+        <item quantity="other">%1$d tugas selesai. Jika TAMA AI berguna, bintang di GitHub membantu orang seterusnya menjumpainya.</item>
     </plurals>
-    <string name="nm_star_days_used_week">Seminggu bersama nanoMuse. Jika ia sudah ada tempat dalam hari anda, bintang di GitHub membantu orang seterusnya menjumpainya.</string>
-    <string name="nm_star_days_used_month">Sebulan bersama nanoMuse. Jika ia sudah menjadi sebahagian daripada rutin anda, bintang di GitHub memberitahu orang lain bahawa ia patut dicuba.</string>
+    <string name="nm_star_days_used_week">Seminggu bersama TAMA AI. Jika ia sudah ada tempat dalam hari anda, bintang di GitHub membantu orang seterusnya menjumpainya.</string>
+    <string name="nm_star_days_used_month">Sebulan bersama TAMA AI. Jika ia sudah menjadi sebahagian daripada rutin anda, bintang di GitHub memberitahu orang lain bahawa ia patut dicuba.</string>
     <plurals name="nm_star_days_used">
-        <item quantity="other">%1$d hari bersama nanoMuse. Jika ia sudah ada tempat dalam hari anda, bintang di GitHub membantu orang seterusnya menjumpainya.</item>
+        <item quantity="other">%1$d hari bersama TAMA AI. Jika ia sudah ada tempat dalam hari anda, bintang di GitHub membantu orang seterusnya menjumpainya.</item>
     </plurals>
-    <string name="nm_star_goal_done">Matlamat tercapai. Jika nanoMuse membantu anda sampai ke situ, bintang di GitHub memberitahu orang yang membinanya.</string>
-    <string name="nm_star_new_look">Wajah baharu, dilukis untuk anda. Jika anda suka hala tuju nanoMuse, bintang di GitHub membantu lebih ramai orang menjumpainya.</string>
-    <string name="nm_star_exhausted">Peruntukan percuma sudah habis. Terima kasih kerana sampai sejauh ini. Jika nanoMuse layak menerimanya, bintang di GitHub mengekalkan projek ini dalam pandangan orang seterusnya.</string>
+    <string name="nm_star_goal_done">Matlamat tercapai. Jika TAMA AI membantu anda sampai ke situ, bintang di GitHub memberitahu orang yang membinanya.</string>
+    <string name="nm_star_new_look">Wajah baharu, dilukis untuk anda. Jika anda suka hala tuju TAMA AI, bintang di GitHub membantu lebih ramai orang menjumpainya.</string>
+    <string name="nm_star_exhausted">Peruntukan percuma sudah habis. Terima kasih kerana sampai sejauh ini. Jika TAMA AI layak menerimanya, bintang di GitHub mengekalkan projek ini dalam pandangan orang seterusnya.</string>
     <string name="nm_chat_menu_rename">Namakan semula sembang</string>
 
     <!-- Foreground-service notification title while no tool is running -->
     <string name="nm_notif_working">%1$s sedang bekerja</string>
 
     <!-- First conversation: the scripted opening (see io.github.nanomuse.onboarding) -->
-    <string name="nm_intro_hello">Hai, saya nanoMuse, pembantu yang tinggal di telefon anda. Biar saya ambil alih beberapa perkara daripada anda.</string>
-    <string name="nm_intro_how_i_work">Sedikit tentang cara saya bekerja:\n\n- Saya ada komputer sendiri (kotak pasir Linux dan pelayar), jadi saya boleh menjalankan perintah, membuka laman web dan mengisi borang.\n- Saya boleh membaca dan menyusun fail serta foto yang anda lekapkan untuk saya, dan menguruskan peringatan serta tugas berjadual.\n- Sebelum sebarang langkah yang penting, saya tanya anda dahulu.\n- Semuanya berjalan di telefon ini. Mesej anda pergi ke model yang anda tetapkan; dengan nanoMuse Cloud, perbualan ini turut mengikut anda ke peranti lain; boleh dimatikan di Kawalan data.</string>
+    <string name="nm_intro_hello">Hai, saya TAMA AI, pembantu yang tinggal di telefon anda. Biar saya ambil alih beberapa perkara daripada anda.</string>
+    <string name="nm_intro_how_i_work">Sedikit tentang cara saya bekerja:\n\n- Saya ada komputer sendiri (kotak pasir Linux dan pelayar), jadi saya boleh menjalankan perintah, membuka laman web dan mengisi borang.\n- Saya boleh membaca dan menyusun fail serta foto yang anda lekapkan untuk saya, dan menguruskan peringatan serta tugas berjadual.\n- Sebelum sebarang langkah yang penting, saya tanya anda dahulu.\n- Semuanya berjalan di telefon ini. Mesej anda pergi ke model yang anda tetapkan; dengan TAMA AI Cloud, perbualan ini turut mengikut anda ke peranti lain; boleh dimatikan di Kawalan data.</string>
     <string name="nm_intro_ask_name">Sebelum kita mula, apa patut saya panggil anda?</string>
 
     <!-- First conversation: the name chooser -->
@@ -196,7 +196,7 @@
     <string name="nm_risk_class_outbound">Hantar</string>
     <string name="nm_risk_class_money">Bayar</string>
     <string name="nm_risk_class_install">Pasang</string>
-    <string name="nm_grants_header">Kelulusan yang diingati nanoMuse</string>
+    <string name="nm_grants_header">Kelulusan yang diingati TAMA AI</string>
     <string name="nm_grants_empty">Belum ada yang diingati</string>
     <string name="nm_grants_revoke">Batalkan</string>
     <string name="nm_grants_revoke_confirm">Batalkan kelulusan ini? Kali seterusnya ia muncul, anda akan ditanya semula.</string>
@@ -204,7 +204,7 @@
     <string name="nm_risk_remember_money_note">Disahkan dengan kunci skrin anda. Pembayaran dalam satu aplikasi atau laman ini kemudiannya berjalan tanpa kad; disenaraikan dahulu di bawah Tetapan → Kebenaran, tempat anda boleh membatalkannya bila-bila masa.</string>
     <string name="nm_risk_remember_money_needs_lock">Untuk mengingati pembayaran, tetapkan kunci skrin dahulu (Tetapan → Keselamatan): mengingati satu pembayaran disahkan dengannya.</string>
     <string name="nm_risk_lock_title">Sahkan bahawa ini anda</string>
-    <string name="nm_risk_lock_subtitle">nanoMuse akan mengingati kelulusan pembayaran untuk %1$s dan menjalankannya tanpa bertanya.</string>
+    <string name="nm_risk_lock_subtitle">TAMA AI akan mengingati kelulusan pembayaran untuk %1$s dan menjalankannya tanpa bertanya.</string>
     <string name="nm_risk_remembered_toast">Diingati · lihat Tetapan → Kebenaran untuk membatalkan</string>
     <string name="nm_risk_tier_highest">Berjalan tanpa bertanya · pembayaran</string>
     <string name="nm_risk_tier_confirm">Diingati daripada kad · padam dan hantar</string>
@@ -275,7 +275,7 @@
     <string name="nm_sysfiles_open_memory">Buka memori</string>
     <string name="nm_sysfiles_footer">Fail-fail ini milik ejen: siapa dirinya, apa yang diketahuinya tentang anda, apa yang diingatinya, apa yang ditulisnya untuk anda dan bila ia bangun. Ia disimpan dalam storan telefon anda; ejen membaca dan menyuntingnya dari shellnya di bawah /var/minis/memory, dan anda boleh menyunting apa sahaja di sini.</string>
     <string name="nm_sysfile_about_lead">Tentang fail ini.</string>
-    <string name="nm_sysfile_about_soul">Ini persona ejen: nilai dan tabiat yang cuba dipegangnya dalam setiap perbualan, namanya, dan gaya jawapannya. Ia bermula daripada templat yang disertakan bersama nanoMuse; ejen mungkin memperhalusinya dari semasa ke semasa dan memberitahu anda apabila berbuat demikian. Anda boleh menyuntingnya bila-bila masa. Nota ini bukan sebahagian daripada fail.</string>
+    <string name="nm_sysfile_about_soul">Ini persona ejen: nilai dan tabiat yang cuba dipegangnya dalam setiap perbualan, namanya, dan gaya jawapannya. Ia bermula daripada templat yang disertakan bersama TAMA AI; ejen mungkin memperhalusinya dari semasa ke semasa dan memberitahu anda apabila berbuat demikian. Anda boleh menyuntingnya bila-bila masa. Nota ini bukan sebahagian daripada fail.</string>
     <string name="nm_sysfile_about_user">Ejen menyimpan fail ini sebagai nota kerjanya tentang anda: nama anda, cara anda suka dipanggil, zon waktu anda, dan konteks yang diperlukannya untuk berguna, seperti apa yang sedang anda usahakan. Ia mengisinya dari semasa ke semasa daripada perbualan anda dan membacanya pada permulaan setiap perbualan. Ia mencerminkan pemahaman semasa ejen, jadi ia mungkin tidak lengkap atau lapuk. Anda boleh menyunting apa sahaja di sini, dan ejen akan mengikut apa yang anda tulis. Nota ini bukan sebahagian daripada fail.</string>
     <string name="nm_sysfile_about_memory">Nota kekal yang disimpan ejen merentas perbualan: perkara yang patut diingat, dalam kata-katanya sendiri, serta apa sahaja yang anda import daripada pembantu lain. Diari hari demi hari disimpan di sebelahnya dalam folder memori. Dibaca pada permulaan setiap perbualan apabila memori dihidupkan. Nota ini bukan sebahagian daripada fail.</string>
     <string name="nm_sysfile_about_feed">Satu perenggan yang mengemudi suapan: apa yang anda mahu lebih, apa yang perlu dilangkau, berapa panjang catatan sepatutnya. Rutin suapan harian membacanya sebelum menulis. Nota ini bukan sebahagian daripada fail.</string>
@@ -324,7 +324,7 @@
     <string name="nm_avatar_menu_regenerate_moods">Lukis semula ekspresi</string>
     <string name="nm_avatar_menu_reset">Kembali ke wajah terbina dalam</string>
     <string name="nm_avatar_menu_export">Simpan ke galeri</string>
-    <string name="nm_avatar_export_done">Disimpan ke galeri di bawah nanoMuse/avatar: imej %1$d, klip %2$d</string>
+    <string name="nm_avatar_export_done">Disimpan ke galeri di bawah TAMA AI/avatar: imej %1$d, klip %2$d</string>
     <string name="nm_avatar_export_failed">Tiada apa yang dapat disimpan ke galeri</string>
     <string name="nm_avatar_mood_idle">Berehat</string>
     <string name="nm_avatar_mood_working">Bekerja</string>
@@ -365,11 +365,11 @@
     <string name="nm_avatar_pick_body">Anda boleh melukis empat lagi bila-bila masa; yang lama disimpan sehingga anda berbuat demikian.</string>
     <string name="nm_avatar_use_this">Guna yang ini</string>
     <string name="nm_avatar_use_this_hint">Ekspresi (bekerja, menunggu, selesai, alamak) dilukis daripadanya selepas ini, di latar belakang.</string>
-    <string name="nm_avatar_footer">Gambar berada dalam storan milik aplikasi pada telefon ini, yang tidak dapat dibuka oleh pengurus fail. “Simpan ke galeri” dalam menu menyalin wajah, ekspresinya dan klipnya ke Pictures dan Movies di bawah nanoMuse/avatar. Setiap wajah memerlukan lima imej daripada penyedia anda: satu yang anda pilih dan empat ekspresi.</string>
+    <string name="nm_avatar_footer">Gambar berada dalam storan milik aplikasi pada telefon ini, yang tidak dapat dibuka oleh pengurus fail. “Simpan ke galeri” dalam menu menyalin wajah, ekspresinya dan klipnya ke Pictures dan Movies di bawah TAMA AI/avatar. Setiap wajah memerlukan lima imej daripada penyedia anda: satu yang anda pilih dan empat ekspresi.</string>
     <string name="nm_own_clip_title">Klip anda sendiri</string>
     <string name="nm_own_clip_body">Video pendek milik anda dimainkan sebagai wajah semasa rehat, dan mood lain turut menggunakannya. MP4 atau MOV dengan video H.264, paling lama 15 saat dan 30 MB; dimainkan tanpa bunyi, berulang.</string>
     <string name="nm_own_clip_on">Klip anda aktif dan dimainkan untuk setiap mood; di tempat imej pegun ditunjukkan, gambar yang dilukis kekal digunakan. “Wajah lalai” membuangnya.</string>
-    <string name="nm_own_clip_local">Klip kekal di telefon ini. Ia tidak dimuat naik ke nanoMuse Cloud dan tidak disegerakkan ke peranti anda yang lain.</string>
+    <string name="nm_own_clip_local">Klip kekal di telefon ini. Ia tidak dimuat naik ke TAMA AI Cloud dan tidak disegerakkan ke peranti anda yang lain.</string>
     <string name="nm_own_clip_choose">Pilih klip</string>
     <string name="nm_own_clip_replace">Ganti klip</string>
     <string name="nm_own_clip_default">Wajah lalai</string>
@@ -387,7 +387,7 @@
     <string name="nm_a11y_own_clip_preview">Pratonton klip anda</string>
 
     <!-- First run (Muse-style welcome; the steps are OpenMinis' provider and model screens) -->
-    <string name="nm_setup_title">Selamat datang ke nanoMuse</string>
+    <string name="nm_setup_title">Selamat datang ke TAMA AI</string>
     <string name="nm_setup_step_models">Pilih model</string>
     <string name="nm_setup_step_models_sub">Model yang disediakan penyedia anda disenaraikan untuk anda; pilih sehingga tiga</string>
     <string name="nm_setup_step_start">Kenali %1$s</string>
@@ -403,7 +403,7 @@
     <string name="nm_settings_no_model">Belum ada model</string>
     <string name="nm_settings_no_model_sub">Tambah penyedia dan pilih modelnya</string>
     <string name="nm_settings_change_model">Tukar</string>
-    <string name="nm_settings_version">nanoMuse %1$s (%2$d)</string>
+    <string name="nm_settings_version">TAMA AI %1$s (%2$d)</string>
     <string name="nm_version_title">Versi</string>
     <string name="nm_version_checking">Menyemak keluaran terkini…</string>
     <string name="nm_version_have">Terkini %1$s, anda sudah ada</string>
@@ -483,8 +483,8 @@
     <string name="nm_avatar_share_title">Kongsi avatar saya</string>
     <string name="nm_avatar_share_subtitle">Pilih satu kad. Ia dihantar melalui helaian kongsi sistem.</string>
     <string name="nm_avatar_share_system">Kongsi</string>
-    <string name="nm_avatar_share_bubble">Hai, saya %1$s, ejen AI peribadi. Kenali nanoMuse: sumber terbuka, berjalan di telefon anda.</string>
-    <string name="nm_avatar_share_tagline">Ejen AI peribadi anda, sumber terbuka · github.com/nano-muse/nanoMuse</string>
+    <string name="nm_avatar_share_bubble">Hai, saya %1$s, ejen AI peribadi. Kenali TAMA AI: sumber terbuka, berjalan di telefon anda.</string>
+    <string name="nm_avatar_share_tagline">Ejen AI peribadi anda, sumber terbuka · github.com/nano-muse/TAMA AI</string>
 
     <!-- 0.1.10 · Motion -->
     <string name="nm_media_title">Model imej &amp; video</string>
@@ -526,16 +526,16 @@
     <string name="nm_hands_this_phone">telefon ini</string>
     <string name="nm_hands_intro">Untuk aplikasi tanpa API, ia menggunakan telefon seperti anda: tangkapan skrin, kemudian ketikan, taipan dan leretan. Kemahiran, perintah dan pelayar didahulukan; skrin ialah pilihan terakhir. Mati sehingga anda menghidupkannya.</string>
     <string name="nm_hands_switch">Benarkan ejen menggunakan skrin</string>
-    <string name="nm_hands_switch_footer">Semasa ia bekerja, satu kapsul di bahagian atas skrin menunjukkan setiap langkah dan butang Berhenti. Log masuk, kata laluan dan kod sentiasa diserahkan kepada anda.</string>
+    <string name="nm_hands_switch_footer">Kapsul menunjukkan setiap langkah dan butang Henti. Ambil alih untuk log masuk, kata laluan dan kod. Tangkapan skrin mungkin mengandungi maklumat sensitif.</string>
     <string name="nm_hands_status_off">Mati; ejen akan memberitahu apabila sesuatu tugas memerlukan skrin</string>
     <string name="nm_hands_status_ready">Sedia</string>
     <string name="nm_hands_status_missing">Hidup, tetapi ada yang masih belum lengkap di bawah</string>
     <string name="nm_hands_status_working">Sedang bekerja di skrin sekarang</string>
     <string name="nm_hands_stop_run">Hentikan apa yang sedang dilakukannya</string>
     <string name="nm_hands_section_needs">Apa yang diperlukannya</string>
-    <string name="nm_hands_needs_footer">Perkhidmatan kebolehcapaian mengambil tangkapan skrin dan melakukan gerak isyarat; ia tidak membaca kandungan skrin. Melukis di atas aplikasi lain adalah untuk kapsul.</string>
+    <string name="nm_hands_needs_footer">Perkhidmatan kebolehcapaian menangkap skrin, melakukan gerak isyarat dan boleh membaca label berhampiran sentuhan untuk menyemak risiko. Tangkapan dihantar kepada model skrin yang ditetapkan. Tindanan memaparkan kapsul.</string>
     <string name="nm_hands_need_a11y">Perkhidmatan kebolehcapaian</string>
-    <string name="nm_hands_need_a11y_fix">Hidupkan nanoMuse di bawah Aplikasi dipasang dalam tetapan kebolehcapaian</string>
+    <string name="nm_hands_need_a11y_fix">Hidupkan TAMA AI di bawah Aplikasi dipasang dalam tetapan kebolehcapaian</string>
     <string name="nm_hands_need_overlay">Paparkan di atas aplikasi lain</string>
     <string name="nm_hands_need_overlay_fix">Benarkan, supaya kapsul dengan Berhenti boleh dipaparkan</string>
     <string name="nm_hands_need_model">Model yang boleh melihat gambar</string>
@@ -552,15 +552,15 @@
     <string name="nm_hands_why_default">lalai tangan di bawah kunci anda sendiri</string>
     <string name="nm_hands_why_chat">model sembang yang anda pilih</string>
     <string name="nm_hands_why_group">yang pertama dalam kumpulan lalai anda yang boleh melihat</string>
-    <string name="nm_hands_why_menu">model skrin nanoMuse Cloud</string>
+    <string name="nm_hands_why_menu">model skrin TAMA AI Cloud</string>
     <string name="nm_hands_why_vision_group">Kumpulan Visi anda</string>
     <string name="nm_hands_why_any">satu-satunya model didayakan yang boleh melihat</string>
     <string name="nm_hands_section_rules">Cara ia bertindak</string>
     <string name="nm_hands_rule_ladder">Skrin yang terakhir: kemahiran, perintah atau pelayar dahulu.</string>
-    <string name="nm_hands_rule_secrets">Tidak pernah menaip kata laluan, kod atau nombor kad; ia menyerahkan telefon kepada anda.</string>
-    <string name="nm_hands_rule_approvals">Membayar, menghantar, menyiarkan atau memadam menunggu kelulusan anda, seperti dalam shell dan pelayar.</string>
-    <string name="nm_hands_rule_stop">Berhenti sentiasa ada di skrin; tiada apa-apa diteruskan selepasnya.</string>
-    <string name="nm_hands_rule_screenshots">Tangkapan skrin setiap langkah disimpan bersama perbualan dan hanya dihantar ke model anda sendiri.</string>
+    <string name="nm_hands_rule_secrets">Aplikasi cuba menyerahkan kawalan kepada anda untuk medan kata laluan, kod dan kad. Pengesanan boleh terlepas medan; gunakan Henti jika tidak pasti.</string>
+    <string name="nm_hands_rule_approvals">Tindakan bayar, hantar, siar dan padam yang dikenal pasti disemak untuk kelulusan. Kebenaran terdahulu mungkin terpakai dan pengesanan boleh terlepas tindakan.</string>
+    <string name="nm_hands_rule_stop">Berhenti meminta tugas dihentikan. Tindakan yang sudah berjalan mungkin selesai.</string>
+    <string name="nm_hands_rule_screenshots">Tangkapan skrin boleh disimpan pada telefon ini dan dihantar kepada model skrin yang ditetapkan, yang mungkin menggunakan penyedia jauh. Tangkapan boleh mengandungi maklumat sensitif.</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">Langkah %1$d</string>
@@ -573,7 +573,7 @@
     <string name="nm_hands_protected_screen">Skrin ini dilindungi dan tidak boleh dibaca. Selesaikan bahagian ini sendiri, kemudian ketik Teruskan.</string>
     <string name="nm_hands_secret_field">Medan kata laluan atau kod: sila isi sendiri, kemudian ketik Teruskan.</string>
     <string name="nm_hands_approval_title">Menunggu kelulusan anda</string>
-    <string name="nm_hands_approval_detail">Ketik “%1$s”: sahkan dalam nanoMuse (ia meminta kunci skrin anda).</string>
+    <string name="nm_hands_approval_detail">Ketik “%1$s”: sahkan dalam TAMA AI (ia meminta kunci skrin anda).</string>
     <string name="nm_hands_approval_here">Ketik “%1$s”?</string>
     <string name="nm_hands_allow_once">Benarkan</string>
     <string name="nm_hands_deny">Tolak</string>
@@ -604,10 +604,10 @@
     <!-- Reach (0.1.13): the phone drives your computer -->
     <string name="nm_pc_title">Komputer</string>
     <string name="nm_pc_none_short">Tiada</string>
-    <string name="nm_pc_intro">Sebut di sini, dilakukan di komputer anda: perintah, fail, halaman dalam pelayarnya, pandangan skrinnya, atau satu tugas penuh untuk nanoMuse di sana. Telefon mengendalikan komputer, bukan sebaliknya; setiap kelulusan diputuskan di sini dahulu.</string>
-    <string name="nm_pc_hub_title">Cara mudah: nanoMuse Desktop, akaun yang sama</string>
-    <string name="nm_pc_hub_body">Pasang nanoMuse Desktop di komputer dan log masuk dengan akaun telefon ini; ia muncul di bawah Akaun → Peranti dalam beberapa saat.</string>
-    <string name="nm_pc_hub_download">Dapatkan nanoMuse Desktop</string>
+    <string name="nm_pc_intro">Sebut di sini, dilakukan di komputer anda: perintah, fail, halaman dalam pelayarnya, pandangan skrinnya, atau satu tugas penuh untuk TAMA AI di sana. Telefon mengendalikan komputer, bukan sebaliknya; setiap kelulusan diputuskan di sini dahulu.</string>
+    <string name="nm_pc_hub_title">Cara mudah: TAMA AI Desktop, akaun yang sama</string>
+    <string name="nm_pc_hub_body">Pasang TAMA AI Desktop di komputer dan log masuk dengan akaun telefon ini; ia muncul di bawah Akaun → Peranti dalam beberapa saat.</string>
+    <string name="nm_pc_hub_download">Dapatkan TAMA AI Desktop</string>
     <string name="nm_pc_hub_account">Akaun dan peranti</string>
     <string name="nm_pc_section_paired">Komputer pada akaun ini</string>
     <string name="nm_pc_none">Belum ada komputer</string>
@@ -616,11 +616,11 @@
     <string name="nm_pc_last_seen">dilihat %1$s</string>
     <string name="nm_pc_offline">luar talian</string>
     <string name="nm_pc_online">dalam talian</string>
-    <string name="nm_pc_account_none">Telefon ini belum log masuk ke nanoMuse Cloud; log masuk dahulu, kemudian komputer dengan akaun yang sama.</string>
+    <string name="nm_pc_account_none">Telefon ini belum log masuk ke TAMA AI Cloud; log masuk dahulu, kemudian komputer dengan akaun yang sama.</string>
     <string name="nm_pc_account_hint">Telefon ini log masuk sebagai %1$s; komputer mesti log masuk dengan akaun yang sama.</string>
     <string name="nm_pc_checking">Menyemak…</string>
     <string name="nm_pc_answering">%1$s menjawab</string>
-    <string name="nm_pc_not_answering">%1$s tidak menjawab. Adakah nanoMuse Desktop masih berjalan di sana?</string>
+    <string name="nm_pc_not_answering">%1$s tidak menjawab. Adakah TAMA AI Desktop masih berjalan di sana?</string>
 
     <!-- the approval card -->
     <string name="nm_risk_desc_on_computer">Di komputer “%1$s”, bukan di telefon ini.</string>
@@ -639,16 +639,16 @@
     <string name="nm_risk_class_remote">Kawalan jauh</string>
     <string name="nm_hub_remote_reason">%1$s boleh mengendalikan telefon ini</string>
 
-    <!-- nanoMuse Cloud: sign in with a phone/e-mail code for a starter allowance -->
+    <!-- TAMA AI Cloud: sign in with a phone/e-mail code for a starter allowance -->
     <string name="nm_setup_own_key">Saya ada kunci API sendiri</string>
 
-    <!-- nanoMuse: the first-run pages -->
+    <!-- TAMA AI: the first-run pages -->
     <string name="nm_welcome_tagline">Ejen peribadi sumber terbuka untuk setiap peranti yang anda miliki.</string>
     <string name="nm_welcome_email">Log masuk (percuma)</string>
     <string name="nm_welcome_fine_print">Satu akaun menyatukan peranti anda dan membawa penggunaan model percuma; tiada apa-apa dicaj. Kunci API anda sendiri boleh ditambah sejurus selepas itu.</string>
     <string name="nm_setup_source_title">Model mana yang menjawab?</string>
     <string name="nm_setup_source_sub">Akaun anda sudah membawa satu. Anda juga boleh menambah kunci API anda sendiri dan bertukar bila-bila masa.</string>
-    <string name="nm_setup_source_cloud">Guna model nanoMuse Cloud</string>
+    <string name="nm_setup_source_cloud">Guna model TAMA AI Cloud</string>
     <string name="nm_setup_source_cloud_sub">DeepSeek untuk sembang dan Qwen untuk tangan, dengan peruntukan percuma setiap akaun yang dibayar oleh pembangun. Tiada apa-apa perlu ditetapkan.</string>
     <string name="nm_setup_source_own_sub">OpenAI, Anthropic, DeepSeek, Bailian dan titik akhir serasi OpenAI yang lain. Kunci kekal di telefon ini.</string>
     <string name="nm_setup_source_fine_print">Kedua-duanya tidak bersaing: model Cloud kekal tersedia, dan setiap kumpulan model memilih modelnya sendiri.</string>
@@ -661,15 +661,15 @@
     <string name="nm_welcome_feat_hands">Tangan: ia menggunakan telefon anda</string>
     <string name="nm_welcome_feat_hands_sub">Menempah kereta api, memesan makanan, mencari sesuatu dalam aplikasi; anda memerhati, dan boleh menghentikannya bila-bila masa</string>
     <string name="nm_welcome_feat_reach">Capaian: komputer anda, dari sini</string>
-    <string name="nm_welcome_feat_reach_sub">Pasang nanoMuse Desktop pada mesin Mac, Windows atau Linux, log masuk dengan akaun yang sama, dan beri ia kerja dari telefon</string>
-    <string name="nm_welcome_notice">nanoMuse ialah projek komuniti sumber terbuka bukan untuk keuntungan: percuma, selamanya. Model datang dengan peruntukan percuma yang dibayar oleh pembangun; selepas itu, kunci anda sendiri. Tiada apa-apa dijual; apa yang disimpan relay ada dalam dasar privasi, dan Tetapan → Kawalan data adalah milik anda.</string>
+    <string name="nm_welcome_feat_reach_sub">Pasang TAMA AI Desktop pada mesin Mac, Windows atau Linux, log masuk dengan akaun yang sama, dan beri ia kerja dari telefon</string>
+    <string name="nm_welcome_notice">TAMA AI ialah projek komuniti sumber terbuka bukan untuk keuntungan: percuma, selamanya. Model datang dengan peruntukan percuma yang dibayar oleh pembangun; selepas itu, kunci anda sendiri. Tiada apa-apa dijual; apa yang disimpan relay ada dalam dasar privasi, dan Tetapan → Kawalan data adalah milik anda.</string>
     <string name="nm_welcome_hands_title">Benarkan ia menggunakan telefon anda</string>
     <string name="nm_welcome_hands_sub">Dengan dua kebenaran, ia boleh membuka aplikasi, mengetik dan menaip untuk anda. Satu kapsul dengan setiap langkah dan butang Berhenti kekal di skrin; log masuk, kata laluan dan kod sentiasa milik anda.</string>
     <string name="nm_welcome_hands_turn_on">Hidupkan</string>
     <string name="nm_welcome_skip">Langkau buat masa ini</string>
     <string name="nm_welcome_hands_fine_print">Semua yang lain berfungsi tanpa ini. Ia ada di bawah Tetapan → Tangan bila-bila anda mahu.</string>
     <string name="nm_welcome_meet_fine_print">Sebelum apa-apa yang tidak boleh ditarik balik (memadam, menghantar, membayar) ia berhenti dan bertanya kepada anda dahulu.</string>
-    <string name="nm_cloud_signin_title">Mulakan dengan nanoMuse Cloud</string>
+    <string name="nm_cloud_signin_title">Mulakan dengan TAMA AI Cloud</string>
     <string name="nm_cloud_signin_subtitle">Kod ke telefon atau peti masuk anda, atau kata laluan anda, setelah anda menetapkannya.</string>
     <string name="nm_cloud_mode_code">Dengan kod</string>
     <string name="nm_cloud_mode_password">Dengan kata laluan</string>
@@ -694,7 +694,7 @@
     <string name="nm_cloud_server_https">Guna https untuk pelayan di luar rangkaian anda sendiri. http memadai untuk alamat peribadi (10.x, 192.168.x, 172.16-31.x, localhost, nama .local atau .ts.net).</string>
     <string name="nm_lan_only_https">http:// biasa hanya berfungsi untuk alamat dalam rangkaian anda sendiri (10.x, 172.16-31.x, 192.168.x, nama .local); gunakan https:// untuk %1$s.</string>
     <string name="nm_cloud_server_unreachable">Tiada relay menjawab di %1$s. Semak alamat dan pastikan relay sedang berjalan.</string>
-    <string name="nm_cloud_server_default">Kembali ke nanoMuse Cloud</string>
+    <string name="nm_cloud_server_default">Kembali ke TAMA AI Cloud</string>
     <string name="nm_cloud_server_row">Pelayan</string>
     <string name="nm_cloud_server_change">Tukar</string>
     <string name="nm_cloud_server_change_confirm">Kunci telefon ini milik pelayan semasa. Log keluar di sini dahulu, kemudian log masuk ke pelayan lain dari skrin log masuk.</string>
@@ -715,11 +715,11 @@
     <string name="nm_cloud_used_today_open">Hari ini %1$s</string>
     <string name="nm_cloud_refresh">Segarkan baki</string>
     <string name="nm_cloud_refreshing">Menyegarkan…</string>
-    <string name="nm_cloud_how_it_works">nanoMuse Cloud ialah penyedia biasa dalam aplikasi ini: modelnya disenaraikan di bawah Penyedia dan boleh digabungkan dengan model anda sendiri dalam satu kumpulan model.</string>
+    <string name="nm_cloud_how_it_works">TAMA AI Cloud ialah penyedia biasa dalam aplikasi ini: modelnya disenaraikan di bawah Penyedia dan boleh digabungkan dengan model anda sendiri dalam satu kumpulan model.</string>
     <string name="nm_cloud_open_provider">Tetapan penyedia</string>
     <string name="nm_cloud_sign_out">Log keluar</string>
     <string name="nm_cloud_sign_out_sub">Kunci telefon ini dibatalkan dan penyedia Cloud dibuang; peruntukan kekal dengan akaun anda.</string>
-    <string name="nm_cloud_sign_out_confirm">Penyedia nanoMuse Cloud dan modelnya akan dibuang dari telefon ini.</string>
+    <string name="nm_cloud_sign_out_confirm">Penyedia TAMA AI Cloud dan modelnya akan dibuang dari telefon ini.</string>
     <string name="nm_cloud_row_remaining">%1$s berbaki</string>
     <string name="nm_cloud_row_sign_in">Log masuk</string>
     <string name="nm_cloud_err_bad_identifier">Itu tidak kelihatan seperti alamat e-mel.</string>
@@ -737,7 +737,7 @@
     <string name="nm_cloud_err_allowance_abroad">Peruntukan percuma sudah habis. Jemput rakan (+¥%1$s untuk setiap seorang daripada anda) atau tambah kunci anda sendiri di bawah Tetapan → Penyedia; OpenRouter yang paling cepat: satu akaun, satu kunci, bayar ikut guna.</string>
     <string name="nm_cloud_warn_line">Peruntukan percuma hampir habis: ¥%1$s daripada ¥%2$s berbaki. Jemput rakan (+¥%3$s untuk setiap seorang daripada anda) atau tambah kunci anda sendiri, kedua-duanya di bawah Akaun.</string>
     <string name="nm_cloud_err_rate_limited">Terlalu banyak permintaan serentak. Sebentar.</string>
-    <string name="nm_cloud_err_unreachable">Tidak dapat menghubungi nanoMuse Cloud. Semak sambungan.</string>
+    <string name="nm_cloud_err_unreachable">Tidak dapat menghubungi TAMA AI Cloud. Semak sambungan.</string>
     <string name="nm_cloud_err_generic">Ada yang tidak kena.</string>
     <string name="nm_cloud_err_bad_credentials">E-mel atau kata laluan salah.</string>
     <string name="nm_cloud_err_no_password">Akaun ini belum ada kata laluan. Log masuk dengan kod, kemudian tetapkan satu di bawah Akaun.</string>
@@ -753,10 +753,10 @@
     <string name="nm_cloud_err_content_rejected">Semakan kandungan penyedia model menolak permintaan ini. Cuba perkataan lain, atau mulakan sembang baharu jika ia berulang: perkataan yang ditolak mungkin berada lebih awal dalam perbualan.</string>
     <string name="nm_cloud_err_provider_busy">Penyedia model sedang sibuk. Cuba lagi sebentar nanti.</string>
     <string name="nm_cloud_err_provider_busy_wait">Penyedia model sedang sibuk. Cuba lagi dalam %1$s.</string>
-    <string name="nm_cloud_err_model_not_offered">nanoMuse Cloud tidak lagi menawarkan model itu. Pilih yang lain di Tetapan → nanoMuse Cloud.</string>
-    <string name="nm_cloud_err_relay_down">nanoMuse Cloud tidak menjawab. Cuba lagi sebentar nanti.</string>
-    <string name="nm_cloud_err_allowance_paused">Peruntukan percuma di relay ini dijeda buat masa ini, bukan habis. Tambah kunci anda sendiri atau log masuk dengan pelan yang sudah anda bayar, di Tetapan → nanoMuse Cloud. Log masuk, peranti dan baki anda kekal seperti sedia ada.</string>
-    <string name="nm_cloud_err_service_paused">nanoMuse Cloud dijeda oleh pengendalinya buat masa ini; log masuk dan data anda disimpan. Cuba lagi kemudian.</string>
+    <string name="nm_cloud_err_model_not_offered">TAMA AI Cloud tidak lagi menawarkan model itu. Pilih yang lain di Tetapan → TAMA AI Cloud.</string>
+    <string name="nm_cloud_err_relay_down">TAMA AI Cloud tidak menjawab. Cuba lagi sebentar nanti.</string>
+    <string name="nm_cloud_err_allowance_paused">Peruntukan percuma di relay ini dijeda buat masa ini, bukan habis. Tambah kunci anda sendiri atau log masuk dengan pelan yang sudah anda bayar, di Tetapan → TAMA AI Cloud. Log masuk, peranti dan baki anda kekal seperti sedia ada.</string>
+    <string name="nm_cloud_err_service_paused">TAMA AI Cloud dijeda oleh pengendalinya buat masa ini; log masuk dan data anda disimpan. Cuba lagi kemudian.</string>
     <string name="nm_cloud_err_sync_paused">Penyegerakan perbualan di relay ini dijeda buat masa ini; yang tersimpan kekal, dan peranti anda terus berfungsi sendiri.</string>
     <string name="nm_cloud_err_hub_paused">Hubungan antara peranti di relay ini dijeda buat masa ini; setiap peranti terus berfungsi sendiri.</string>
     <string name="nm_refusal_relay_says">Kata relay: %1$s</string>
@@ -800,7 +800,7 @@
     <string name="nm_cloud_invite_share">Kongsi pautan</string>
     <string name="nm_cloud_invite_copy">Salin</string>
     <string name="nm_cloud_invite_copied">Disalin</string>
-    <string name="nm_cloud_invite_share_text">Cuba nanoMuse bersama saya: ejen peribadi sumber terbuka sepenuhnya, percuma digunakan. Daftar dengan kod saya %1$s: %2$s</string>
+    <string name="nm_cloud_invite_share_text">Cuba TAMA AI bersama saya: ejen peribadi sumber terbuka sepenuhnya, percuma digunakan. Daftar dengan kod saya %1$s: %2$s</string>
     <string name="nm_cloud_invite_count">%1$d rakan menyertai</string>
     <string name="nm_cloud_invite_earned">¥%1$s ditambah melalui jemputan</string>
     <string name="nm_cloud_invite_have">Ada kod jemputan?</string>
@@ -841,9 +841,9 @@
     <string name="nm_cloud_ev_contribute_deleted">Kawalan data: perbualan yang disimpan dipadam</string>
     <string name="nm_cloud_ev_contribute_default">Kawalan data: hidup untuk akaun baharu</string>
     <string name="nm_data_title">Kawalan data</string>
-    <string name="nm_data_improve">Bantu perbaiki model AI nanoMuse</string>
+    <string name="nm_data_improve">Bantu perbaiki model AI TAMA AI</string>
     <string name="nm_data_why">Semasa ini dihidupkan, teks sembang tersebut (apa yang anda tulis, apa yang dijawab model dan alat yang dipilihnya untuk dipanggil) turut masuk ke set latihan model terbuka komuniti sendiri: tanpa memori atau SOUL anda (gesaan sistem), tanpa apa yang dikembalikan alat, tanpa gambar dan tanpa identiti anda. Apabila dimatikan, tiada lagi yang masuk; rekod itu sendiri kekal sehingga anda memadamnya. Giliran dengan kunci anda sendiri ada dalam rekod, tidak pernah dalam set latihan.</string>
-    <string name="nm_data_record_why">nanoMuse Cloud menyimpan sepenuhnya setiap giliran sembang anda dengan model-modelnya sebagai rekod akaun anda: apa yang dihantar kepada model, apa yang dijawabnya, alat dan apa yang dikembalikannya, gambar sebagai fail. Mulai aplikasi 1.0.7, giliran yang dijawab dengan kunci anda sendiri turut masuk. Ini data anda: hanya peranti anda dan orang yang mengendalikan relay boleh membacanya.</string>
+    <string name="nm_data_record_why">TAMA AI Cloud menyimpan sepenuhnya setiap giliran sembang anda dengan model-modelnya sebagai rekod akaun anda: apa yang dihantar kepada model, apa yang dijawabnya, alat dan apa yang dikembalikannya, gambar sebagai fail. Mulai aplikasi 1.0.7, giliran yang dijawab dengan kunci anda sendiri turut masuk. Ini data anda: hanya peranti anda dan orang yang mengendalikan relay boleh membacanya.</string>
     <string name="nm_data_record_held">Rekod menyimpan %1$d giliran akaun ini (%2$d dengan kunci anda sendiri), dengan %3$d gambar.</string>
     <string name="nm_data_record_empty">Rekod belum menyimpan apa-apa daripada akaun ini.</string>
     <string name="nm_data_record_keep_days">Relay ini menyimpan satu giliran selama %1$d hari.</string>
@@ -857,7 +857,7 @@
     <string name="nm_data_delete_sub">Mengalih keluar rekod sembang akaun ini dan setiap giliran latihan yang disimpan daripadanya, sama ada suis sedang hidup atau mati. Mematikan suis mengekalkan apa yang disimpan sehingga anda memadamnya di sini.</string>
     <string name="nm_data_delete_confirm">Rekod sembang anda dan giliran latihan yang disimpan akan dialih keluar daripada pelayan. Ini tidak boleh dibuat asal.</string>
     <string name="nm_data_deleted">Dipadam: %1$d giliran rekod, %2$d fail, %3$d giliran latihan.</string>
-    <string name="nm_data_sign_in">Log masuk ke nanoMuse Cloud untuk menggunakannya.</string>
+    <string name="nm_data_sign_in">Log masuk ke TAMA AI Cloud untuk menggunakannya.</string>
     <string name="nm_data_privacy">Dasar privasi</string>
     <string name="nm_data_status_on">Hidup</string>
     <string name="nm_data_status_off">Mati</string>
@@ -905,7 +905,7 @@
     <!-- 0.1.20: the coding agents on the account's computers -->
     <string name="nm_coding_title">Ejen pengekodan</string>
     <string name="nm_coding_intro">Cursor, Codex dan Claude Code di komputer anda: sesi mereka, balasan terakhir mereka, dan mesej kepada mana-mana satu, dari sini. Tiada apa-apa milik mereka disalin ke telefon.</string>
-    <string name="nm_coding_no_computer">Tiada komputer dengan ejen pengekodan dalam talian. Jalankan nanoMuse di komputer tempat Cursor, Codex atau Claude Code dipasang, log masuk dengan akaun ini.</string>
+    <string name="nm_coding_no_computer">Tiada komputer dengan ejen pengekodan dalam talian. Jalankan TAMA AI di komputer tempat Cursor, Codex atau Claude Code dipasang, log masuk dengan akaun ini.</string>
     <string name="nm_coding_account_hint">Telefon ini log masuk sebagai %1$s; komputer mesti menggunakan akaun yang sama.</string>
     <string name="nm_coding_refresh">Segarkan</string>
     <string name="nm_coding_all">Semua</string>
@@ -929,7 +929,7 @@
     <string name="nm_coding_fresh_hint">Perbualan baharu dengan %1$s. Mesej pertama anda memulakannya di komputer.</string>
     <string name="nm_coding_no_transcript">Belum ada yang boleh dibaca dalam sesi ini.</string>
 
-    <!-- nanoMuse: money on the account page, and the community notice -->
+    <!-- TAMA AI: money on the account page, and the community notice -->
     <string name="nm_cloud_spend_member">Ahli · tiada had</string>
     <string name="nm_cloud_spent_total">¥%1$s · $%2$s dibelanjakan kesemuanya, dibayar oleh pembangun</string>
     <string name="nm_cloud_allowance_used">Digunakan ¥%1$s · $%2$s</string>
@@ -939,13 +939,13 @@
     <string name="nm_cloud_tokens_line">%1$s token kesemuanya · %2$s hari ini</string>
     <string name="nm_cloud_notice_title">Percuma, sumber terbuka, bukan untuk keuntungan</string>
     <string name="nm_cloud_notice_closing">Jumpa pepijat, mahu ciri, ada tampalan? Repositori GitHub ialah tempatnya.</string>
-    <string name="nm_cloud_notice">nanoMuse ialah projek komuniti sumber terbuka bukan untuk keuntungan: percuma, selamanya. Model datang dengan peruntukan percuma yang dibayar oleh pembangun; selepas itu, kunci anda sendiri. Tiada apa-apa dijual; apa yang disimpan relay ada dalam dasar privasi, dan Tetapan → Kawalan data adalah milik anda. Padam akaun bila-bila anda suka.</string>
+    <string name="nm_cloud_notice">TAMA AI ialah projek komuniti sumber terbuka bukan untuk keuntungan: percuma, selamanya. Model datang dengan peruntukan percuma yang dibayar oleh pembangun; selepas itu, kunci anda sendiri. Tiada apa-apa dijual; apa yang disimpan relay ada dalam dasar privasi, dan Tetapan → Kawalan data adalah milik anda. Padam akaun bila-bila anda suka.</string>
 
-    <!-- nanoMuse: devices on the hub -->
+    <!-- TAMA AI: devices on the hub -->
     <string name="nm_hub_channel">Mesej daripada peranti anda</string>
     <string name="nm_hub_service_channel">Disambungkan ke peranti anda</string>
-    <string name="nm_hub_service_title">nanoMuse · boleh dicapai dari peranti anda</string>
-    <string name="nm_hub_service_connecting">Menyambung ke nanoMuse Cloud…</string>
+    <string name="nm_hub_service_title">TAMA AI · boleh dicapai dari peranti anda</string>
+    <string name="nm_hub_service_connecting">Menyambung ke TAMA AI Cloud…</string>
     <string name="nm_hub_service_alone">Tiada peranti lain dalam talian sekarang</string>
     <plurals name="nm_hub_service_devices">
         <item quantity="other">%d peranti dalam talian</item>
@@ -965,7 +965,7 @@
     <string name="nm_devices_connected">Bersambung</string>
     <string name="nm_devices_connecting">Menyambung…</string>
     <string name="nm_devices_off">Mati</string>
-    <string name="nm_devices_none">Belum ada peranti lain. Di komputer anda, pasang nanoMuse Desktop dan log masuk dengan akaun yang sama; ia muncul di sini dalam beberapa saat.</string>
+    <string name="nm_devices_none">Belum ada peranti lain. Di komputer anda, pasang TAMA AI Desktop dan log masuk dengan akaun yang sama; ia muncul di sini dalam beberapa saat.</string>
     <string name="nm_devices_online">dalam talian</string>
     <string name="nm_devices_offline">luar talian</string>
     <string name="nm_devices_web">Konsol web</string>
@@ -984,7 +984,7 @@
     <string name="nm_hub_err_not_controllable">Peranti itu tidak boleh diminta melakukan sesuatu.</string>
     <string name="nm_hub_err_unknown_agent">Ejen pengekodan itu tiada di komputer.</string>
     <string name="nm_hub_err_no_session">Sesi itu sudah tiada di komputer.</string>
-    <string name="nm_hub_err_unknown_action">Komputer menjalankan nanoMuse versi lama yang tidak mengenali tindakan ini.</string>
+    <string name="nm_hub_err_unknown_action">Komputer menjalankan TAMA AI versi lama yang tidak mengenali tindakan ini.</string>
     <string name="nm_hub_err_bad_key">Log keluar di relay; log masuk semula.</string>
     <string name="nm_hub_err_generic">Komputer tidak dapat melakukannya.</string>
     <string name="nm_devices_refused">Ditolak oleh relay; log masuk semula</string>
@@ -1003,7 +1003,7 @@
     <string name="nm_connectors_sign_in">Log masuk</string>
     <string name="nm_connectors_disconnect">Putuskan</string>
     <string name="nm_connectors_docs">Halaman vendor tentang pelayan ini</string>
-    <string name="nm_connectors_how_oauth">Log masuk dengan akaun %1$s anda dalam pelayar; nanoMuse mendaftarkan dirinya dengan perkhidmatan itu, jadi tiada apa-apa perlu ditaip. Token kekal di telefon ini.</string>
+    <string name="nm_connectors_how_oauth">Log masuk dengan akaun %1$s anda dalam pelayar; TAMA AI mendaftarkan dirinya dengan perkhidmatan itu, jadi tiada apa-apa perlu ditaip. Token kekal di telefon ini.</string>
     <string name="nm_connectors_how_key">Memerlukan kunci daripada perkhidmatan: %1$s. Ia disimpan dalam entri MCP di telefon ini sahaja.</string>
     <string name="nm_connectors_how_none">Terbuka kepada semua; tiada log masuk diperlukan.</string>
     <string name="nm_connectors_how_auto">Menyemak apa yang diperlukan pelayan dahulu: tiada, log masuk, atau kunci.</string>
@@ -1047,13 +1047,13 @@
 
     <!-- Conversation sync between the account's devices (contract C7) -->
     <string name="nm_sync_title">Segerakkan perbualan antara peranti saya</string>
-    <string name="nm_sync_caption">Teks sembang anda disimpan di nanoMuse Cloud supaya setiap peranti menunjukkan perbualan yang sama. Fail dan imej kekal di peranti tempat ia dibuat.</string>
+    <string name="nm_sync_caption">Teks sembang anda disimpan di TAMA AI Cloud supaya setiap peranti menunjukkan perbualan yang sama. Fail dan imej kekal di peranti tempat ia dibuat.</string>
     <string name="nm_sync_sign_in">Log masuk untuk menyegerakkan</string>
     <string name="nm_sync_on_toast">Hidup. Perbualan telefon ini sedang dihantar.</string>
     <string name="nm_sync_off_toast">Mati. Apa yang disimpan telah dipadam.</string>
     <string name="nm_sync_delete">Padam perbualan yang disegerakkan</string>
-    <string name="nm_sync_delete_sub">Membuang teks perbualan anda dari nanoMuse Cloud. Setiap peranti mengekalkan apa yang sudah ada padanya; penyegerakan kekal hidup.</string>
-    <string name="nm_sync_delete_confirm">Perbualan yang disimpan di nanoMuse Cloud dibuang. Sembang di peranti anda kekal seperti sedia ada.</string>
+    <string name="nm_sync_delete_sub">Membuang teks perbualan anda dari TAMA AI Cloud. Setiap peranti mengekalkan apa yang sudah ada padanya; penyegerakan kekal hidup.</string>
+    <string name="nm_sync_delete_confirm">Perbualan yang disimpan di TAMA AI Cloud dibuang. Sembang di peranti anda kekal seperti sedia ada.</string>
     <string name="nm_sync_deleted">Perbualan yang disegerakkan dipadam.</string>
     <string name="nm_sync_from">Daripada %1$s</string>
     <string name="nm_sync_attachment_note">[Lampiran %1$s, kekal di peranti tempat ia dibuat]</string>
@@ -1068,7 +1068,7 @@
     <string name="nm_devices_ask_hint">Ketik peranti yang dalam talian untuk menulis kepadanya dari sembang: mesej bermula dengan @ dan namanya, dan peranti itu yang melakukan kerja.</string>
     <string name="nm_reach_the_provider">penyedia</string>
     <string name="nm_reach_unreachable_title">%1$s tidak dapat dicapai dari rangkaian ini</string>
-    <string name="nm_reach_unreachable_body">Tiada jawapan daripada %1$s. Ini soal laluan dari telefon ini ke penyedia; pelayan nanoMuse sendiri tidak terlibat.</string>
+    <string name="nm_reach_unreachable_body">Tiada jawapan daripada %1$s. Ini soal laluan dari telefon ini ke penyedia; pelayan TAMA AI sendiri tidak terlibat.</string>
     <string name="nm_reach_region_title">OpenAI tidak berkhidmat di wilayah ini</string>
     <string name="nm_reach_region_body">Permintaan sampai ke OpenAI, yang menjawab bahawa perkhidmatannya tidak ditawarkan di tempat asal sambungan ini.</string>
     <string name="nm_reach_signed_out_title">Log masuk ChatGPT tidak lagi sah</string>
@@ -1077,23 +1077,40 @@
     <string name="nm_reach_key_refused_body">Penyedia menjawab bahawa kunci ini tidak lagi sah. Semak dalam tetapan penyedia.</string>
     <string name="nm_reach_quota_title">Pelan ChatGPT tiada baki buat masa ini</string>
     <string name="nm_reach_quota_body">OpenAI mengira penggunaan pelan dalam tetingkap beberapa jam dan seminggu; tetingkap ini sudah habis.</string>
-    <string name="nm_reach_quota_key_title">%1$s tiada kuota lagi untuk kunci ini</string>
-    <string name="nm_reach_quota_key_body">Penyedia menjawab bahawa kuota kunci ini sudah habis.</string>
-    <string name="nm_reach_rate_title">Terlalu banyak permintaan serentak</string>
-    <string name="nm_reach_rate_body">Penyedia meminta untuk menunggu sebentar.</string>
+    <string name="nm_reach_auth_title">%1$s menolak pengesahan (HTTP 401)</string>
+    <string name="nm_reach_auth_body">Semak kunci dan pembekal yang dipilih. Baca mesej pembekal jika ada.</string>
+    <string name="nm_reach_access_title">%1$s menolak permintaan (HTTP 403)</string>
+    <string name="nm_reach_access_body">Kod ini sahaja tidak menyatakan puncanya. Semak mesej pembekal dan kebenaran akaun atau model.</string>
+    <string name="nm_reach_no_credit_title">%1$s melaporkan had kredit atau pembayaran</string>
+    <string name="nm_reach_no_credit_body">Semak mesej pembekal, baki akaun dan had perbelanjaan kunci. Model percuma yang tersedia juga mempunyai sekatan.</string>
+    <string name="nm_reach_quota_key_title">%1$s melaporkan had penggunaan</string>
+    <string name="nm_reach_quota_key_body">Semak mesej pembekal serta had akaun dan model.</string>
+    <string name="nm_reach_rate_title">Had permintaan dicapai (HTTP 429)</string>
+    <string name="nm_reach_rate_body">Tunggu dan semak had permintaan pembekal atau ketersediaan model.</string>
     <string name="nm_reach_vendor_said">Penyedia berkata: %1$s</string>
-    <string name="nm_reach_resets_in">Pulih dalam %1$s.</string>
+    <string name="nm_reach_resets_in">Cuba lagi dalam %1$s.</string>
     <string name="nm_reach_helps">Yang membantu</string>
     <string name="nm_reach_help_vpn">VPN pada telefon ini, dihidupkan sebelum mencuba lagi</string>
     <string name="nm_reach_help_proxy">Proksi yang digunakan aplikasi ini untuk penyedia: Tetapan → Rangkaian</string>
     <string name="nm_reach_help_other">Penyedia lain, dengan kunci sendiri</string>
     <string name="nm_reach_help_wait">Menunggu tetingkap berlalu</string>
     <string name="nm_reach_help_moment">Sebentar, kemudian cuba lagi</string>
+    <string name="nm_reach_help_credit">Semak baki akaun dan had perbelanjaan kunci</string>
+    <string name="nm_reach_help_free_model">Cuba model percuma yang tersedia, tertakluk pada hadnya</string>
     <string name="nm_reach_try_again">Cuba lagi</string>
     <string name="nm_reach_network">Tetapan rangkaian</string>
     <string name="nm_reach_sign_in">Log masuk semula</string>
     <string name="nm_reach_open_provider">Buka penyedia</string>
     <string name="nm_reach_own_key">Tambah kunci sendiri</string>
+    <string name="nm_reach_retry_stale">Ralat ini bukan lagi yang terkini, atau tugas masih berjalan.</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">Butiran ralat</string>
+    <string name="nm_reach_sheet_message">Mesej penyedia</string>
+    <string name="nm_reach_sheet_unavailable">Tiada maklumat</string>
+    <string name="nm_reach_sheet_privacy">Mesej mungkin dipendekkan dan mungkin mengandungi data peribadi atau rahsia yang tidak dikesan. Semak sebelum menyalin.</string>
+    <string name="nm_reach_sheet_change_model">Tukar model</string>
+    <string name="nm_reach_sheet_provider_settings">Buka tetapan penyedia</string>
     <string name="nm_reach_details">Butiran</string>
     <string name="nm_reach_details_hide">Sembunyikan butiran</string>
     <string name="nm_reach_hours_minutes">%1$d j %2$d min</string>
@@ -1111,7 +1128,7 @@
     <string name="nm_network_test_fail">Tidak dapat mencapai %1$s melalui proksi: %2$s</string>
     <string name="nm_network_test_status">HTTP %1$d</string>
     <string name="nm_network_invalid">Masukkan hos dan port antara 1 dan 65535.</string>
-    <string name="nm_network_proxy_caption">Hanya permintaan ke penyedia yang anda tambah dengan kunci sendiri, dan ke pelan ChatGPT, melalui proksi. nanoMuse Cloud, komputer anda dan rangkaian tempatan tidak sekali-kali. Disimpan pada telefon ini sahaja.</string>
+    <string name="nm_network_proxy_caption">Hanya permintaan ke penyedia yang anda tambah dengan kunci sendiri, dan ke pelan ChatGPT, melalui proksi. TAMA AI Cloud, komputer anda dan rangkaian tempatan tidak sekali-kali. Disimpan pada telefon ini sahaja.</string>
     <string name="nm_network_hosts_caption">Melalui proksi: %1$s</string>
     <string name="nm_ways_title_day">Bahagian hari ini daripada peruntukan percuma sudah habis.</string>
     <string name="nm_ways_day_sub">Ia kembali dengan hari baharu; cara-cara di bawah boleh digunakan sekarang.</string>
@@ -1122,7 +1139,7 @@
     <string name="nm_ways_devices">Peranti</string>
     <!-- 0.1.41 Choice: Settings → Models, the "Use it for" card, one turn on the Cloud -->
     <string name="nm_models_title">Model</string>
-    <string name="nm_models_intro">Model mana buat apa. Setiap baris membuka pemilih; nanoMuse Cloud dan penyedia yang anda tambah muncul di situ bersama model yang sesuai.</string>
+    <string name="nm_models_intro">Model mana buat apa. Setiap baris membuka pemilih; TAMA AI Cloud dan penyedia yang anda tambah muncul di situ bersama model yang sesuai.</string>
     <string name="nm_models_chat_title">Sembang</string>
     <string name="nm_models_chat_sub">Model yang bercakap dengan anda.</string>
     <string name="nm_models_hands_title">Mengendalikan skrin</string>
@@ -1134,19 +1151,19 @@
     <string name="nm_models_chat_applies">Terpakai untuk sembang utama dan sembang baharu; sembang sampingan mengekalkan modelnya sendiri.</string>
     <string name="nm_models_media_more">Pilihan gambar dan klip lain</string>
     <string name="nm_models_media_more_sub">Taip nama model, lihat apa yang terhenti tanpa setiap model, atau semak semula model video yang boleh digunakan oleh satu kunci.</string>
-    <string name="nm_models_cloud_switch">Gunakan model nanoMuse Cloud</string>
-    <string name="nm_models_cloud_on_sub">nanoMuse Cloud ialah salah satu sumber untuk baris di bawah; apa yang berjalan di situ ditolak daripada peruntukan anda.</string>
-    <string name="nm_models_cloud_off_sub">Dimatikan: tiada apa berjalan di nanoMuse Cloud melainkan anda ketik \"Guna nanoMuse Cloud kali ini\". Anda kekal log masuk untuk penyegerakan dan peranti anda.</string>
-    <string name="nm_models_cloud_off_refused">Tambah penyedia anda sendiri dahulu; dengan nanoMuse Cloud dimatikan, tiada yang lain boleh menjawab.</string>
+    <string name="nm_models_cloud_switch">Gunakan model TAMA AI Cloud</string>
+    <string name="nm_models_cloud_on_sub">TAMA AI Cloud ialah salah satu sumber untuk baris di bawah; apa yang berjalan di situ ditolak daripada peruntukan anda.</string>
+    <string name="nm_models_cloud_off_sub">Dimatikan: tiada apa berjalan di TAMA AI Cloud melainkan anda ketik \"Guna TAMA AI Cloud kali ini\". Anda kekal log masuk untuk penyegerakan dan peranti anda.</string>
+    <string name="nm_models_cloud_off_refused">Tambah penyedia anda sendiri dahulu; dengan TAMA AI Cloud dimatikan, tiada yang lain boleh menjawab.</string>
     <string name="nm_chat_no_model">Tiada model yang boleh menjawab sekarang. Pilih satu di Tetapan › Model.</string>
-    <string name="nm_cloud_provider_no_delete">Pembekal ini ialah akaun nanoMuse Cloud anda. Matikan di atas untuk berhenti menggunakan modelnya; untuk log keluar, buka Tetapan › nanoMuse Cloud.</string>
+    <string name="nm_cloud_provider_no_delete">Pembekal ini ialah akaun TAMA AI Cloud anda. Matikan di atas untuk berhenti menggunakan modelnya; untuk log keluar, buka Tetapan › TAMA AI Cloud.</string>
     <string name="nm_welcome_own_key">Guna kunci API sendiri</string>
     <string name="nm_useit_title">Guna untuk</string>
     <string name="nm_useit_body_signed_out">Pilih apa yang patut diuruskan kunci ini.</string>
     <string name="nm_useit_use">Guna</string>
     <string name="nm_useit_not_now">Bukan sekarang</string>
     <string name="nm_useit_footnote">Anda boleh mengubahnya bila-bila masa di Tetapan › Model.</string>
-    <string name="nm_retry_on_cloud">Guna nanoMuse Cloud kali ini</string>
+    <string name="nm_retry_on_cloud">Guna TAMA AI Cloud kali ini</string>
     <string name="nm_hands_why_chat_provider">lalai tangan daripada penyedia sembang anda</string>
     <string name="nm_models_auto">Automatik</string>
     <string name="nm_models_auto_currently">Kini %1$s</string>
@@ -1182,7 +1199,7 @@
     <string name="nm_font_scale_large">Besar</string>
     <string name="nm_font_scale_extra_large">Sangat besar</string>
 
-    <!-- nanoMuse: backup choices and the headless run (#560, #561) -->
+    <!-- TAMA AI: backup choices and the headless run (#560, #561) -->
     <string name="nm_backup_chat_files">Fail dalam sembang</string>
     <string name="nm_backup_chat_files_on">Setiap lampiran, fail punggah dan fail ruang kerja dibawa bersama mesej.</string>
     <string name="nm_backup_chat_files_off">Mesej sahaja. Fail disenaraikan, tidak dibawa; pemulihan mengembalikan sembang tanpa fail. Pakej kekal kecil untuk pelayan yang menolak muat naik besar.</string>
@@ -1234,7 +1251,7 @@
     <string name="nm_backup_resume">Sambung sandaran</string>
     <string name="nm_backup_discard">Buang sandaran terganggu</string>
     <string name="nm_backup_resume_hint">Sandaran terganggu sedang menunggu. Sambung dengan pilihan asal dan masukkan semula kata laluan jika perlu, atau buang untuk bermula semula.</string>
-<string name="nm_access_locked">nanoMuse dikunci</string>
+<string name="nm_access_locked">TAMA AI dikunci</string>
 <string name="nm_access_hint">Sahkan dengan kunci skrin peranti ini.</string>
 <string name="nm_access_unlock">Buka kunci</string>
 <string name="nm_access_settings">Kunci aplikasi</string>
@@ -1264,4 +1281,137 @@
     <string name="nm_device_chat_start">Sembang pada peranti ini</string>
     <string name="nm_device_chat_uncertain">Penghantaran belum pasti. Menyemak hasil pada peranti.</string>
     <string name="nm_device_chat_interrupted">Terganggu. Peranti mungkin sudah menjalankan beberapa tindakan.</string>
+
+    <!-- TAMA AI: the Pet's progress -->
+    <string name="tama_pet_title">Haiwan</string>
+    <string name="tama_pet_level">Tahap %1$d</string>
+    <string name="tama_pet_xp">%1$d XP</string>
+    <string name="tama_pet_to_next">%1$d lagi ke tahap seterusnya</string>
+    <string name="tama_pet_max_level">Tahap tertinggi</string>
+    <string name="tama_pet_how_xp">Haiwan anda memperoleh XP apabila anda menamatkan perbualan dengan ejen. Kegagalan juga dikira sedikit; giliran yang dibatalkan tidak dikira.</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">Haiwan TAMA AI anda</string>
+    <string name="tama_pet_mood_content">Puas</string>
+    <string name="tama_pet_mood_calm">Tenang</string>
+    <string name="tama_pet_mood_needy">Perlukan anda</string>
+    <string name="tama_pet_mood_focused">Bekerja dengan anda</string>
+    <string name="tama_pet_mood_grumpy">Merajuk</string>
+    <string name="tama_pet_need_satiety">Makanan</string>
+    <string name="tama_pet_need_energy">Tenaga</string>
+    <string name="tama_pet_need_mood">Suasana</string>
+    <string name="tama_pet_need_bond">Ikatan</string>
+    <string name="tama_pet_action_feed">Beri makan</string>
+    <string name="tama_pet_action_rest">Rehat</string>
+    <string name="tama_pet_action_play">Main</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">Pakaian</string>
+    <string name="tama_pet_outfit_name">Haiwan TAMA AI</string>
+    <string name="tama_pet_outfit_locked">Tahap %1$d</string>
+    <string name="tama_pet_days_known">%1$d hari bersama</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">1 hari berturut-turut</item>
+        <item quantity="other">%1$d hari berturut-turut</item>
+    </plurals>
+    <!-- Pet life, daily missions and local activities -->
+    <string name="nm_pet_stage_awakening">Kebangkitan</string>
+    <string name="nm_pet_stage_discovery">Penemuan</string>
+    <string name="nm_pet_stage_learning">Pembelajaran</string>
+    <string name="nm_pet_stage_companion">Teman</string>
+    <string name="nm_pet_stage_explorer">Penjelajah</string>
+    <string name="nm_pet_stage_evolved">Berkembang</string>
+    <string name="nm_pet_generation">Generasi %1$d</string>
+    <string name="nm_pet_feed_remaining">Beri makan dalam %1$d jam</string>
+    <string name="nm_pet_feed_rule">Selepas 72 jam tanpa makanan, Pet mati. Tiga hari kemudian generasi baharu bermula.</string>
+    <string name="nm_pet_ghost">Hantu Pet</string>
+    <string name="nm_pet_in_memory">Mengenang</string>
+    <string name="nm_pet_grief">Pet sedang berehat. Generasi baharu bermula dalam %1$d jam.</string>
+    <string name="nm_pet_missions">Misi harian</string>
+    <string name="nm_pet_daily_cap">Hari ini: %1$d/100 XP. Kitaran dan misi berkongsi had ini; ganjaran terakhir mungkin separa.</string>
+    <string name="nm_pet_mission_sources">Perbualan mengira mesej yang disimpan, tugas mengira kitaran berjaya. Pembelajaran menggunakan ingatan tersimpan, ciptaan menggunakan penulisan fail atau eksperimen, kemahiran menggunakan import dan pencapaian menggunakan peringkat baharu.</string>
+    <string name="nm_pet_mission_first">Interaksi pertama</string>
+    <string name="nm_pet_mission_conversation">Perbualan</string>
+    <string name="nm_pet_mission_task">Tugas</string>
+    <string name="nm_pet_mission_goal">Matlamat</string>
+    <string name="nm_pet_mission_learn">Pembelajaran</string>
+    <string name="nm_pet_mission_create">Ciptaan</string>
+    <string name="nm_pet_mission_skill">Kemahiran baharu</string>
+    <string name="nm_pet_mission_milestone">Pencapaian</string>
+    <string name="nm_pet_mission_game">Permainan mini</string>
+    <string name="nm_pet_mission_progress">%1$d/%2$d · %3$d XP</string>
+    <string name="nm_pet_activities">Aktiviti</string>
+    <string name="nm_pet_activities_local">Manual dan luar talian.</string>
+    <string name="nm_pet_activity_dream">Bermimpi</string>
+    <string name="nm_pet_activity_explore">Menjelajah</string>
+    <string name="nm_pet_activity_experiment">Bereksperimen</string>
+    <string name="nm_pet_activity_journal">Jurnal</string>
+    <string name="nm_pet_activity_cost">%1$s · %2$d tenaga</string>
+    <string name="nm_pet_activity_done">Aktiviti selesai.</string>
+    <string name="nm_pet_low_energy">Tenaga tidak mencukupi.</string>
+    <string name="nm_pet_activity_unavailable">Aktiviti ini tidak lagi tersedia untuk Pet ini.</string>
+    <string name="nm_pet_curiosity">Rasa ingin tahu: %1$d</string>
+    <string name="nm_pet_diary_entry">Jurnal terakhir: tahap %1$d, tenaga %2$d, ikatan %3$d.</string>
+    <string name="nm_pet_games">Permainan mini</string>
+    <string name="nm_pet_games_rule">Tiada had masa. Kemenangan pertama setiap hari memberi sehingga 5 XP.</string>
+    <string name="nm_pet_game_colors">Gema warna</string>
+    <string name="nm_pet_game_numbers">Pola nombor</string>
+    <string name="nm_pet_color_sequence">Ingat: biru, kuning, hijau.</string>
+    <string name="nm_pet_color_repeat">Ulang warna: %1$d/%2$d</string>
+    <string name="nm_pet_number_sequence">Teruskan: 2, 4, 6, ...</string>
+    <string name="nm_pet_game_retry">Cuba lagi.</string>
+    <string name="nm_pet_game_won">Kemenangan dicatat. Bonus harian tertakluk pada had XP.</string>
+    <string name="nm_pet_game_ended">Permainan tamat.</string>
+    <string name="nm_pet_game_start">Mula</string>
+    <string name="nm_pet_color_blue">Biru</string>
+    <string name="nm_pet_color_yellow">Kuning</string>
+    <string name="nm_pet_color_green">Hijau</string>
+    <string name="nm_pet_archives">Generasi terdahulu</string>
+    <string name="nm_pet_archive_entry">%1$s · generasi %2$d · %3$d XP</string>
+    <string name="nm_pet_xp_rules">Kitaran berjaya memberi 10 XP, kitaran gagal memberi 3. Misi menambah bonus, sehingga 100 XP jumlah sehari mengikut masa tempatan.</string>
+    <!-- nanoMuse: local prompt-size report; section labels follow PromptSize.Section. -->
+    <string name="nm_prompt_size_title">Prompt size</string>
+    <string name="nm_prompt_size_subtitle">Measure locally, without a model request</string>
+    <string name="nm_prompt_size_details">Show prompt measurements</string>
+    <string name="nm_prompt_size_busy">Wait for the current reply or compacting to finish.</string>
+    <string name="nm_prompt_size_failed">Could not measure this prompt. Try again.</string>
+    <string name="nm_prompt_size_system">System prompt</string>
+    <string name="nm_prompt_size_tools">Tool schemas (OpenAI format)</string>
+    <string name="nm_prompt_size_explanation">Current configuration. Each line shows UTF-16 characters before and after the diet, then estimated tokens before and after (characters divided by 3.7). These are estimates, not a tokenizer or a bill. History, attachments, output and protocol overhead are not included.</string>
+    <string name="nm_prompt_size_image_yes">Image model resolved locally: yes. This does not test image generation.</string>
+    <string name="nm_prompt_size_image_no">Image model resolved locally: no. This does not test image generation.</string>
+    <string name="nm_prompt_size_image_unknown">Image model resolved locally: could not check. This does not test image generation.</string>
+    <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total|Provider prefix</string>
+    <!-- nanoMuse: bounded provider refusals and retries. -->
+    <string name="nm_reach_request_large_title">Permintaan terlalu besar untuk %1$s</string>
+    <string name="nm_reach_request_large_body">Penyedia menolak saiz permintaan. Arahan, sejarah, alat dan lampiran juga diambil kira. Pendekkan mesej atau mulakan perbualan baharu.</string>
+    <string name="nm_reach_output_limit_title">%1$s menolak saiz jawapan</string>
+    <string name="nm_reach_output_limit_known">Penyedia menyatakan maksimum %1$d token keluaran.</string>
+    <string name="nm_reach_output_limit_unknown">Penyedia menolak had keluaran tanpa menyatakan maksimum yang jelas.</string>
+    <string name="nm_reach_server_error_title">Ralat perkhidmatan %1$s</string>
+    <string name="nm_reach_server_error_body">Penyedia mengembalikan ralat. Tunggu sebentar dan cuba lagi.</string>
+    <string name="nm_reach_output_retry">Penyedia menyatakan had %1$d token keluaran. Mencuba lagi dengan had itu.</string>
+    <string name="nm_reach_output_adjusted">Penyedia menerima percubaan semula dengan maksimum %1$d token keluaran.</string>
+    <string name="nm_reach_rate_wait">Had permintaan dicapai. Mencuba lagi dalam %1$d s.</string>
+    <string name="nm_reach_server_retry">Penyedia tidak stabil. Mencuba lagi.</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">Tidak dapat meminta perkhidmatan latar belakang. Biarkan TAMA terbuka semasa tugasan; ia mungkin terhenti jika anda keluar.</string>
+    <string name="nm_background_stop_rejected">Tidak dapat meminta perkhidmatan latar belakang dihentikan. Pemberitahuannya mungkin masih kelihatan.</string>
+    <string name="nm_background_service_retry">Cuba lagi</string>
+    <!-- nanoMuse: local routing and a user-editable provider budget. -->
+    <string name="nm_router_profile_auto">Automatic</string>
+    <string name="nm_router_profile_lean">Light mode</string>
+    <string name="nm_router_profile_basic">Agent mode</string>
+    <string name="nm_router_profile_full">Full agent mode</string>
+    <string name="nm_router_profile_chip">Mode: %1$s</string>
+    <string name="nm_router_profile_totals">Estimated totals by mode (excluding history, images and output):</string>
+    <string name="nm_router_profile_choose">Choose a mode</string>
+    <string name="nm_router_tpm_title">Tokens per minute limit (optional)</string>
+    <string name="nm_router_tpm_help">Leave blank when unknown. A suggested value is only an observation, not a guarantee for this account.</string>
+    <string name="nm_router_tpm_invalid">Enter a positive whole number or leave the field blank.</string>
+    <string name="nm_router_retry_smaller">The request was too large. Retrying with fewer instructions and tools.</string>
+    <string name="nm_router_lean_too_large">Even the light request was too large for this provider.</string>
+    <string name="nm_router_budget_limited">The configured budget only fits light mode for this request. Tools are unavailable in this attempt.</string>
+    <string name="nm_router_lean_tool_notice">Tools are unavailable in this light-mode attempt.</string>
+    <string name="nm_router_budget_exhausted">The estimated request exceeds the configured per-minute limit, even in light mode.</string>
 </resources>

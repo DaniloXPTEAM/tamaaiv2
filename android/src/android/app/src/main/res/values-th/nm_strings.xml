@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- nanoMuse: strings added on top of upstream; kept in their own file so an
+<!-- TAMA AI: strings added on top of upstream; kept in their own file so an
      upstream pull never touches them. Anything missing here falls back to English. -->
 <resources>
     <string name="nm_about_build">บิลด์นี้</string>
@@ -7,7 +7,7 @@
     <string name="nm_about_upstream">พัฒนาต่อจาก OpenMinis 1.13</string>
     <string name="nm_about_upstream_detail">GPL-3.0 · แก้ไขตั้งแต่ 2026-09-24 · ซอร์สโค้ดบน GitHub</string>
     <string name="nm_about_trademark">ไม่มีส่วนเกี่ยวข้องกับ Meta</string>
-    <string name="nm_about_trademark_detail">Muse เป็นเครื่องหมายการค้าของ Meta Platforms, Inc. ส่วน nanoMuse เป็นโครงการซอฟต์แวร์เสรีอิสระ</string>
+    <string name="nm_about_trademark_detail">Muse เป็นเครื่องหมายการค้าของ Meta Platforms, Inc. ส่วน TAMA AI เป็นโครงการซอฟต์แวร์เสรีอิสระ</string>
 
     <!-- Chat header -->
     <string name="nm_avatar_content_description">เอเจนต์ของคุณ แตะเพื่อเปลี่ยนชื่อ ไอคอน หรือสไตล์</string>
@@ -22,26 +22,26 @@
     <string name="nm_star_action">ให้ดาวบน GitHub</string>
     <string name="nm_star_later">ไว้ก่อน</string>
     <string name="nm_star_done">ให้ดาวแล้ว</string>
-    <string name="nm_star_signed_in">ยินดีต้อนรับ nanoMuse เป็นซอฟต์แวร์ฟรี โอเพนซอร์ส และไม่แสวงหากำไร เอเจนต์ส่วนตัวสำหรับทุกคนที่ใช้งาน ถ้าสิ่งนี้มีค่าสำหรับคุณ ดาวบน GitHub คือวิธีที่ทำให้คนถัดไปพบมัน</string>
+    <string name="nm_star_signed_in">ยินดีต้อนรับ TAMA AI เป็นซอฟต์แวร์ฟรี โอเพนซอร์ส และไม่แสวงหากำไร เอเจนต์ส่วนตัวสำหรับทุกคนที่ใช้งาน ถ้าสิ่งนี้มีค่าสำหรับคุณ ดาวบน GitHub คือวิธีที่ทำให้คนถัดไปพบมัน</string>
     <plurals name="nm_star_tasks">
-        <item quantity="other">ทำงานเสร็จไปแล้ว %1$d งาน ถ้า nanoMuse มีประโยชน์ ดาวบน GitHub ช่วยให้คนถัดไปพบมันได้</item>
+        <item quantity="other">ทำงานเสร็จไปแล้ว %1$d งาน ถ้า TAMA AI มีประโยชน์ ดาวบน GitHub ช่วยให้คนถัดไปพบมันได้</item>
     </plurals>
-    <string name="nm_star_days_used_week">หนึ่งสัปดาห์กับ nanoMuse ถ้ามันมีที่ทางในแต่ละวันของคุณแล้ว ดาวบน GitHub ช่วยให้คนถัดไปพบมันได้</string>
-    <string name="nm_star_days_used_month">หนึ่งเดือนกับ nanoMuse ถ้ามันกลายเป็นส่วนหนึ่งของกิจวัตรของคุณแล้ว ดาวบน GitHub บอกคนอื่นว่ามันคุ้มค่าที่จะลอง</string>
+    <string name="nm_star_days_used_week">หนึ่งสัปดาห์กับ TAMA AI ถ้ามันมีที่ทางในแต่ละวันของคุณแล้ว ดาวบน GitHub ช่วยให้คนถัดไปพบมันได้</string>
+    <string name="nm_star_days_used_month">หนึ่งเดือนกับ TAMA AI ถ้ามันกลายเป็นส่วนหนึ่งของกิจวัตรของคุณแล้ว ดาวบน GitHub บอกคนอื่นว่ามันคุ้มค่าที่จะลอง</string>
     <plurals name="nm_star_days_used">
-        <item quantity="other">%1$d วันกับ nanoMuse ถ้ามันมีที่ทางในแต่ละวันของคุณแล้ว ดาวบน GitHub ช่วยให้คนถัดไปพบมันได้</item>
+        <item quantity="other">%1$d วันกับ TAMA AI ถ้ามันมีที่ทางในแต่ละวันของคุณแล้ว ดาวบน GitHub ช่วยให้คนถัดไปพบมันได้</item>
     </plurals>
-    <string name="nm_star_goal_done">ถึงเป้าหมายแล้ว ถ้า nanoMuse ช่วยพาคุณมาถึงตรงนี้ ดาวบน GitHub บอกคนที่สร้างมันให้รู้</string>
-    <string name="nm_star_new_look">ใบหน้าใหม่ วาดขึ้นเพื่อคุณ ถ้าคุณชอบทิศทางที่ nanoMuse กำลังไป ดาวบน GitHub ช่วยให้คนพบมันมากขึ้น</string>
-    <string name="nm_star_exhausted">โควตาฟรีหมดแล้ว ขอบคุณที่มาด้วยกันถึงตรงนี้ ถ้า nanoMuse คู่ควร ดาวบน GitHub ช่วยให้โครงการยังอยู่ในสายตาของคนถัดไป</string>
+    <string name="nm_star_goal_done">ถึงเป้าหมายแล้ว ถ้า TAMA AI ช่วยพาคุณมาถึงตรงนี้ ดาวบน GitHub บอกคนที่สร้างมันให้รู้</string>
+    <string name="nm_star_new_look">ใบหน้าใหม่ วาดขึ้นเพื่อคุณ ถ้าคุณชอบทิศทางที่ TAMA AI กำลังไป ดาวบน GitHub ช่วยให้คนพบมันมากขึ้น</string>
+    <string name="nm_star_exhausted">โควตาฟรีหมดแล้ว ขอบคุณที่มาด้วยกันถึงตรงนี้ ถ้า TAMA AI คู่ควร ดาวบน GitHub ช่วยให้โครงการยังอยู่ในสายตาของคนถัดไป</string>
     <string name="nm_chat_menu_rename">เปลี่ยนชื่อแชท</string>
 
     <!-- Foreground-service notification title while no tool is running -->
     <string name="nm_notif_working">%1$s กำลังทำงาน</string>
 
     <!-- First conversation: the scripted opening (see io.github.nanomuse.onboarding) -->
-    <string name="nm_intro_hello">สวัสดี ฉันคือ nanoMuse ผู้ช่วยที่อยู่ในโทรศัพท์ของคุณ ให้ฉันช่วยแบ่งเบางานของคุณสักหน่อย</string>
-    <string name="nm_intro_how_i_work">เล่าถึงวิธีทำงานของฉันสักนิด:\n\n- ฉันมีคอมพิวเตอร์ของตัวเอง (แซนด์บ็อกซ์ Linux และเบราว์เซอร์) จึงรันคำสั่ง เปิดเว็บไซต์ และกรอกฟอร์มได้\n- ฉันอ่านและจัดระเบียบไฟล์กับรูปภาพที่คุณเมานต์ให้ และดูแลการเตือนกับงานตามกำหนดเวลาได้\n- ก่อนขั้นตอนสำคัญใด ๆ ฉันจะถามคุณก่อนเสมอ\n- ทุกอย่างทำงานบนโทรศัพท์เครื่องนี้ ข้อความของคุณส่งไปที่โมเดลที่คุณตั้งค่าไว้ และเมื่อลงชื่อเข้าใช้ nanoMuse Cloud บทสนทนานี้จะตามคุณไปยังอุปกรณ์เครื่องอื่นด้วย ปิดได้ที่การควบคุมข้อมูล</string>
+    <string name="nm_intro_hello">สวัสดี ฉันคือ TAMA AI ผู้ช่วยที่อยู่ในโทรศัพท์ของคุณ ให้ฉันช่วยแบ่งเบางานของคุณสักหน่อย</string>
+    <string name="nm_intro_how_i_work">เล่าถึงวิธีทำงานของฉันสักนิด:\n\n- ฉันมีคอมพิวเตอร์ของตัวเอง (แซนด์บ็อกซ์ Linux และเบราว์เซอร์) จึงรันคำสั่ง เปิดเว็บไซต์ และกรอกฟอร์มได้\n- ฉันอ่านและจัดระเบียบไฟล์กับรูปภาพที่คุณเมานต์ให้ และดูแลการเตือนกับงานตามกำหนดเวลาได้\n- ก่อนขั้นตอนสำคัญใด ๆ ฉันจะถามคุณก่อนเสมอ\n- ทุกอย่างทำงานบนโทรศัพท์เครื่องนี้ ข้อความของคุณส่งไปที่โมเดลที่คุณตั้งค่าไว้ และเมื่อลงชื่อเข้าใช้ TAMA AI Cloud บทสนทนานี้จะตามคุณไปยังอุปกรณ์เครื่องอื่นด้วย ปิดได้ที่การควบคุมข้อมูล</string>
     <string name="nm_intro_ask_name">ก่อนจะเริ่ม ให้ฉันเรียกคุณว่าอะไรดี</string>
 
     <!-- First conversation: the name chooser -->
@@ -196,7 +196,7 @@
     <string name="nm_risk_class_outbound">ส่ง</string>
     <string name="nm_risk_class_money">ชำระเงิน</string>
     <string name="nm_risk_class_install">ติดตั้ง</string>
-    <string name="nm_grants_header">การอนุมัติที่ nanoMuse จำไว้</string>
+    <string name="nm_grants_header">การอนุมัติที่ TAMA AI จำไว้</string>
     <string name="nm_grants_empty">ยังไม่มีอะไรที่จำไว้</string>
     <string name="nm_grants_revoke">เพิกถอน</string>
     <string name="nm_grants_revoke_confirm">เพิกถอนการอนุมัตินี้ไหม ครั้งถัดไปที่เกิดขึ้น คุณจะถูกถามอีกครั้ง</string>
@@ -204,7 +204,7 @@
     <string name="nm_risk_remember_money_note">ยืนยันด้วยล็อกหน้าจอของคุณ จากนั้นการชำระเงินในแอปหรือเว็บไซต์นี้จะรันโดยไม่มีการ์ดถาม และแสดงเป็นลำดับแรกใต้ การตั้งค่า → สิทธิ์ ซึ่งคุณเพิกถอนได้ทุกเมื่อ</string>
     <string name="nm_risk_remember_money_needs_lock">หากต้องการให้จำการชำระเงิน ให้ตั้งล็อกหน้าจอก่อน (การตั้งค่า → ความปลอดภัย) เพราะการจำแต่ละครั้งต้องยืนยันด้วยล็อกหน้าจอ</string>
     <string name="nm_risk_lock_title">ยืนยันว่าเป็นคุณ</string>
-    <string name="nm_risk_lock_subtitle">nanoMuse จะจำการอนุมัติชำระเงินสำหรับ %1$s และรันโดยไม่ถาม</string>
+    <string name="nm_risk_lock_subtitle">TAMA AI จะจำการอนุมัติชำระเงินสำหรับ %1$s และรันโดยไม่ถาม</string>
     <string name="nm_risk_remembered_toast">จำไว้แล้ว · ดูที่ การตั้งค่า → สิทธิ์ เพื่อเพิกถอน</string>
     <string name="nm_risk_tier_highest">รันโดยไม่ถาม · การชำระเงิน</string>
     <string name="nm_risk_tier_confirm">จำจากการ์ด · ลบและส่ง</string>
@@ -275,7 +275,7 @@
     <string name="nm_sysfiles_open_memory">เปิดความทรงจำ</string>
     <string name="nm_sysfiles_footer">ไฟล์เหล่านี้เป็นของเอเจนต์: ตัวตนของมัน สิ่งที่รู้เกี่ยวกับคุณ สิ่งที่จำได้ สิ่งที่เขียนให้คุณ และเวลาที่มันตื่นขึ้นมาทำงาน ไฟล์อยู่ในที่เก็บข้อมูลของโทรศัพท์คุณ เอเจนต์อ่านและแก้ไขจากเชลล์ของมันที่ /var/minis/memory และคุณแก้ไขอะไรก็ได้ที่นี่</string>
     <string name="nm_sysfile_about_lead">เกี่ยวกับไฟล์นี้</string>
-    <string name="nm_sysfile_about_soul">นี่คือบุคลิกของเอเจนต์: ค่านิยมและนิสัยที่มันพยายามยึดถือในทุกบทสนทนา ชื่อของมัน และสไตล์การตอบ เริ่มต้นจากเทมเพลตที่มาพร้อม nanoMuse เอเจนต์อาจปรับแต่งเพิ่มเมื่อเวลาผ่านไปและจะบอกคุณเมื่อทำ คุณแก้ไขได้ทุกเมื่อ หมายเหตุนี้ไม่ใช่ส่วนหนึ่งของไฟล์</string>
+    <string name="nm_sysfile_about_soul">นี่คือบุคลิกของเอเจนต์: ค่านิยมและนิสัยที่มันพยายามยึดถือในทุกบทสนทนา ชื่อของมัน และสไตล์การตอบ เริ่มต้นจากเทมเพลตที่มาพร้อม TAMA AI เอเจนต์อาจปรับแต่งเพิ่มเมื่อเวลาผ่านไปและจะบอกคุณเมื่อทำ คุณแก้ไขได้ทุกเมื่อ หมายเหตุนี้ไม่ใช่ส่วนหนึ่งของไฟล์</string>
     <string name="nm_sysfile_about_user">เอเจนต์ใช้ไฟล์นี้เป็นบันทึกการทำงานเกี่ยวกับคุณ: ชื่อของคุณ คุณอยากให้เรียกอย่างไร เขตเวลา และบริบทที่มันต้องใช้เพื่อเป็นประโยชน์ เช่น สิ่งที่คุณกำลังทำอยู่ มันค่อย ๆ เติมจากบทสนทนาของคุณ และอ่านตอนเริ่มทุกบทสนทนา ไฟล์นี้สะท้อนความเข้าใจปัจจุบันของเอเจนต์ จึงอาจไม่ครบหรือล้าสมัยได้ คุณแก้ไขอะไรก็ได้ที่นี่ และเอเจนต์จะทำตามสิ่งที่คุณเขียน หมายเหตุนี้ไม่ใช่ส่วนหนึ่งของไฟล์</string>
     <string name="nm_sysfile_about_memory">บันทึกถาวรที่เอเจนต์เก็บไว้ข้ามบทสนทนา สิ่งที่ควรจำ ในคำพูดของมันเอง รวมถึงสิ่งที่คุณนำเข้าจากผู้ช่วยตัวอื่น ไดอารี่รายวันอยู่ข้างกันในโฟลเดอร์ความทรงจำ อ่านตอนเริ่มทุกบทสนทนาเมื่อเปิดความทรงจำ หมายเหตุนี้ไม่ใช่ส่วนหนึ่งของไฟล์</string>
     <string name="nm_sysfile_about_feed">หนึ่งย่อหน้าที่กำกับทิศทางของฟีด: คุณอยากได้อะไรมากขึ้น อะไรที่ควรข้าม และโพสต์ควรยาวแค่ไหน กิจวัตรฟีดรายวันจะอ่านก่อนเขียน หมายเหตุนี้ไม่ใช่ส่วนหนึ่งของไฟล์</string>
@@ -324,7 +324,7 @@
     <string name="nm_avatar_menu_regenerate_moods">วาดอารมณ์ใหม่</string>
     <string name="nm_avatar_menu_reset">กลับไปใช้ใบหน้าเริ่มต้น</string>
     <string name="nm_avatar_menu_export">บันทึกลงแกลเลอรี</string>
-    <string name="nm_avatar_export_done">บันทึกลงแกลเลอรีใต้ nanoMuse/avatar แล้ว: รูปภาพ %1$d รูป คลิป %2$d คลิป</string>
+    <string name="nm_avatar_export_done">บันทึกลงแกลเลอรีใต้ TAMA AI/avatar แล้ว: รูปภาพ %1$d รูป คลิป %2$d คลิป</string>
     <string name="nm_avatar_export_failed">บันทึกลงแกลเลอรีไม่ได้</string>
     <string name="nm_avatar_mood_idle">พัก</string>
     <string name="nm_avatar_mood_working">กำลังทำงาน</string>
@@ -365,11 +365,11 @@
     <string name="nm_avatar_pick_body">คุณวาดอีกสี่แบบได้ทุกเมื่อ แบบเดิมจะเก็บไว้จนกว่าคุณจะวาดใหม่</string>
     <string name="nm_avatar_use_this">ใช้แบบนี้</string>
     <string name="nm_avatar_use_this_hint">อารมณ์ต่าง ๆ (ทำงาน รอ เสร็จ ผิดพลาด) จะวาดจากรูปนี้ต่อในเบื้องหลัง</string>
-    <string name="nm_avatar_footer">รูปภาพอยู่ในพื้นที่เก็บข้อมูลของแอปเองบนโทรศัพท์เครื่องนี้ ซึ่งตัวจัดการไฟล์เปิดไม่ได้ “บันทึกลงแกลเลอรี” ในเมนูจะคัดลอกใบหน้า อารมณ์ และคลิปไปยัง Pictures และ Movies ใต้ nanoMuse/avatar ใบหน้าแต่ละแบบใช้ห้ารูปจากผู้ให้บริการของคุณ: รูปที่คุณเลือกหนึ่งรูปและอารมณ์อีกสี่รูป</string>
+    <string name="nm_avatar_footer">รูปภาพอยู่ในพื้นที่เก็บข้อมูลของแอปเองบนโทรศัพท์เครื่องนี้ ซึ่งตัวจัดการไฟล์เปิดไม่ได้ “บันทึกลงแกลเลอรี” ในเมนูจะคัดลอกใบหน้า อารมณ์ และคลิปไปยัง Pictures และ Movies ใต้ TAMA AI/avatar ใบหน้าแต่ละแบบใช้ห้ารูปจากผู้ให้บริการของคุณ: รูปที่คุณเลือกหนึ่งรูปและอารมณ์อีกสี่รูป</string>
     <string name="nm_own_clip_title">คลิปของคุณเอง</string>
     <string name="nm_own_clip_body">วิดีโอสั้นของคุณจะเล่นเป็นใบหน้าตอนพัก และอารมณ์อื่นก็ใช้คลิปเดียวกัน MP4 หรือ MOV ที่เป็นวิดีโอ H.264 ยาวไม่เกิน 15 วินาทีและไม่เกิน 30 MB เล่นวนซ้ำแบบปิดเสียง</string>
     <string name="nm_own_clip_on">คลิปของคุณเปิดอยู่และเล่นในทุกอารมณ์ ตรงที่แสดงภาพนิ่งยังใช้ภาพที่วาดไว้ “ใบหน้าเริ่มต้น” จะลบคลิปออก</string>
-    <string name="nm_own_clip_local">คลิปอยู่ในโทรศัพท์เครื่องนี้เท่านั้น ไม่ได้อัปโหลดไป nanoMuse Cloud และไม่ซิงค์ไปยังอุปกรณ์อื่นของคุณ</string>
+    <string name="nm_own_clip_local">คลิปอยู่ในโทรศัพท์เครื่องนี้เท่านั้น ไม่ได้อัปโหลดไป TAMA AI Cloud และไม่ซิงค์ไปยังอุปกรณ์อื่นของคุณ</string>
     <string name="nm_own_clip_choose">เลือกคลิป</string>
     <string name="nm_own_clip_replace">เปลี่ยนคลิป</string>
     <string name="nm_own_clip_default">ใบหน้าเริ่มต้น</string>
@@ -387,7 +387,7 @@
     <string name="nm_a11y_own_clip_preview">ตัวอย่างคลิปของคุณ</string>
 
     <!-- First run (Muse-style welcome; the steps are OpenMinis' provider and model screens) -->
-    <string name="nm_setup_title">ยินดีต้อนรับสู่ nanoMuse</string>
+    <string name="nm_setup_title">ยินดีต้อนรับสู่ TAMA AI</string>
     <string name="nm_setup_step_models">เลือกโมเดล</string>
     <string name="nm_setup_step_models_sub">โมเดลที่ผู้ให้บริการของคุณมีจะแสดงเป็นรายการให้ เลือกได้สูงสุดสามตัว</string>
     <string name="nm_setup_step_start">พบกับ %1$s</string>
@@ -403,7 +403,7 @@
     <string name="nm_settings_no_model">ยังไม่มีโมเดล</string>
     <string name="nm_settings_no_model_sub">เพิ่มผู้ให้บริการแล้วเลือกโมเดลของมัน</string>
     <string name="nm_settings_change_model">เปลี่ยน</string>
-    <string name="nm_settings_version">nanoMuse %1$s (%2$d)</string>
+    <string name="nm_settings_version">TAMA AI %1$s (%2$d)</string>
     <string name="nm_version_title">เวอร์ชัน</string>
     <string name="nm_version_checking">กำลังตรวจสอบรุ่นล่าสุด…</string>
     <string name="nm_version_have">ล่าสุด %1$s คุณใช้อยู่แล้ว</string>
@@ -483,8 +483,8 @@
     <string name="nm_avatar_share_title">แชร์อวาตาร์ของฉัน</string>
     <string name="nm_avatar_share_subtitle">เลือกการ์ดหนึ่งใบ จะส่งผ่านหน้าแชร์ของระบบ</string>
     <string name="nm_avatar_share_system">แชร์</string>
-    <string name="nm_avatar_share_bubble">สวัสดี ฉันคือ %1$s เอเจนต์ AI ส่วนตัว มาทำความรู้จัก nanoMuse โอเพนซอร์ส ทำงานบนโทรศัพท์ของคุณ</string>
-    <string name="nm_avatar_share_tagline">เอเจนต์ AI ส่วนตัวของคุณ โอเพนซอร์ส · github.com/nano-muse/nanoMuse</string>
+    <string name="nm_avatar_share_bubble">สวัสดี ฉันคือ %1$s เอเจนต์ AI ส่วนตัว มาทำความรู้จัก TAMA AI โอเพนซอร์ส ทำงานบนโทรศัพท์ของคุณ</string>
+    <string name="nm_avatar_share_tagline">เอเจนต์ AI ส่วนตัวของคุณ โอเพนซอร์ส · github.com/nano-muse/TAMA AI</string>
 
     <!-- 0.1.10 · Motion -->
     <string name="nm_media_title">โมเดลภาพและวิดีโอ</string>
@@ -526,16 +526,16 @@
     <string name="nm_hands_this_phone">โทรศัพท์เครื่องนี้</string>
     <string name="nm_hands_intro">สำหรับแอปที่ไม่มี API มันจะใช้โทรศัพท์แบบเดียวกับคุณ: ถ่ายภาพหน้าจอ แล้วแตะ พิมพ์ และปัด ทักษะ คำสั่ง และเบราว์เซอร์มาก่อน หน้าจอเป็นทางเลือกสุดท้าย ปิดอยู่จนกว่าคุณจะเปิด</string>
     <string name="nm_hands_switch">ให้เอเจนต์ใช้หน้าจอ</string>
-    <string name="nm_hands_switch_footer">ระหว่างทำงาน แคปซูลที่ด้านบนของหน้าจอจะแสดงแต่ละขั้นตอนและปุ่มหยุด การล็อกอิน รหัสผ่าน และรหัสยืนยันเป็นหน้าที่ของคุณเสมอ</string>
+    <string name="nm_hands_switch_footer">แคปซูลแสดงแต่ละขั้นตอนและปุ่มหยุด โปรดควบคุมด้วยตนเองเมื่อเข้าสู่ระบบหรือป้อนรหัสผ่านและรหัส ภาพหน้าจออาจมีข้อมูลอ่อนไหว</string>
     <string name="nm_hands_status_off">ปิด เอเจนต์จะบอกเมื่องานต้องใช้หน้าจอ</string>
     <string name="nm_hands_status_ready">พร้อม</string>
     <string name="nm_hands_status_missing">เปิดอยู่ แต่ยังขาดบางอย่างด้านล่าง</string>
     <string name="nm_hands_status_working">กำลังทำงานบนหน้าจออยู่</string>
     <string name="nm_hands_stop_run">หยุดสิ่งที่กำลังทำ</string>
     <string name="nm_hands_section_needs">สิ่งที่ต้องใช้</string>
-    <string name="nm_hands_needs_footer">บริการการช่วยเหลือพิเศษถ่ายภาพหน้าจอและทำท่าทางสัมผัส แต่ไม่อ่านเนื้อหาบนหน้าจอ การแสดงทับแอปอื่นใช้สำหรับแคปซูล</string>
+    <string name="nm_hands_needs_footer">บริการการช่วยเหลือพิเศษจับภาพหน้าจอ ทำท่าทาง และอาจอ่านป้ายกำกับใกล้จุดแตะเพื่อตรวจสอบความเสี่ยง ภาพจะส่งไปยังโมเดลหน้าจอที่ตั้งค่าไว้ การแสดงทับใช้แสดงแคปซูล</string>
     <string name="nm_hands_need_a11y">บริการการช่วยเหลือพิเศษ</string>
-    <string name="nm_hands_need_a11y_fix">เปิด nanoMuse ใต้ แอปที่ติดตั้ง ในการตั้งค่าการช่วยเหลือพิเศษ</string>
+    <string name="nm_hands_need_a11y_fix">เปิด TAMA AI ใต้ แอปที่ติดตั้ง ในการตั้งค่าการช่วยเหลือพิเศษ</string>
     <string name="nm_hands_need_overlay">แสดงทับแอปอื่น</string>
     <string name="nm_hands_need_overlay_fix">อนุญาต เพื่อให้แสดงแคปซูลที่มีปุ่มหยุดได้</string>
     <string name="nm_hands_need_model">โมเดลที่มองเห็นรูปภาพ</string>
@@ -552,15 +552,15 @@
     <string name="nm_hands_why_default">ค่าเริ่มต้นของมือภายใต้คีย์ของคุณเอง</string>
     <string name="nm_hands_why_chat">โมเดลแชทที่คุณเลือก</string>
     <string name="nm_hands_why_group">ตัวแรกในกลุ่มเริ่มต้นของคุณที่มองเห็นได้</string>
-    <string name="nm_hands_why_menu">โมเดลหน้าจอของ nanoMuse Cloud</string>
+    <string name="nm_hands_why_menu">โมเดลหน้าจอของ TAMA AI Cloud</string>
     <string name="nm_hands_why_vision_group">กลุ่มวิชันของคุณ</string>
     <string name="nm_hands_why_any">โมเดลเดียวที่เปิดใช้และมองเห็นได้</string>
     <string name="nm_hands_section_rules">มันทำงานอย่างไร</string>
     <string name="nm_hands_rule_ladder">หน้าจอมาเป็นลำดับสุดท้าย: ทักษะ คำสั่ง หรือเบราว์เซอร์มาก่อน</string>
-    <string name="nm_hands_rule_secrets">ไม่พิมพ์รหัสผ่าน รหัสยืนยัน หรือหมายเลขบัตรเด็ดขาด มันจะส่งโทรศัพท์ให้คุณทำเอง</string>
-    <string name="nm_hands_rule_approvals">การชำระเงิน การส่ง การโพสต์ หรือการลบ จะรอการอนุมัติจากคุณ เช่นเดียวกับในเชลล์และเบราว์เซอร์</string>
-    <string name="nm_hands_rule_stop">ปุ่มหยุดอยู่บนหน้าจอเสมอ ไม่มีอะไรทำงานต่อหลังจากกด</string>
-    <string name="nm_hands_rule_screenshots">ภาพหน้าจอของแต่ละขั้นตอนเก็บไว้กับบทสนทนา และส่งไปยังโมเดลของคุณเองเท่านั้น</string>
+    <string name="nm_hands_rule_secrets">แอปพยายามส่งการควบคุมให้คุณเมื่อพบช่องรหัสผ่าน รหัส และบัตร การตรวจจับอาจพลาดช่องได้ หากไม่แน่ใจให้ใช้ปุ่มหยุด</string>
+    <string name="nm_hands_rule_approvals">การชำระเงิน ส่ง เผยแพร่ และลบที่ตรวจพบจะผ่านการตรวจสอบการอนุมัติ การอนุญาตก่อนหน้าอาจมีผล และการตรวจจับอาจพลาดการกระทำได้</string>
+    <string name="nm_hands_rule_stop">หยุดเป็นคำขอให้จบงาน การดำเนินการที่เริ่มไปแล้วอาจเสร็จสิ้น</string>
+    <string name="nm_hands_rule_screenshots">ภาพหน้าจออาจถูกบันทึกในโทรศัพท์นี้และส่งไปยังโมเดลหน้าจอที่ตั้งค่าไว้ ซึ่งอาจใช้ผู้ให้บริการระยะไกล ภาพอาจมีข้อมูลอ่อนไหว</string>
 
     <!-- the capsule -->
     <string name="nm_hands_step">ขั้นตอนที่ %1$d</string>
@@ -573,7 +573,7 @@
     <string name="nm_hands_protected_screen">หน้าจอนี้ได้รับการป้องกันและอ่านไม่ได้ ทำส่วนนี้ให้เสร็จด้วยตัวเอง แล้วแตะ ดำเนินการต่อ</string>
     <string name="nm_hands_secret_field">ช่องรหัสผ่านหรือรหัสยืนยัน โปรดกรอกด้วยตัวเอง แล้วแตะ ดำเนินการต่อ</string>
     <string name="nm_hands_approval_title">รอการอนุมัติจากคุณ</string>
-    <string name="nm_hands_approval_detail">แตะ “%1$s” ยืนยันใน nanoMuse (จะขอล็อกหน้าจอของคุณ)</string>
+    <string name="nm_hands_approval_detail">แตะ “%1$s” ยืนยันใน TAMA AI (จะขอล็อกหน้าจอของคุณ)</string>
     <string name="nm_hands_approval_here">แตะ “%1$s” ไหม</string>
     <string name="nm_hands_allow_once">อนุญาต</string>
     <string name="nm_hands_deny">ปฏิเสธ</string>
@@ -604,10 +604,10 @@
     <!-- Reach (0.1.13): the phone drives your computer -->
     <string name="nm_pc_title">คอมพิวเตอร์</string>
     <string name="nm_pc_none_short">ไม่มี</string>
-    <string name="nm_pc_intro">สั่งที่นี่ ทำบนคอมพิวเตอร์ของคุณ: คำสั่ง ไฟล์ หน้าเว็บในเบราว์เซอร์ของมัน ดูหน้าจอของมัน หรือมอบงานทั้งชิ้นให้ nanoMuse ที่นั่น โทรศัพท์เป็นฝ่ายสั่งคอมพิวเตอร์ ไม่ใช่ในทางกลับกัน ทุกการอนุมัติตัดสินใจที่นี่ก่อน</string>
-    <string name="nm_pc_hub_title">วิธีง่าย: nanoMuse Desktop บัญชีเดียวกัน</string>
-    <string name="nm_pc_hub_body">ติดตั้ง nanoMuse Desktop บนคอมพิวเตอร์แล้วลงชื่อเข้าใช้ด้วยบัญชีของโทรศัพท์เครื่องนี้ มันจะปรากฏใต้ บัญชี → อุปกรณ์ ภายในไม่กี่วินาที</string>
-    <string name="nm_pc_hub_download">ดาวน์โหลด nanoMuse Desktop</string>
+    <string name="nm_pc_intro">สั่งที่นี่ ทำบนคอมพิวเตอร์ของคุณ: คำสั่ง ไฟล์ หน้าเว็บในเบราว์เซอร์ของมัน ดูหน้าจอของมัน หรือมอบงานทั้งชิ้นให้ TAMA AI ที่นั่น โทรศัพท์เป็นฝ่ายสั่งคอมพิวเตอร์ ไม่ใช่ในทางกลับกัน ทุกการอนุมัติตัดสินใจที่นี่ก่อน</string>
+    <string name="nm_pc_hub_title">วิธีง่าย: TAMA AI Desktop บัญชีเดียวกัน</string>
+    <string name="nm_pc_hub_body">ติดตั้ง TAMA AI Desktop บนคอมพิวเตอร์แล้วลงชื่อเข้าใช้ด้วยบัญชีของโทรศัพท์เครื่องนี้ มันจะปรากฏใต้ บัญชี → อุปกรณ์ ภายในไม่กี่วินาที</string>
+    <string name="nm_pc_hub_download">ดาวน์โหลด TAMA AI Desktop</string>
     <string name="nm_pc_hub_account">บัญชีและอุปกรณ์</string>
     <string name="nm_pc_section_paired">คอมพิวเตอร์ในบัญชีนี้</string>
     <string name="nm_pc_none">ยังไม่มีคอมพิวเตอร์</string>
@@ -616,11 +616,11 @@
     <string name="nm_pc_last_seen">พบล่าสุด %1$s</string>
     <string name="nm_pc_offline">ออฟไลน์</string>
     <string name="nm_pc_online">ออนไลน์</string>
-    <string name="nm_pc_account_none">โทรศัพท์เครื่องนี้ยังไม่ได้ลงชื่อเข้าใช้ nanoMuse Cloud ลงชื่อเข้าใช้ก่อน แล้วจึงให้คอมพิวเตอร์ลงชื่อเข้าใช้ด้วยบัญชีเดียวกัน</string>
+    <string name="nm_pc_account_none">โทรศัพท์เครื่องนี้ยังไม่ได้ลงชื่อเข้าใช้ TAMA AI Cloud ลงชื่อเข้าใช้ก่อน แล้วจึงให้คอมพิวเตอร์ลงชื่อเข้าใช้ด้วยบัญชีเดียวกัน</string>
     <string name="nm_pc_account_hint">โทรศัพท์เครื่องนี้ลงชื่อเข้าใช้เป็น %1$s คอมพิวเตอร์ต้องลงชื่อเข้าใช้ด้วยบัญชีเดียวกัน</string>
     <string name="nm_pc_checking">กำลังตรวจสอบ…</string>
     <string name="nm_pc_answering">%1$s ตอบกลับแล้ว</string>
-    <string name="nm_pc_not_answering">%1$s ไม่ตอบกลับ nanoMuse Desktop ยังทำงานอยู่ที่นั่นไหม</string>
+    <string name="nm_pc_not_answering">%1$s ไม่ตอบกลับ TAMA AI Desktop ยังทำงานอยู่ที่นั่นไหม</string>
 
     <!-- the approval card -->
     <string name="nm_risk_desc_on_computer">บนคอมพิวเตอร์ “%1$s” ไม่ใช่บนโทรศัพท์เครื่องนี้</string>
@@ -639,16 +639,16 @@
     <string name="nm_risk_class_remote">ควบคุมระยะไกล</string>
     <string name="nm_hub_remote_reason">%1$s ควบคุมโทรศัพท์เครื่องนี้ได้</string>
 
-    <!-- nanoMuse Cloud: sign in with a phone/e-mail code for a starter allowance -->
+    <!-- TAMA AI Cloud: sign in with a phone/e-mail code for a starter allowance -->
     <string name="nm_setup_own_key">ฉันมีคีย์ API ของตัวเอง</string>
 
-    <!-- nanoMuse: the first-run pages -->
+    <!-- TAMA AI: the first-run pages -->
     <string name="nm_welcome_tagline">เอเจนต์ส่วนตัวแบบโอเพนซอร์สสำหรับทุกอุปกรณ์ที่คุณมี</string>
     <string name="nm_welcome_email">ลงชื่อเข้าใช้ (ฟรี)</string>
     <string name="nm_welcome_fine_print">บัญชีเดียวเชื่อมอุปกรณ์ของคุณไว้ด้วยกันและมาพร้อมการใช้โมเดลฟรี ไม่มีค่าใช้จ่าย เพิ่มคีย์ API ของคุณเองได้ทันทีหลังจากนี้</string>
     <string name="nm_setup_source_title">ให้โมเดลไหนตอบ</string>
     <string name="nm_setup_source_sub">บัญชีของคุณมีโมเดลมาให้แล้วหนึ่งตัว คุณเพิ่มคีย์ API ของตัวเองได้ด้วยและสลับได้ทุกเมื่อ</string>
-    <string name="nm_setup_source_cloud">ใช้โมเดลของ nanoMuse Cloud</string>
+    <string name="nm_setup_source_cloud">ใช้โมเดลของ TAMA AI Cloud</string>
     <string name="nm_setup_source_cloud_sub">DeepSeek สำหรับแชทและ Qwen สำหรับมือ พร้อมโควตาฟรีต่อบัญชีที่ผู้พัฒนาออกค่าใช้จ่ายให้ ไม่ต้องตั้งค่าอะไร</string>
     <string name="nm_setup_source_own_sub">OpenAI, Anthropic, DeepSeek, Bailian และ endpoint อื่นที่เข้ากันได้กับ OpenAI คีย์อยู่บนโทรศัพท์เครื่องนี้</string>
     <string name="nm_setup_source_fine_print">ทั้งสองไม่ขัดกัน: โมเดล Cloud ยังใช้ได้อยู่ และกลุ่มโมเดลแต่ละกลุ่มเลือกของตัวเอง</string>
@@ -661,15 +661,15 @@
     <string name="nm_welcome_feat_hands">มือ: มันใช้โทรศัพท์ของคุณ</string>
     <string name="nm_welcome_feat_hands_sub">จองรถไฟ สั่งอาหาร ค้นหาบางอย่างในแอป คุณดูอยู่ และหยุดได้ทุกเมื่อ</string>
     <string name="nm_welcome_feat_reach">สั่งงานคอมพิวเตอร์ของคุณจากที่นี่</string>
-    <string name="nm_welcome_feat_reach_sub">ติดตั้ง nanoMuse Desktop บนเครื่อง Mac, Windows หรือ Linux ลงชื่อเข้าใช้ด้วยบัญชีเดียวกัน แล้วมอบงานให้จากโทรศัพท์</string>
-    <string name="nm_welcome_notice">nanoMuse เป็นโครงการชุมชนโอเพนซอร์สที่ไม่แสวงหากำไร ฟรีตลอดไป โมเดลมาพร้อมโควตาฟรีที่ผู้พัฒนาออกค่าใช้จ่ายให้ หลังจากนั้นใช้คีย์ของคุณเอง ไม่มีการขายอะไร สิ่งที่รีเลย์เก็บไว้ระบุในนโยบายความเป็นส่วนตัว และ การตั้งค่า → การควบคุมข้อมูล เป็นของคุณ</string>
+    <string name="nm_welcome_feat_reach_sub">ติดตั้ง TAMA AI Desktop บนเครื่อง Mac, Windows หรือ Linux ลงชื่อเข้าใช้ด้วยบัญชีเดียวกัน แล้วมอบงานให้จากโทรศัพท์</string>
+    <string name="nm_welcome_notice">TAMA AI เป็นโครงการชุมชนโอเพนซอร์สที่ไม่แสวงหากำไร ฟรีตลอดไป โมเดลมาพร้อมโควตาฟรีที่ผู้พัฒนาออกค่าใช้จ่ายให้ หลังจากนั้นใช้คีย์ของคุณเอง ไม่มีการขายอะไร สิ่งที่รีเลย์เก็บไว้ระบุในนโยบายความเป็นส่วนตัว และ การตั้งค่า → การควบคุมข้อมูล เป็นของคุณ</string>
     <string name="nm_welcome_hands_title">ให้มันใช้โทรศัพท์ของคุณ</string>
     <string name="nm_welcome_hands_sub">ด้วยสิทธิ์สองอย่าง มันจะเปิดแอป แตะ และพิมพ์แทนคุณได้ แคปซูลที่แสดงแต่ละขั้นตอนพร้อมปุ่มหยุดจะอยู่บนหน้าจอ การล็อกอิน รหัสผ่าน และรหัสยืนยันเป็นของคุณเสมอ</string>
     <string name="nm_welcome_hands_turn_on">เปิด</string>
     <string name="nm_welcome_skip">ข้ามไปก่อน</string>
     <string name="nm_welcome_hands_fine_print">อย่างอื่นทั้งหมดทำงานได้โดยไม่ต้องใช้สิทธิ์เหล่านี้ อยู่ใต้ การตั้งค่า → มือ เมื่อคุณต้องการ</string>
     <string name="nm_welcome_meet_fine_print">ก่อนทำสิ่งที่ย้อนกลับไม่ได้ (ลบ ส่ง ชำระเงิน) มันจะหยุดและถามคุณก่อน</string>
-    <string name="nm_cloud_signin_title">เริ่มต้นกับ nanoMuse Cloud</string>
+    <string name="nm_cloud_signin_title">เริ่มต้นกับ TAMA AI Cloud</string>
     <string name="nm_cloud_signin_subtitle">รหัสส่งไปที่โทรศัพท์หรืออีเมลของคุณ หรือใช้รหัสผ่าน เมื่อคุณตั้งไว้แล้ว</string>
     <string name="nm_cloud_mode_code">ด้วยรหัส</string>
     <string name="nm_cloud_mode_password">ด้วยรหัสผ่าน</string>
@@ -694,7 +694,7 @@
     <string name="nm_cloud_server_https">ใช้ https สำหรับเซิร์ฟเวอร์นอกเครือข่ายของคุณเอง ส่วนที่อยู่ส่วนตัว (10.x, 192.168.x, 172.16-31.x, localhost, ชื่อ .local หรือ .ts.net) ใช้ http ได้</string>
     <string name="nm_lan_only_https">http:// แบบไม่เข้ารหัสใช้ได้เฉพาะที่อยู่ในเครือข่ายของคุณเอง (10.x, 172.16-31.x, 192.168.x, ชื่อ .local) สำหรับ %1$s ให้ใช้ https://</string>
     <string name="nm_cloud_server_unreachable">ไม่มีรีเลย์ตอบกลับที่ %1$s ตรวจสอบที่อยู่และดูว่ารีเลย์กำลังทำงานอยู่</string>
-    <string name="nm_cloud_server_default">กลับไปใช้ nanoMuse Cloud</string>
+    <string name="nm_cloud_server_default">กลับไปใช้ TAMA AI Cloud</string>
     <string name="nm_cloud_server_row">เซิร์ฟเวอร์</string>
     <string name="nm_cloud_server_change">เปลี่ยน</string>
     <string name="nm_cloud_server_change_confirm">คีย์ของโทรศัพท์เครื่องนี้เป็นของเซิร์ฟเวอร์ปัจจุบัน ให้ออกจากระบบที่นี่ก่อน แล้วลงชื่อเข้าใช้เซิร์ฟเวอร์อื่นจากหน้าลงชื่อเข้าใช้</string>
@@ -715,11 +715,11 @@
     <string name="nm_cloud_used_today_open">วันนี้ %1$s</string>
     <string name="nm_cloud_refresh">รีเฟรชยอดคงเหลือ</string>
     <string name="nm_cloud_refreshing">กำลังรีเฟรช…</string>
-    <string name="nm_cloud_how_it_works">nanoMuse Cloud เป็นผู้ให้บริการธรรมดารายหนึ่งในแอปนี้: โมเดลของมันอยู่ใต้ ผู้ให้บริการ และผสมกับโมเดลของคุณเองในกลุ่มโมเดลได้</string>
+    <string name="nm_cloud_how_it_works">TAMA AI Cloud เป็นผู้ให้บริการธรรมดารายหนึ่งในแอปนี้: โมเดลของมันอยู่ใต้ ผู้ให้บริการ และผสมกับโมเดลของคุณเองในกลุ่มโมเดลได้</string>
     <string name="nm_cloud_open_provider">การตั้งค่าผู้ให้บริการ</string>
     <string name="nm_cloud_sign_out">ออกจากระบบ</string>
     <string name="nm_cloud_sign_out_sub">คีย์ของโทรศัพท์เครื่องนี้จะถูกเพิกถอนและผู้ให้บริการ Cloud จะถูกลบออก โควตายังอยู่กับบัญชีของคุณ</string>
-    <string name="nm_cloud_sign_out_confirm">ผู้ให้บริการ nanoMuse Cloud และโมเดลของมันจะถูกลบออกจากโทรศัพท์เครื่องนี้</string>
+    <string name="nm_cloud_sign_out_confirm">ผู้ให้บริการ TAMA AI Cloud และโมเดลของมันจะถูกลบออกจากโทรศัพท์เครื่องนี้</string>
     <string name="nm_cloud_row_remaining">เหลือ %1$s</string>
     <string name="nm_cloud_row_sign_in">ลงชื่อเข้าใช้</string>
     <string name="nm_cloud_err_bad_identifier">ดูเหมือนจะไม่ใช่ที่อยู่อีเมล</string>
@@ -737,7 +737,7 @@
     <string name="nm_cloud_err_allowance_abroad">โควตาฟรีหมดแล้ว ชวนเพื่อน (รับคนละ +¥%1$s) หรือเพิ่มคีย์ของคุณเองใต้ การตั้งค่า → ผู้ให้บริการ OpenRouter เป็นทางที่เร็วที่สุด: บัญชีเดียว คีย์เดียว จ่ายตามการใช้งาน</string>
     <string name="nm_cloud_warn_line">โควตาฟรีใกล้หมดแล้ว: เหลือ ¥%1$s จาก ¥%2$s ชวนเพื่อน (รับคนละ +¥%3$s) หรือเพิ่มคีย์ของคุณเอง ทั้งสองอย่างอยู่ใต้ บัญชี</string>
     <string name="nm_cloud_err_rate_limited">มีคำขอพร้อมกันมากเกินไป รอสักครู่</string>
-    <string name="nm_cloud_err_unreachable">ติดต่อ nanoMuse Cloud ไม่ได้ ตรวจสอบการเชื่อมต่อ</string>
+    <string name="nm_cloud_err_unreachable">ติดต่อ TAMA AI Cloud ไม่ได้ ตรวจสอบการเชื่อมต่อ</string>
     <string name="nm_cloud_err_generic">มีบางอย่างผิดพลาด</string>
     <string name="nm_cloud_err_bad_credentials">อีเมลหรือรหัสผ่านไม่ถูกต้อง</string>
     <string name="nm_cloud_err_no_password">บัญชีนี้ยังไม่มีรหัสผ่าน ลงชื่อเข้าใช้ด้วยรหัส แล้วตั้งรหัสผ่านใต้ บัญชี</string>
@@ -753,10 +753,10 @@
     <string name="nm_cloud_err_content_rejected">การตรวจสอบเนื้อหาของผู้ให้บริการโมเดลปฏิเสธคำขอนี้ ลองใช้คำอื่น หรือถ้าเกิดซ้ำ ให้เริ่มแชทใหม่ เพราะคำที่ถูกปฏิเสธอาจอยู่ในช่วงต้นของบทสนทนา</string>
     <string name="nm_cloud_err_provider_busy">ผู้ให้บริการโมเดลกำลังยุ่งอยู่ ลองอีกครั้งในอีกสักครู่</string>
     <string name="nm_cloud_err_provider_busy_wait">ผู้ให้บริการโมเดลกำลังยุ่งอยู่ ลองอีกครั้งในอีก %1$s</string>
-    <string name="nm_cloud_err_model_not_offered">nanoMuse Cloud ไม่ให้บริการโมเดลนี้แล้ว เลือกโมเดลอื่นได้ที่ การตั้งค่า → nanoMuse Cloud</string>
-    <string name="nm_cloud_err_relay_down">nanoMuse Cloud ไม่ตอบกลับ ลองอีกครั้งในอีกสักครู่</string>
-    <string name="nm_cloud_err_allowance_paused">โควตาฟรีบนรีเลย์นี้หยุดชั่วคราว ไม่ได้หมด เพิ่มคีย์ของคุณเองหรือลงชื่อเข้าใช้ด้วยแพ็กเกจที่จ่ายอยู่แล้วได้ที่ การตั้งค่า → nanoMuse Cloud การลงชื่อเข้าใช้ อุปกรณ์ และโควตาที่เหลือยังอยู่เหมือนเดิม</string>
-    <string name="nm_cloud_err_service_paused">ผู้ดูแลหยุด nanoMuse Cloud ไว้ชั่วคราว การลงชื่อเข้าใช้และข้อมูลของคุณยังเก็บไว้ ลองอีกครั้งภายหลัง</string>
+    <string name="nm_cloud_err_model_not_offered">TAMA AI Cloud ไม่ให้บริการโมเดลนี้แล้ว เลือกโมเดลอื่นได้ที่ การตั้งค่า → TAMA AI Cloud</string>
+    <string name="nm_cloud_err_relay_down">TAMA AI Cloud ไม่ตอบกลับ ลองอีกครั้งในอีกสักครู่</string>
+    <string name="nm_cloud_err_allowance_paused">โควตาฟรีบนรีเลย์นี้หยุดชั่วคราว ไม่ได้หมด เพิ่มคีย์ของคุณเองหรือลงชื่อเข้าใช้ด้วยแพ็กเกจที่จ่ายอยู่แล้วได้ที่ การตั้งค่า → TAMA AI Cloud การลงชื่อเข้าใช้ อุปกรณ์ และโควตาที่เหลือยังอยู่เหมือนเดิม</string>
+    <string name="nm_cloud_err_service_paused">ผู้ดูแลหยุด TAMA AI Cloud ไว้ชั่วคราว การลงชื่อเข้าใช้และข้อมูลของคุณยังเก็บไว้ ลองอีกครั้งภายหลัง</string>
     <string name="nm_cloud_err_sync_paused">การซิงค์บทสนทนาบนรีเลย์นี้หยุดชั่วคราว สิ่งที่เก็บไว้ยังอยู่ และอุปกรณ์ของคุณยังใช้งานต่อได้ด้วยตัวเอง</string>
     <string name="nm_cloud_err_hub_paused">การเชื่อมต่อระหว่างอุปกรณ์บนรีเลย์นี้หยุดชั่วคราว แต่ละอุปกรณ์ยังใช้งานต่อได้ด้วยตัวเอง</string>
     <string name="nm_refusal_relay_says">รีเลย์แจ้งว่า: %1$s</string>
@@ -800,7 +800,7 @@
     <string name="nm_cloud_invite_share">แชร์ลิงก์</string>
     <string name="nm_cloud_invite_copy">คัดลอก</string>
     <string name="nm_cloud_invite_copied">คัดลอกแล้ว</string>
-    <string name="nm_cloud_invite_share_text">มาลอง nanoMuse ด้วยกัน เอเจนต์ส่วนตัวแบบโอเพนซอร์สทั้งหมด ใช้ฟรี สมัครด้วยรหัสของฉัน %1$s: %2$s</string>
+    <string name="nm_cloud_invite_share_text">มาลอง TAMA AI ด้วยกัน เอเจนต์ส่วนตัวแบบโอเพนซอร์สทั้งหมด ใช้ฟรี สมัครด้วยรหัสของฉัน %1$s: %2$s</string>
     <string name="nm_cloud_invite_count">เพื่อนเข้าร่วมแล้ว %1$d คน</string>
     <string name="nm_cloud_invite_earned">ได้รับ ¥%1$s จากการชวนเพื่อน</string>
     <string name="nm_cloud_invite_have">มีรหัสเชิญไหม</string>
@@ -841,9 +841,9 @@
     <string name="nm_cloud_ev_contribute_deleted">การควบคุมข้อมูล: ลบบทสนทนาที่เก็บไว้แล้ว</string>
     <string name="nm_cloud_ev_contribute_default">การควบคุมข้อมูล: เปิดสำหรับบัญชีใหม่</string>
     <string name="nm_data_title">การควบคุมข้อมูล</string>
-    <string name="nm_data_improve">ช่วยปรับปรุงโมเดล AI ของ nanoMuse</string>
+    <string name="nm_data_improve">ช่วยปรับปรุงโมเดล AI ของ TAMA AI</string>
     <string name="nm_data_why">ขณะที่เปิดอยู่ ข้อความในแชทเหล่านี้ (สิ่งที่คุณเขียน สิ่งที่โมเดลตอบ และเครื่องมือที่มันเลือกเรียก) จะเข้าชุดฝึกของโมเดลเปิดของชุมชนด้วย: ไม่รวมความทรงจำหรือ SOUL ของคุณ (พรอมต์ระบบ) สิ่งที่เครื่องมือส่งกลับ รูปภาพ หรือตัวตนของคุณ เมื่อปิด จะไม่มีอะไรเข้าเพิ่มอีก ส่วนบันทึกเองยังอยู่จนกว่าคุณจะลบ รอบที่ใช้คีย์ของคุณเองอยู่ในบันทึกเท่านั้น ไม่เคยอยู่ในชุดฝึก</string>
-    <string name="nm_data_record_why">nanoMuse Cloud เก็บทุกรอบสนทนาของคุณกับโมเดลของมันไว้ครบถ้วนเป็นบันทึกของบัญชีคุณ: สิ่งที่ส่งไปให้โมเดล สิ่งที่มันตอบ เครื่องมือและสิ่งที่เครื่องมือส่งกลับ รูปภาพเก็บเป็นไฟล์ ตั้งแต่แอป 1.0.7 รอบที่ตอบด้วยคีย์ของคุณเองก็เข้ามาด้วย นี่คือข้อมูลของคุณ มีเพียงอุปกรณ์ของคุณและผู้ที่ดูแลรีเลย์เท่านั้นที่อ่านได้</string>
+    <string name="nm_data_record_why">TAMA AI Cloud เก็บทุกรอบสนทนาของคุณกับโมเดลของมันไว้ครบถ้วนเป็นบันทึกของบัญชีคุณ: สิ่งที่ส่งไปให้โมเดล สิ่งที่มันตอบ เครื่องมือและสิ่งที่เครื่องมือส่งกลับ รูปภาพเก็บเป็นไฟล์ ตั้งแต่แอป 1.0.7 รอบที่ตอบด้วยคีย์ของคุณเองก็เข้ามาด้วย นี่คือข้อมูลของคุณ มีเพียงอุปกรณ์ของคุณและผู้ที่ดูแลรีเลย์เท่านั้นที่อ่านได้</string>
     <string name="nm_data_record_held">บันทึกมี %1$d รอบสนทนาของบัญชีนี้ (%2$d รอบใช้คีย์ของคุณเอง) และรูปภาพ %3$d รูป</string>
     <string name="nm_data_record_empty">บันทึกยังไม่มีอะไรจากบัญชีนี้</string>
     <string name="nm_data_record_keep_days">รีเลย์นี้เก็บรอบสนทนาไว้ %1$d วัน</string>
@@ -857,7 +857,7 @@
     <string name="nm_data_delete_sub">ลบบันทึกแชทของบัญชีนี้และทุกรอบฝึกที่เก็บไว้จากบัญชีนี้ ไม่ว่าตอนนี้สวิตช์จะเปิดหรือปิด การปิดสวิตช์อย่างเดียวยังคงสิ่งที่เก็บไว้จนกว่าคุณจะลบที่นี่</string>
     <string name="nm_data_delete_confirm">บันทึกแชทของคุณและรอบฝึกที่เก็บไว้จะถูกลบออกจากเซิร์ฟเวอร์ ย้อนกลับไม่ได้</string>
     <string name="nm_data_deleted">ลบแล้ว: บันทึก %1$d รอบ ไฟล์ %2$d ไฟล์ รอบฝึก %3$d รอบ</string>
-    <string name="nm_data_sign_in">ลงชื่อเข้าใช้ nanoMuse Cloud เพื่อใช้งาน</string>
+    <string name="nm_data_sign_in">ลงชื่อเข้าใช้ TAMA AI Cloud เพื่อใช้งาน</string>
     <string name="nm_data_privacy">นโยบายความเป็นส่วนตัว</string>
     <string name="nm_data_status_on">เปิด</string>
     <string name="nm_data_status_off">ปิด</string>
@@ -905,7 +905,7 @@
     <!-- 0.1.20: the coding agents on the account's computers -->
     <string name="nm_coding_title">เอเจนต์เขียนโค้ด</string>
     <string name="nm_coding_intro">Cursor, Codex และ Claude Code บนคอมพิวเตอร์ของคุณ: เซสชัน คำตอบล่าสุด และส่งข้อความถึงตัวใดก็ได้ จากที่นี่ ไม่มีอะไรของพวกมันถูกคัดลอกมาที่โทรศัพท์</string>
-    <string name="nm_coding_no_computer">ไม่มีคอมพิวเตอร์ที่มีเอเจนต์เขียนโค้ดออนไลน์อยู่ รัน nanoMuse บนคอมพิวเตอร์ที่ติดตั้ง Cursor, Codex หรือ Claude Code ไว้ โดยลงชื่อเข้าใช้ด้วยบัญชีนี้</string>
+    <string name="nm_coding_no_computer">ไม่มีคอมพิวเตอร์ที่มีเอเจนต์เขียนโค้ดออนไลน์อยู่ รัน TAMA AI บนคอมพิวเตอร์ที่ติดตั้ง Cursor, Codex หรือ Claude Code ไว้ โดยลงชื่อเข้าใช้ด้วยบัญชีนี้</string>
     <string name="nm_coding_account_hint">โทรศัพท์เครื่องนี้ลงชื่อเข้าใช้เป็น %1$s คอมพิวเตอร์ต้องใช้บัญชีเดียวกัน</string>
     <string name="nm_coding_refresh">รีเฟรช</string>
     <string name="nm_coding_all">ทั้งหมด</string>
@@ -929,7 +929,7 @@
     <string name="nm_coding_fresh_hint">บทสนทนาใหม่กับ %1$s ข้อความแรกของคุณจะเริ่มมันบนคอมพิวเตอร์</string>
     <string name="nm_coding_no_transcript">ยังไม่มีอะไรที่อ่านได้ในเซสชันนี้</string>
 
-    <!-- nanoMuse: money on the account page, and the community notice -->
+    <!-- TAMA AI: money on the account page, and the community notice -->
     <string name="nm_cloud_spend_member">สมาชิก · ไม่มีขีดจำกัด</string>
     <string name="nm_cloud_spent_total">ใช้ไปทั้งหมด ¥%1$s · $%2$s ผู้พัฒนาออกค่าใช้จ่ายให้</string>
     <string name="nm_cloud_allowance_used">ใช้ไป ¥%1$s · $%2$s</string>
@@ -939,13 +939,13 @@
     <string name="nm_cloud_tokens_line">%1$s โทเค็นทั้งหมด · %2$s วันนี้</string>
     <string name="nm_cloud_notice_title">ฟรี โอเพนซอร์ส ไม่แสวงหากำไร</string>
     <string name="nm_cloud_notice_closing">พบบั๊ก อยากได้ฟีเจอร์ หรือมีแพตช์ ที่เก็บโค้ดบน GitHub คือที่ที่ควรไป</string>
-    <string name="nm_cloud_notice">nanoMuse เป็นโครงการชุมชนโอเพนซอร์สที่ไม่แสวงหากำไร ฟรีตลอดไป โมเดลมาพร้อมโควตาฟรีที่ผู้พัฒนาออกค่าใช้จ่ายให้ หลังจากนั้นใช้คีย์ของคุณเอง ไม่มีการขายอะไร สิ่งที่รีเลย์เก็บไว้ระบุในนโยบายความเป็นส่วนตัว และ การตั้งค่า → การควบคุมข้อมูล เป็นของคุณ ลบบัญชีได้ทุกเมื่อที่ต้องการ</string>
+    <string name="nm_cloud_notice">TAMA AI เป็นโครงการชุมชนโอเพนซอร์สที่ไม่แสวงหากำไร ฟรีตลอดไป โมเดลมาพร้อมโควตาฟรีที่ผู้พัฒนาออกค่าใช้จ่ายให้ หลังจากนั้นใช้คีย์ของคุณเอง ไม่มีการขายอะไร สิ่งที่รีเลย์เก็บไว้ระบุในนโยบายความเป็นส่วนตัว และ การตั้งค่า → การควบคุมข้อมูล เป็นของคุณ ลบบัญชีได้ทุกเมื่อที่ต้องการ</string>
 
-    <!-- nanoMuse: devices on the hub -->
+    <!-- TAMA AI: devices on the hub -->
     <string name="nm_hub_channel">ข้อความจากอุปกรณ์ของคุณ</string>
     <string name="nm_hub_service_channel">เชื่อมต่อกับอุปกรณ์ของคุณแล้ว</string>
-    <string name="nm_hub_service_title">nanoMuse · อุปกรณ์ของคุณติดต่อได้</string>
-    <string name="nm_hub_service_connecting">กำลังเชื่อมต่อ nanoMuse Cloud…</string>
+    <string name="nm_hub_service_title">TAMA AI · อุปกรณ์ของคุณติดต่อได้</string>
+    <string name="nm_hub_service_connecting">กำลังเชื่อมต่อ TAMA AI Cloud…</string>
     <string name="nm_hub_service_alone">ไม่มีอุปกรณ์อื่นออนไลน์ในตอนนี้</string>
     <plurals name="nm_hub_service_devices">
         <item quantity="other">%d อุปกรณ์ออนไลน์</item>
@@ -965,7 +965,7 @@
     <string name="nm_devices_connected">เชื่อมต่อแล้ว</string>
     <string name="nm_devices_connecting">กำลังเชื่อมต่อ…</string>
     <string name="nm_devices_off">ปิด</string>
-    <string name="nm_devices_none">ยังไม่มีอุปกรณ์อื่น บนคอมพิวเตอร์ของคุณ ติดตั้ง nanoMuse Desktop แล้วลงชื่อเข้าใช้ด้วยบัญชีเดียวกัน มันจะปรากฏที่นี่ภายในไม่กี่วินาที</string>
+    <string name="nm_devices_none">ยังไม่มีอุปกรณ์อื่น บนคอมพิวเตอร์ของคุณ ติดตั้ง TAMA AI Desktop แล้วลงชื่อเข้าใช้ด้วยบัญชีเดียวกัน มันจะปรากฏที่นี่ภายในไม่กี่วินาที</string>
     <string name="nm_devices_online">ออนไลน์</string>
     <string name="nm_devices_offline">ออฟไลน์</string>
     <string name="nm_devices_web">คอนโซลเว็บ</string>
@@ -984,7 +984,7 @@
     <string name="nm_hub_err_not_controllable">อุปกรณ์นั้นรับคำขอให้ทำสิ่งต่าง ๆ ไม่ได้</string>
     <string name="nm_hub_err_unknown_agent">ไม่มีเอเจนต์เขียนโค้ดตัวนั้นบนคอมพิวเตอร์</string>
     <string name="nm_hub_err_no_session">เซสชันนั้นไม่อยู่บนคอมพิวเตอร์แล้ว</string>
-    <string name="nm_hub_err_unknown_action">คอมพิวเตอร์ใช้ nanoMuse รุ่นเก่าที่ไม่รู้จักการกระทำนี้</string>
+    <string name="nm_hub_err_unknown_action">คอมพิวเตอร์ใช้ TAMA AI รุ่นเก่าที่ไม่รู้จักการกระทำนี้</string>
     <string name="nm_hub_err_bad_key">ออกจากระบบบนรีเลย์แล้ว ลงชื่อเข้าใช้อีกครั้ง</string>
     <string name="nm_hub_err_generic">คอมพิวเตอร์ทำสิ่งนี้ไม่ได้</string>
     <string name="nm_devices_refused">รีเลย์ปฏิเสธ ลงชื่อเข้าใช้อีกครั้ง</string>
@@ -1003,7 +1003,7 @@
     <string name="nm_connectors_sign_in">ลงชื่อเข้าใช้</string>
     <string name="nm_connectors_disconnect">ยกเลิกการเชื่อมต่อ</string>
     <string name="nm_connectors_docs">หน้าของผู้ให้บริการเกี่ยวกับเซิร์ฟเวอร์นี้</string>
-    <string name="nm_connectors_how_oauth">ลงชื่อเข้าใช้ด้วยบัญชี %1$s ของคุณในเบราว์เซอร์ nanoMuse ลงทะเบียนตัวเองกับบริการให้ จึงไม่ต้องพิมพ์อะไร โทเค็นอยู่บนโทรศัพท์เครื่องนี้</string>
+    <string name="nm_connectors_how_oauth">ลงชื่อเข้าใช้ด้วยบัญชี %1$s ของคุณในเบราว์เซอร์ TAMA AI ลงทะเบียนตัวเองกับบริการให้ จึงไม่ต้องพิมพ์อะไร โทเค็นอยู่บนโทรศัพท์เครื่องนี้</string>
     <string name="nm_connectors_how_key">ต้องใช้คีย์จากบริการ: %1$s เก็บไว้ในรายการ MCP บนโทรศัพท์เครื่องนี้เท่านั้น</string>
     <string name="nm_connectors_how_none">เปิดให้ทุกคน ไม่ต้องลงชื่อเข้าใช้</string>
     <string name="nm_connectors_how_auto">ตรวจสอบก่อนว่าเซิร์ฟเวอร์ต้องการอะไร: ไม่ต้องการอะไร การลงชื่อเข้าใช้ หรือคีย์</string>
@@ -1047,13 +1047,13 @@
 
     <!-- Conversation sync between the account's devices (contract C7) -->
     <string name="nm_sync_title">ซิงก์บทสนทนาระหว่างอุปกรณ์ของฉัน</string>
-    <string name="nm_sync_caption">ข้อความในแชทของคุณเก็บไว้บน nanoMuse Cloud เพื่อให้ทุกอุปกรณ์แสดงบทสนทนาเดียวกัน ไฟล์และรูปภาพอยู่บนอุปกรณ์ที่สร้างมัน</string>
+    <string name="nm_sync_caption">ข้อความในแชทของคุณเก็บไว้บน TAMA AI Cloud เพื่อให้ทุกอุปกรณ์แสดงบทสนทนาเดียวกัน ไฟล์และรูปภาพอยู่บนอุปกรณ์ที่สร้างมัน</string>
     <string name="nm_sync_sign_in">ลงชื่อเข้าใช้เพื่อซิงก์</string>
     <string name="nm_sync_on_toast">เปิดแล้ว กำลังส่งบทสนทนาของโทรศัพท์เครื่องนี้</string>
     <string name="nm_sync_off_toast">ปิดแล้ว สิ่งที่เก็บไว้ถูกลบแล้ว</string>
     <string name="nm_sync_delete">ลบบทสนทนาที่ซิงก์ไว้</string>
-    <string name="nm_sync_delete_sub">ลบข้อความของบทสนทนาของคุณออกจาก nanoMuse Cloud แต่ละอุปกรณ์เก็บสิ่งที่มีอยู่แล้วไว้ และซิงก์ยังเปิดอยู่</string>
-    <string name="nm_sync_delete_confirm">บทสนทนาที่เก็บไว้บน nanoMuse Cloud จะถูกลบ แชทบนอุปกรณ์ของคุณยังอยู่เหมือนเดิม</string>
+    <string name="nm_sync_delete_sub">ลบข้อความของบทสนทนาของคุณออกจาก TAMA AI Cloud แต่ละอุปกรณ์เก็บสิ่งที่มีอยู่แล้วไว้ และซิงก์ยังเปิดอยู่</string>
+    <string name="nm_sync_delete_confirm">บทสนทนาที่เก็บไว้บน TAMA AI Cloud จะถูกลบ แชทบนอุปกรณ์ของคุณยังอยู่เหมือนเดิม</string>
     <string name="nm_sync_deleted">ลบบทสนทนาที่ซิงก์ไว้แล้ว</string>
     <string name="nm_sync_from">จาก %1$s</string>
     <string name="nm_sync_attachment_note">[ไฟล์แนบ %1$s อยู่บนอุปกรณ์ที่สร้างมัน]</string>
@@ -1068,7 +1068,7 @@
     <string name="nm_devices_ask_hint">แตะอุปกรณ์ที่ออนไลน์อยู่เพื่อเขียนถึงมันจากแชท: ข้อความจะขึ้นต้นด้วย @ ตามด้วยชื่อของมัน และอุปกรณ์นั้นจะเป็นฝ่ายทำงาน</string>
     <string name="nm_reach_the_provider">ผู้ให้บริการ</string>
     <string name="nm_reach_unreachable_title">เข้าถึง %1$s จากเครือข่ายนี้ไม่ได้</string>
-    <string name="nm_reach_unreachable_body">ไม่มีการตอบกลับจาก %1$s ปัญหาอยู่ที่เส้นทางจากโทรศัพท์เครื่องนี้ไปยังผู้ให้บริการ ไม่เกี่ยวกับเซิร์ฟเวอร์ของ nanoMuse</string>
+    <string name="nm_reach_unreachable_body">ไม่มีการตอบกลับจาก %1$s ปัญหาอยู่ที่เส้นทางจากโทรศัพท์เครื่องนี้ไปยังผู้ให้บริการ ไม่เกี่ยวกับเซิร์ฟเวอร์ของ TAMA AI</string>
     <string name="nm_reach_region_title">OpenAI ไม่ให้บริการในภูมิภาคนี้</string>
     <string name="nm_reach_region_body">คำขอไปถึง OpenAI แล้ว แต่ได้รับคำตอบว่าไม่ให้บริการในที่ที่การเชื่อมต่อนี้มาจาก</string>
     <string name="nm_reach_signed_out_title">การลงชื่อเข้าใช้ ChatGPT ใช้ไม่ได้แล้ว</string>
@@ -1077,23 +1077,40 @@
     <string name="nm_reach_key_refused_body">ผู้ให้บริการตอบว่าคีย์นี้ใช้ไม่ได้แล้ว ตรวจสอบในการตั้งค่าผู้ให้บริการ</string>
     <string name="nm_reach_quota_title">แผน ChatGPT ไม่เหลือโควตาในตอนนี้</string>
     <string name="nm_reach_quota_body">OpenAI นับการใช้แผนเป็นช่วงไม่กี่ชั่วโมงและหนึ่งสัปดาห์ ช่วงนี้ใช้หมดแล้ว</string>
-    <string name="nm_reach_quota_key_title">%1$s ไม่เหลือโควตาสำหรับคีย์นี้</string>
-    <string name="nm_reach_quota_key_body">ผู้ให้บริการตอบว่าโควตาของคีย์นี้หมดแล้ว</string>
-    <string name="nm_reach_rate_title">ส่งคำขอพร้อมกันมากเกินไป</string>
-    <string name="nm_reach_rate_body">ผู้ให้บริการขอให้รอสักครู่</string>
+    <string name="nm_reach_auth_title">%1$s ปฏิเสธการยืนยันตัวตน (HTTP 401)</string>
+    <string name="nm_reach_auth_body">ตรวจสอบคีย์และผู้ให้บริการที่เลือก อ่านข้อความจากผู้ให้บริการหากมี</string>
+    <string name="nm_reach_access_title">%1$s ปฏิเสธคำขอ (HTTP 403)</string>
+    <string name="nm_reach_access_body">รหัสสถานะเพียงอย่างเดียวไม่ได้ระบุสาเหตุ ตรวจสอบข้อความจากผู้ให้บริการและสิทธิ์ของบัญชีหรือโมเดล</string>
+    <string name="nm_reach_no_credit_title">%1$s แจ้งว่าถึงขีดจำกัดเครดิตหรือการชำระเงิน</string>
+    <string name="nm_reach_no_credit_body">ตรวจสอบข้อความจากผู้ให้บริการ ยอดเงินในบัญชี และวงเงินใช้จ่ายของคีย์ โมเดลฟรีที่ใช้ได้ก็มีข้อจำกัดเช่นกัน</string>
+    <string name="nm_reach_quota_key_title">%1$s แจ้งว่าถึงขีดจำกัดการใช้งาน</string>
+    <string name="nm_reach_quota_key_body">ตรวจสอบข้อความจากผู้ให้บริการและขีดจำกัดของบัญชีกับโมเดล</string>
+    <string name="nm_reach_rate_title">ถึงขีดจำกัดคำขอแล้ว (HTTP 429)</string>
+    <string name="nm_reach_rate_body">โปรดรอและตรวจสอบขีดจำกัดคำขอของผู้ให้บริการหรือความพร้อมของโมเดล</string>
     <string name="nm_reach_vendor_said">ผู้ให้บริการแจ้งว่า: %1$s</string>
-    <string name="nm_reach_resets_in">จะรีเซ็ตในอีก %1$s</string>
+    <string name="nm_reach_resets_in">ลองอีกครั้งในอีก %1$s</string>
     <string name="nm_reach_helps">สิ่งที่ช่วยได้</string>
     <string name="nm_reach_help_vpn">เปิด VPN บนโทรศัพท์เครื่องนี้ก่อนลองอีกครั้ง</string>
     <string name="nm_reach_help_proxy">พร็อกซีที่แอปนี้ใช้กับผู้ให้บริการ: การตั้งค่า → เครือข่าย</string>
     <string name="nm_reach_help_other">ผู้ให้บริการรายอื่น ด้วยคีย์ของคุณเอง</string>
     <string name="nm_reach_help_wait">รอให้ช่วงเวลานี้ผ่านไป</string>
     <string name="nm_reach_help_moment">รอสักครู่แล้วลองอีกครั้ง</string>
+    <string name="nm_reach_help_credit">ตรวจสอบยอดเงินในบัญชีและวงเงินใช้จ่ายของคีย์</string>
+    <string name="nm_reach_help_free_model">ลองใช้โมเดลฟรีที่มีอยู่ภายใต้ขีดจำกัดของโมเดล</string>
     <string name="nm_reach_try_again">ลองอีกครั้ง</string>
     <string name="nm_reach_network">การตั้งค่าเครือข่าย</string>
     <string name="nm_reach_sign_in">ลงชื่อเข้าใช้อีกครั้ง</string>
     <string name="nm_reach_open_provider">เปิดผู้ให้บริการ</string>
     <string name="nm_reach_own_key">เพิ่มคีย์ของคุณเอง</string>
+    <string name="nm_reach_retry_stale">ข้อผิดพลาดนี้ไม่ใช่รายการล่าสุดแล้ว หรือยังมีงานกำลังทำงานอยู่</string>
+    <string name="nm_reach_generic_title">%1$s could not complete the request</string>
+    <string name="nm_reach_generic_body">Check the message and settings before trying again.</string>
+    <string name="nm_reach_sheet_title">รายละเอียดข้อผิดพลาด</string>
+    <string name="nm_reach_sheet_message">ข้อความจากผู้ให้บริการ</string>
+    <string name="nm_reach_sheet_unavailable">ไม่มีข้อมูล</string>
+    <string name="nm_reach_sheet_privacy">ข้อความอาจถูกย่อและอาจมีข้อมูลส่วนตัวหรือข้อมูลลับที่ตรวจไม่พบ โปรดตรวจสอบก่อนคัดลอก</string>
+    <string name="nm_reach_sheet_change_model">เปลี่ยนโมเดล</string>
+    <string name="nm_reach_sheet_provider_settings">เปิดการตั้งค่าผู้ให้บริการ</string>
     <string name="nm_reach_details">รายละเอียด</string>
     <string name="nm_reach_details_hide">ซ่อนรายละเอียด</string>
     <string name="nm_reach_hours_minutes">%1$d ชม. %2$d นาที</string>
@@ -1111,7 +1128,7 @@
     <string name="nm_network_test_fail">เข้าถึง %1$s ผ่านพร็อกซีไม่ได้: %2$s</string>
     <string name="nm_network_test_status">HTTP %1$d</string>
     <string name="nm_network_invalid">กรอกโฮสต์และพอร์ตระหว่าง 1 ถึง 65535</string>
-    <string name="nm_network_proxy_caption">เฉพาะคำขอไปยังผู้ให้บริการที่คุณเพิ่มด้วยคีย์ของตัวเองและแผน ChatGPT เท่านั้นที่ผ่านพร็อกซี nanoMuse Cloud คอมพิวเตอร์ของคุณ และเครือข่ายท้องถิ่นไม่ผ่านเลย เก็บไว้ในโทรศัพท์เครื่องนี้เท่านั้น</string>
+    <string name="nm_network_proxy_caption">เฉพาะคำขอไปยังผู้ให้บริการที่คุณเพิ่มด้วยคีย์ของตัวเองและแผน ChatGPT เท่านั้นที่ผ่านพร็อกซี TAMA AI Cloud คอมพิวเตอร์ของคุณ และเครือข่ายท้องถิ่นไม่ผ่านเลย เก็บไว้ในโทรศัพท์เครื่องนี้เท่านั้น</string>
     <string name="nm_network_hosts_caption">ผ่านพร็อกซี: %1$s</string>
     <string name="nm_ways_title_day">โควตาฟรีส่วนของวันนี้หมดแล้ว</string>
     <string name="nm_ways_day_sub">จะกลับมาในวันใหม่ วิธีด้านล่างใช้ได้ตอนนี้เลย</string>
@@ -1122,7 +1139,7 @@
     <string name="nm_ways_devices">อุปกรณ์</string>
     <!-- 0.1.41 Choice: Settings → Models, the "Use it for" card, one turn on the Cloud -->
     <string name="nm_models_title">โมเดล</string>
-    <string name="nm_models_intro">โมเดลไหนทำอะไร แต่ละแถวเปิดหน้าตัวเลือก ซึ่งจะมี nanoMuse Cloud และผู้ให้บริการที่คุณเพิ่มไว้ พร้อมโมเดลที่เหมาะกับงานนั้น</string>
+    <string name="nm_models_intro">โมเดลไหนทำอะไร แต่ละแถวเปิดหน้าตัวเลือก ซึ่งจะมี TAMA AI Cloud และผู้ให้บริการที่คุณเพิ่มไว้ พร้อมโมเดลที่เหมาะกับงานนั้น</string>
     <string name="nm_models_chat_title">แชท</string>
     <string name="nm_models_chat_sub">โมเดลที่คุยกับคุณ</string>
     <string name="nm_models_hands_title">ควบคุมหน้าจอ</string>
@@ -1134,19 +1151,19 @@
     <string name="nm_models_chat_applies">มีผลกับแชทหลักและแชทใหม่ ส่วนแชทย่อยยังใช้โมเดลเดิมของตัวเอง</string>
     <string name="nm_models_media_more">ตัวเลือกภาพและคลิปเพิ่มเติม</string>
     <string name="nm_models_media_more_sub">พิมพ์ชื่อโมเดล ดูว่าหากไม่มีโมเดลใดสิ่งใดจะหยุด หรือตรวจอีกครั้งว่าคีย์ใช้โมเดลวิดีโอใดได้บ้าง</string>
-    <string name="nm_models_cloud_switch">ใช้โมเดลของ nanoMuse Cloud</string>
-    <string name="nm_models_cloud_on_sub">nanoMuse Cloud เป็นหนึ่งในแหล่งของรายการด้านล่าง สิ่งที่ทำงานบนนั้นจะหักจากโควตาของคุณ</string>
-    <string name="nm_models_cloud_off_sub">ปิดอยู่: จะไม่มีอะไรทำงานบน nanoMuse Cloud เว้นแต่คุณแตะ \"ใช้ nanoMuse Cloud ครั้งนี้\" คุณยังคงลงชื่อเข้าใช้อยู่เพื่อการซิงค์และอุปกรณ์ของคุณ</string>
-    <string name="nm_models_cloud_off_refused">เพิ่มผู้ให้บริการของคุณเองก่อน เมื่อปิด nanoMuse Cloud แล้วจะไม่มีอะไรอื่นตอบได้</string>
+    <string name="nm_models_cloud_switch">ใช้โมเดลของ TAMA AI Cloud</string>
+    <string name="nm_models_cloud_on_sub">TAMA AI Cloud เป็นหนึ่งในแหล่งของรายการด้านล่าง สิ่งที่ทำงานบนนั้นจะหักจากโควตาของคุณ</string>
+    <string name="nm_models_cloud_off_sub">ปิดอยู่: จะไม่มีอะไรทำงานบน TAMA AI Cloud เว้นแต่คุณแตะ \"ใช้ TAMA AI Cloud ครั้งนี้\" คุณยังคงลงชื่อเข้าใช้อยู่เพื่อการซิงค์และอุปกรณ์ของคุณ</string>
+    <string name="nm_models_cloud_off_refused">เพิ่มผู้ให้บริการของคุณเองก่อน เมื่อปิด TAMA AI Cloud แล้วจะไม่มีอะไรอื่นตอบได้</string>
     <string name="nm_chat_no_model">ตอนนี้ไม่มีโมเดลที่ตอบได้ เลือกสักตัวใน การตั้งค่า › โมเดล</string>
-    <string name="nm_cloud_provider_no_delete">ผู้ให้บริการนี้คือบัญชี nanoMuse Cloud ของคุณ ปิดสวิตช์ด้านบนเพื่อเลิกใช้โมเดลของมัน หากต้องการออกจากระบบ ให้เปิด การตั้งค่า › nanoMuse Cloud</string>
+    <string name="nm_cloud_provider_no_delete">ผู้ให้บริการนี้คือบัญชี TAMA AI Cloud ของคุณ ปิดสวิตช์ด้านบนเพื่อเลิกใช้โมเดลของมัน หากต้องการออกจากระบบ ให้เปิด การตั้งค่า › TAMA AI Cloud</string>
     <string name="nm_welcome_own_key">ใช้คีย์ API ของตัวเองแทน</string>
     <string name="nm_useit_title">ใช้ทำอะไร</string>
     <string name="nm_useit_body_signed_out">เลือกว่าคีย์นี้จะรับผิดชอบอะไร</string>
     <string name="nm_useit_use">ใช้</string>
     <string name="nm_useit_not_now">ไว้ก่อน</string>
     <string name="nm_useit_footnote">เปลี่ยนได้ทุกเมื่อที่ การตั้งค่า › โมเดล</string>
-    <string name="nm_retry_on_cloud">ครั้งนี้ใช้ nanoMuse Cloud</string>
+    <string name="nm_retry_on_cloud">ครั้งนี้ใช้ TAMA AI Cloud</string>
     <string name="nm_hands_why_chat_provider">ค่าเริ่มต้นของมือจากผู้ให้บริการแชทของคุณ</string>
     <string name="nm_models_auto">อัตโนมัติ</string>
     <string name="nm_models_auto_currently">ตอนนี้ %1$s</string>
@@ -1182,7 +1199,7 @@
     <string name="nm_font_scale_large">ใหญ่</string>
     <string name="nm_font_scale_extra_large">ใหญ่มาก</string>
 
-    <!-- nanoMuse: backup choices and the headless run (#560, #561) -->
+    <!-- TAMA AI: backup choices and the headless run (#560, #561) -->
     <string name="nm_backup_chat_files">ไฟล์ในแชท</string>
     <string name="nm_backup_chat_files_on">ไฟล์แนบ ไฟล์ถ่ายโอน และไฟล์พื้นที่ทำงานทุกไฟล์ไปพร้อมกับข้อความ</string>
     <string name="nm_backup_chat_files_off">เฉพาะข้อความ ไฟล์จะถูกระบุไว้แต่ไม่ถูกนำไปด้วย การกู้คืนจะนำแชทกลับมาโดยไม่มีไฟล์ แพ็กเกจจึงเล็กพอสำหรับเซิร์ฟเวอร์ที่ปฏิเสธการอัปโหลดขนาดใหญ่</string>
@@ -1234,7 +1251,7 @@
     <string name="nm_backup_resume">สำรองข้อมูลต่อ</string>
     <string name="nm_backup_discard">ทิ้งการสำรองข้อมูลที่ขัดจังหวะ</string>
     <string name="nm_backup_resume_hint">มีการสำรองข้อมูลที่ขัดจังหวะอยู่ ดำเนินการต่อด้วยตัวเลือกเดิมและป้อนรหัสผ่านอีกครั้งหากจำเป็น หรือทิ้งเพื่อเริ่มใหม่</string>
-<string name="nm_access_locked">nanoMuse ถูกล็อก</string>
+<string name="nm_access_locked">TAMA AI ถูกล็อก</string>
 <string name="nm_access_hint">ยืนยันด้วยการล็อกหน้าจอของอุปกรณ์นี้</string>
 <string name="nm_access_unlock">ปลดล็อก</string>
 <string name="nm_access_settings">ล็อกแอป</string>
@@ -1264,4 +1281,137 @@
     <string name="nm_device_chat_start">สนทนาบนอุปกรณ์นี้</string>
     <string name="nm_device_chat_uncertain">ยังไม่แน่ใจว่าส่งถึงแล้ว กำลังตรวจสอบผลบนอุปกรณ์</string>
     <string name="nm_device_chat_interrupted">ถูกขัดจังหวะ อุปกรณ์อาจดำเนินการบางอย่างไปแล้ว</string>
+
+    <!-- TAMA AI: the Pet's progress -->
+    <string name="tama_pet_title">สัตว์เลี้ยง</string>
+    <string name="tama_pet_level">เลเวล %1$d</string>
+    <string name="tama_pet_xp">%1$d XP</string>
+    <string name="tama_pet_to_next">อีก %1$d ถึงเลเวลถัดไป</string>
+    <string name="tama_pet_max_level">เลเวลสูงสุด</string>
+    <string name="tama_pet_how_xp">สัตว์เลี้ยงของคุณจะได้ XP เมื่อคุณคุยกับเอเจนต์จบ ความล้มเหลวก็ได้เล็กน้อย ส่วนเทิร์นที่ถูกยกเลิกไม่ได้อะไรเลย</string>
+
+    <!-- TAMA AI: the Pet's needs and actions -->
+    <string name="tama_pet_face_description">สัตว์เลี้ยง TAMA AI ของคุณ</string>
+    <string name="tama_pet_mood_content">พอใจ</string>
+    <string name="tama_pet_mood_calm">สงบ</string>
+    <string name="tama_pet_mood_needy">อยากเจอคุณ</string>
+    <string name="tama_pet_mood_focused">กำลังทำงานกับคุณ</string>
+    <string name="tama_pet_mood_grumpy">งอน</string>
+    <string name="tama_pet_need_satiety">อาหาร</string>
+    <string name="tama_pet_need_energy">พลังงาน</string>
+    <string name="tama_pet_need_mood">อารมณ์</string>
+    <string name="tama_pet_need_bond">ความผูกพัน</string>
+    <string name="tama_pet_action_feed">ให้อาหาร</string>
+    <string name="tama_pet_action_rest">พักผ่อน</string>
+    <string name="tama_pet_action_play">เล่นด้วย</string>
+
+    <!-- TAMA AI: SL-001 outfits, streak and memory -->
+    <string name="tama_pet_wardrobe">ชุด</string>
+    <string name="tama_pet_outfit_name">สัตว์เลี้ยง TAMA AI</string>
+    <string name="tama_pet_outfit_locked">Lv %1$d</string>
+    <string name="tama_pet_days_known">อยู่ด้วยกัน %1$d วัน</string>
+    <plurals name="tama_pet_streak">
+        <item quantity="one">ต่อเนื่อง 1 วัน</item>
+        <item quantity="other">ต่อเนื่อง %1$d วัน</item>
+    </plurals>
+    <!-- Pet life, daily missions and local activities -->
+    <string name="nm_pet_stage_awakening">ตื่นขึ้น</string>
+    <string name="nm_pet_stage_discovery">ค้นพบ</string>
+    <string name="nm_pet_stage_learning">เรียนรู้</string>
+    <string name="nm_pet_stage_companion">เพื่อนร่วมทาง</string>
+    <string name="nm_pet_stage_explorer">นักสำรวจ</string>
+    <string name="nm_pet_stage_evolved">วิวัฒน์</string>
+    <string name="nm_pet_generation">รุ่นที่ %1$d</string>
+    <string name="nm_pet_feed_remaining">ให้อาหารภายใน %1$d ชั่วโมง</string>
+    <string name="nm_pet_feed_rule">หากไม่ได้กินอาหาร 72 ชั่วโมง สัตว์เลี้ยงจะตาย และรุ่นใหม่จะเริ่มหลังจากนั้นสามวัน</string>
+    <string name="nm_pet_ghost">วิญญาณสัตว์เลี้ยง</string>
+    <string name="nm_pet_in_memory">ระลึกถึง</string>
+    <string name="nm_pet_grief">สัตว์เลี้ยงกำลังพักผ่อน รุ่นใหม่จะเริ่มในอีก %1$d ชั่วโมง</string>
+    <string name="nm_pet_missions">ภารกิจประจำวัน</string>
+    <string name="nm_pet_daily_cap">วันนี้: %1$d/100 XP รอบงานและภารกิจใช้ขีดจำกัดร่วมกัน รางวัลสุดท้ายอาจได้รับเพียงบางส่วน</string>
+    <string name="nm_pet_mission_sources">บทสนทนานับข้อความที่บันทึก งานนับรอบที่สำเร็จ การเรียนรู้ใช้ความทรงจำที่บันทึก การสร้างใช้การเขียนไฟล์หรือทดลอง ทักษะใช้การนำเข้า และหมุดหมายใช้ขั้นใหม่</string>
+    <string name="nm_pet_mission_first">การโต้ตอบครั้งแรก</string>
+    <string name="nm_pet_mission_conversation">บทสนทนา</string>
+    <string name="nm_pet_mission_task">งาน</string>
+    <string name="nm_pet_mission_goal">เป้าหมาย</string>
+    <string name="nm_pet_mission_learn">การเรียนรู้</string>
+    <string name="nm_pet_mission_create">การสร้าง</string>
+    <string name="nm_pet_mission_skill">ทักษะใหม่</string>
+    <string name="nm_pet_mission_milestone">หมุดหมาย</string>
+    <string name="nm_pet_mission_game">มินิเกม</string>
+    <string name="nm_pet_mission_progress">%1$d/%2$d · %3$d XP</string>
+    <string name="nm_pet_activities">กิจกรรม</string>
+    <string name="nm_pet_activities_local">ทำเองและไม่ใช้อินเทอร์เน็ต</string>
+    <string name="nm_pet_activity_dream">ฝัน</string>
+    <string name="nm_pet_activity_explore">สำรวจ</string>
+    <string name="nm_pet_activity_experiment">ทดลอง</string>
+    <string name="nm_pet_activity_journal">ไดอารี</string>
+    <string name="nm_pet_activity_cost">%1$s · พลังงาน %2$d</string>
+    <string name="nm_pet_activity_done">ทำกิจกรรมแล้ว</string>
+    <string name="nm_pet_low_energy">พลังงานไม่เพียงพอ</string>
+    <string name="nm_pet_activity_unavailable">กิจกรรมนี้ไม่พร้อมใช้งานสำหรับสัตว์เลี้ยงตัวนี้แล้ว</string>
+    <string name="nm_pet_curiosity">ความอยากรู้: %1$d</string>
+    <string name="nm_pet_diary_entry">ไดอารีล่าสุด: ระดับ %1$d พลังงาน %2$d ความผูกพัน %3$d</string>
+    <string name="nm_pet_games">มินิเกม</string>
+    <string name="nm_pet_games_rule">ไม่จำกัดเวลา ชัยชนะครั้งแรกของวันให้สูงสุด 5 XP</string>
+    <string name="nm_pet_game_colors">ทวนสี</string>
+    <string name="nm_pet_game_numbers">ลำดับตัวเลข</string>
+    <string name="nm_pet_color_sequence">จำไว้: น้ำเงิน เหลือง เขียว</string>
+    <string name="nm_pet_color_repeat">ทวนสี: %1$d/%2$d</string>
+    <string name="nm_pet_number_sequence">ต่อให้ครบ: 2, 4, 6, ...</string>
+    <string name="nm_pet_game_retry">ลองอีกครั้ง</string>
+    <string name="nm_pet_game_won">บันทึกชัยชนะแล้ว โบนัสรายวันอยู่ภายใต้ขีดจำกัด XP</string>
+    <string name="nm_pet_game_ended">เกมจบแล้ว</string>
+    <string name="nm_pet_game_start">เริ่ม</string>
+    <string name="nm_pet_color_blue">น้ำเงิน</string>
+    <string name="nm_pet_color_yellow">เหลือง</string>
+    <string name="nm_pet_color_green">เขียว</string>
+    <string name="nm_pet_archives">รุ่นก่อนหน้า</string>
+    <string name="nm_pet_archive_entry">%1$s · รุ่นที่ %2$d · %3$d XP</string>
+    <string name="nm_pet_xp_rules">รอบที่สำเร็จให้ 10 XP รอบที่ล้มเหลวให้ 3 ภารกิจเพิ่มโบนัส รวมสูงสุด 100 XP ต่อวันตามเวลาท้องถิ่น</string>
+    <!-- nanoMuse: local prompt-size report; section labels follow PromptSize.Section. -->
+    <string name="nm_prompt_size_title">Prompt size</string>
+    <string name="nm_prompt_size_subtitle">Measure locally, without a model request</string>
+    <string name="nm_prompt_size_details">Show prompt measurements</string>
+    <string name="nm_prompt_size_busy">Wait for the current reply or compacting to finish.</string>
+    <string name="nm_prompt_size_failed">Could not measure this prompt. Try again.</string>
+    <string name="nm_prompt_size_system">System prompt</string>
+    <string name="nm_prompt_size_tools">Tool schemas (OpenAI format)</string>
+    <string name="nm_prompt_size_explanation">Current configuration. Each line shows UTF-16 characters before and after the diet, then estimated tokens before and after (characters divided by 3.7). These are estimates, not a tokenizer or a bill. History, attachments, output and protocol overhead are not included.</string>
+    <string name="nm_prompt_size_image_yes">Image model resolved locally: yes. This does not test image generation.</string>
+    <string name="nm_prompt_size_image_no">Image model resolved locally: no. This does not test image generation.</string>
+    <string name="nm_prompt_size_image_unknown">Image model resolved locally: could not check. This does not test image generation.</string>
+    <string name="nm_prompt_size_section_names">Identity|Introduction|Available tools|Sandbox|Links|File creation|Tool call style|Tone|Android tools|Environment|Scheduled tasks|Unclassified base|Risk policy|Screen control|Skills|MCP|Naming|Media|Computers|Session|Goals|Feed|Memory tools|Memory guidance|Global memory|Daily memory|User file|Date and language|Separators|Total|Provider prefix</string>
+    <!-- nanoMuse: bounded provider refusals and retries. -->
+    <string name="nm_reach_request_large_title">คำขอมีขนาดใหญ่เกินไปสำหรับ %1$s</string>
+    <string name="nm_reach_request_large_body">ผู้ให้บริการปฏิเสธขนาดของคำขอ โดยนับคำสั่ง ประวัติ เครื่องมือ และไฟล์แนบด้วย โปรดย่อข้อความหรือเริ่มบทสนทนาใหม่</string>
+    <string name="nm_reach_output_limit_title">%1$s ปฏิเสธขนาดคำตอบ</string>
+    <string name="nm_reach_output_limit_known">ผู้ให้บริการแจ้งจำนวนโทเคนคำตอบสูงสุด %1$d โทเคน</string>
+    <string name="nm_reach_output_limit_unknown">ผู้ให้บริการปฏิเสธขีดจำกัดคำตอบที่ขอโดยไม่ได้ระบุค่าสูงสุดที่ชัดเจน</string>
+    <string name="nm_reach_server_error_title">ข้อผิดพลาดของบริการ %1$s</string>
+    <string name="nm_reach_server_error_body">ผู้ให้บริการส่งข้อผิดพลาดกลับมา โปรดรอสักครู่แล้วลองใหม่</string>
+    <string name="nm_reach_output_retry">ผู้ให้บริการแจ้งขีดจำกัดคำตอบ %1$d โทเคน กำลังลองใหม่ด้วยขีดจำกัดนี้</string>
+    <string name="nm_reach_output_adjusted">ผู้ให้บริการยอมรับการลองใหม่โดยจำกัดคำตอบไม่เกิน %1$d โทเคน</string>
+    <string name="nm_reach_rate_wait">ถึงขีดจำกัดคำขอแล้ว จะลองใหม่ใน %1$d วินาที</string>
+    <string name="nm_reach_server_retry">ผู้ให้บริการไม่เสถียร กำลังลองใหม่</string>
+    <!-- nanoMuse: a rejected service request is not a completed or protected task. -->
+    <string name="nm_background_start_rejected">ไม่สามารถขอใช้บริการเบื้องหลังได้ เปิด TAMA ไว้ขณะทำงาน เพราะงานอาจหยุดหากคุณออกจากแอป</string>
+    <string name="nm_background_stop_rejected">ไม่สามารถขอหยุดบริการเบื้องหลังได้ การแจ้งเตือนอาจยังแสดงอยู่</string>
+    <string name="nm_background_service_retry">ลองอีกครั้ง</string>
+    <!-- nanoMuse: local routing and a user-editable provider budget. -->
+    <string name="nm_router_profile_auto">Automatic</string>
+    <string name="nm_router_profile_lean">Light mode</string>
+    <string name="nm_router_profile_basic">Agent mode</string>
+    <string name="nm_router_profile_full">Full agent mode</string>
+    <string name="nm_router_profile_chip">Mode: %1$s</string>
+    <string name="nm_router_profile_totals">Estimated totals by mode (excluding history, images and output):</string>
+    <string name="nm_router_profile_choose">Choose a mode</string>
+    <string name="nm_router_tpm_title">Tokens per minute limit (optional)</string>
+    <string name="nm_router_tpm_help">Leave blank when unknown. A suggested value is only an observation, not a guarantee for this account.</string>
+    <string name="nm_router_tpm_invalid">Enter a positive whole number or leave the field blank.</string>
+    <string name="nm_router_retry_smaller">The request was too large. Retrying with fewer instructions and tools.</string>
+    <string name="nm_router_lean_too_large">Even the light request was too large for this provider.</string>
+    <string name="nm_router_budget_limited">The configured budget only fits light mode for this request. Tools are unavailable in this attempt.</string>
+    <string name="nm_router_lean_tool_notice">Tools are unavailable in this light-mode attempt.</string>
+    <string name="nm_router_budget_exhausted">The estimated request exceeds the configured per-minute limit, even in light mode.</string>
 </resources>

@@ -172,7 +172,7 @@ fun DevicesSection(
             value = consoleUrl.removePrefix("https://").removePrefix("http://"),
             chevron = false,
             onClick = { copy(context, consoleUrl) },
-            trailing = { TextButton(onClick = { copy(context, consoleUrl) }) { Text(stringResource(R.string.nm_devices_web_copy), color = MuseTones.action) } },
+            trailing = { TextButton(onClick = { copy(context, consoleUrl) }) { Text(stringResource(R.string.nm_devices_web_copy), color = MuseTones.accent) } },
         )
     }
     MuseCaption(stringResource(R.string.nm_devices_web_sub, consoleUrl))
@@ -238,6 +238,6 @@ private fun OnlineDot(online: Boolean) {
 
 private fun copy(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    cm.setPrimaryClip(ClipData.newPlainText("nanoMuse", text))
+    cm.setPrimaryClip(ClipData.newPlainText("TAMA AI", text))
     Toast.makeText(context, R.string.nm_devices_web_copied, Toast.LENGTH_SHORT).show()
 }

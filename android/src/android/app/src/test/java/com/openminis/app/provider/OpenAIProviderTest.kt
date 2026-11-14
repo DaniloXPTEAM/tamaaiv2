@@ -328,8 +328,9 @@ class OpenAIProviderTest {
         Unit
     }
 
-    @Test(expected = LLMError.InvalidApiKey::class)
-    fun `sendMessage throws InvalidApiKey on 403`() = runBlocking {
+    // nanoMuse: 403 means access denied, not necessarily an invalid credential.
+    @Test(expected = LLMError.ProviderError::class)
+    fun `sendMessage throws ProviderError on 403`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(403).setBody("Forbidden"))
         provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
         Unit
@@ -340,6 +341,293 @@ class OpenAIProviderTest {
         server.enqueue(MockResponse().setResponseCode(429).setBody("Rate limited"))
         provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
         Unit
+    }
+
+    // nanoMuse: the HTTP client carries the exact, redacted response diagnostic per call.
+    @Test
+    fun `http size and rate failures retain their own bounded diagnostics`() = runBlocking {
+        suspend fun failure(response: MockResponse): LLMError {
+            server.enqueue(response)
+            return try {
+                provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+                throw AssertionError("Expected a provider error")
+            } catch (e: LLMError) { e }
+        }
+        val oversized = failure(MockResponse().setResponseCode(413)
+            .setBody("""{"error":{"message":"Request too large, test-key"}}"""))
+        val sizeReach = oversized.nmProviderReach!!
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.REQUEST_TOO_LARGE, sizeReach.kind)
+        assertEquals(413, sizeReach.httpStatus)
+        assertTrue(!sizeReach.detail.contains("test-key"))
+        assertTrue(!oversized.isFallbackable)
+
+        val output = failure(MockResponse().setResponseCode(400)
+            .setBody("""{"error":{"message":"max_completion_tokens 8192 must be less than or equal to 4096"}}"""))
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.RESPONSE_LIMIT, output.nmProviderReach?.kind)
+        assertEquals(4096, output.nmProviderReach?.outputLimit)
+        assertTrue(!output.isFallbackable)
+
+        val rate = failure(MockResponse().setResponseCode(429).setHeader("Retry-After", "1.5")
+            .setBody("""{"error":{"message":"Rate limit reached"}}"""))
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.RATE_LIMITED, rate.nmProviderReach?.kind)
+        assertEquals(2, rate.nmProviderReach?.retryAfterS)
+        assertEquals(429, rate.nmProviderReach?.httpStatus)
+
+        // nanoMuse: an empty header is present but invalid, not permission to guess a delay.
+        val blankWait = failure(MockResponse().setResponseCode(429).setHeader("Retry-After", "")
+            .setBody("""{"error":{"message":"Rate limit reached"}}"""))
+        assertTrue(blankWait.nmProviderReach!!.retryAfterPresent)
+        assertNull(blankWait.nmProviderReach!!.retryAfterS)
+        assertNull(io.github.nanomuse.net.ProviderRecovery.rateDelay(blankWait.nmProviderReach, false))
+    }
+
+    // nanoMuse: details belong to the actual failed request and redact JSON-escaped credentials.
+    @Test
+    fun `error detail keeps the wire model and re-redacts decoded provider messages`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(413).setBody(
+            """{"error":{"message":"Request too large, \u0074est-key","metadata":{"secret":"private metadata"}}}""",
+        ))
+        val error = try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+            throw AssertionError("Expected a provider error")
+        } catch (e: LLMError) { e }
+        val reach = error.nmProviderReach!!
+        val request = JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals(request.getString("model"), reach.modelId)
+        assertTrue(reach.originalMessage.contains("[redacted]"))
+        assertTrue(!reach.originalMessage.contains("test-key"))
+        assertTrue(!reach.originalMessage.contains("private metadata"))
+        assertTrue(!error.message.orEmpty().contains("test-key"))
+        assertEquals(reach, io.github.nanomuse.net.ProviderReach.classify(io.github.nanomuse.net.ProviderReach.canonical(reach)))
+
+        // Unclassified 400s must not leak the decoded credential through the fallback error.
+        server.enqueue(MockResponse().setResponseCode(400).setBody(
+            """{"error":{"message":"Bad parameter \u0074est-key"}}""",
+        ))
+        val unclassified = try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+            throw AssertionError("Expected a provider error")
+        } catch (e: LLMError) { e }
+        assertTrue(unclassified.message.orEmpty().contains("[redacted]"))
+        assertTrue(!unclassified.message.orEmpty().contains("test-key"))
+        val generic = unclassified.nmProviderReach!!
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.PROVIDER_ERROR, generic.kind)
+        assertEquals(400, generic.httpStatus)
+        assertEquals("Bad parameter [redacted]", generic.originalMessage)
+        assertEquals(JSONObject(server.takeRequest().body.readUtf8()).getString("model"), generic.modelId)
+    }
+
+    @Test
+    fun `credential masking does not suppress a gateway HTTP zero retry`() = runBlocking {
+        provider = OpenAIProvider(
+            apiKey = "HTTP 0", model = LLMModel.gpt4oMini,
+            basePath = server.url("/").toString().trimEnd('/'),
+        )
+        server.enqueue(MockResponse().setResponseCode(400).setBody(
+            """{"error":{"message":"The gateway returned HTTP 0"}}""",
+        ))
+        val error = try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+            throw AssertionError("Expected a provider error")
+        } catch (e: LLMError) { e }
+        assertTrue(error is LLMError.TransientError)
+        assertEquals("The gateway returned [redacted]", error.nmProviderReach!!.originalMessage)
+        assertTrue(!error.message.orEmpty().contains("HTTP 0"))
+    }
+
+    @Test
+    fun `multiple simultaneous credential headers are redacted after decoding`() = runBlocking {
+        provider = OpenAIProvider(
+            apiKey = "fixture-key",
+            model = LLMModel.gpt4oMini,
+            basePath = server.url("/").toString().trimEnd('/'),
+            extraHeaders = mapOf("api-key" to "fixture-key-longer", "X-Client-Token" to "fixture\"token"),
+        )
+        server.enqueue(MockResponse().setResponseCode(413).setBody(
+            """{"error":{"message":"Request too large: \u0066ixture-key-longer \u0066ixture-key fixture\"token"}}""",
+        ))
+        val error = try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+            throw AssertionError("Expected a provider error")
+        } catch (e: LLMError) { e }
+        val request = server.takeRequest()
+        assertEquals("Bearer fixture-key", request.getHeader("Authorization"))
+        assertEquals("fixture-key-longer", request.getHeader("api-key"))
+        assertEquals("fixture\"token", request.getHeader("X-Client-Token"))
+        val reach = error.nmProviderReach!!
+        assertEquals("Request too large: [redacted] [redacted] [redacted]", reach.originalMessage)
+        assertEquals(reach, io.github.nanomuse.net.ProviderReach.classify(io.github.nanomuse.net.ProviderReach.canonical(reach)))
+        assertTrue(!error.message.orEmpty().contains("fixture-key"))
+        assertTrue(!error.message.orEmpty().contains("fixture\"token"))
+    }
+
+    @Test
+    fun `relay 413 retains its special actions and redacts the decoded refusal`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(413).setBody(
+            """{"error":{"type":"nanomuse_cloud","code":"too_large","message":"Too large: \u0074est-key"}}""",
+        ))
+        val error = try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+            throw AssertionError("Expected a relay error")
+        } catch (e: LLMError) { e }
+        assertNull(error.nmProviderReach)
+        val refusal = error.nmRelayError!!.refusal
+        assertEquals(io.github.nanomuse.cloud.RelayRefusal.Kind.TOO_LARGE, refusal.kind)
+        assertEquals("Too large: [redacted]", refusal.message)
+        assertEquals(refusal, io.github.nanomuse.cloud.RelayRefusal.fromCanonical(io.github.nanomuse.cloud.RelayRefusal.canonical(refusal)))
+    }
+
+    @Test
+    fun `the configured relay host recognizes an untyped refusal on loopback`() = runBlocking {
+        val proxy = io.github.nanomuse.net.OwnProviderProxy
+        val oldConfig = proxy.active()
+        val oldHosts = proxy.routedHosts()
+        val oldRelay = proxy.relayHostForTests()
+        val url = server.url("/").toString()
+        try {
+            proxy.setForTests(oldConfig, oldHosts, relay = proxy.hostOf(url))
+            assertTrue(proxy.isRelay(url))
+            // A code without the relay type is accepted only because this host is configured.
+            server.enqueue(MockResponse().setResponseCode(413).setBody(
+                """{"error":{"code":"too_large","message":"Too large: \u0074est-key"}}""",
+            ))
+            val error = try {
+                provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+                throw AssertionError("Expected a relay error")
+            } catch (e: LLMError) { e }
+            assertNull(error.nmProviderReach)
+            assertEquals(io.github.nanomuse.cloud.RelayRefusal.Kind.TOO_LARGE, error.nmRelayError!!.refusal.kind)
+            assertEquals("Too large: [redacted]", error.nmRelayError!!.refusal.message)
+        } finally {
+            proxy.setForTests(oldConfig, oldHosts, oldRelay)
+        }
+    }
+
+    @Test
+    fun `relay allowance fields redact decoded credentials without losing the ways on card`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(429).setBody(
+            """{"error":{"type":"nanomuse_cloud","code":"allowance_exhausted","message":"Blocked: \u0074est-key","left":0,"grant":2,"invite_url":"https://example.invalid/\u0074est-key","own_key_docs":"https://example.invalid/docs","guidance":{"region":"global","providers":[{"id":"example","name":"Echo \u0074est-key","base_url":"https://example.invalid","key_url":"https://example.invalid/key","auth":["key"],"covers":["chat"]}]}}}""",
+        ))
+        val error = try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+            throw AssertionError("Expected a relay allowance error")
+        } catch (e: LLMError) { e }
+        assertNull(error.nmProviderReach)
+        val relay = error.nmRelayError!!
+        assertEquals(io.github.nanomuse.cloud.RelayRefusal.Kind.EXHAUSTED, relay.refusal.kind)
+        assertEquals("Blocked: [redacted]", relay.refusal.message)
+        assertEquals(2.0, relay.exhausted!!.grantCny, 0.0)
+        assertEquals("", relay.exhausted!!.inviteUrl)
+        assertEquals("https://example.invalid/docs", relay.exhausted!!.ownKeyDocs)
+        assertEquals("Echo [redacted]", relay.exhausted!!.guidance!!.providers.single().name)
+        assertTrue(!relay.toString().contains("test-key"))
+    }
+
+    @Test
+    fun `Responses failure redacts credentials after JSON decoding without changing retry type`() = runBlocking {
+        provider = OpenAIProvider(
+            apiKey = "test-key", model = LLMModel.gpt4oMini,
+            basePath = server.url("/").toString().trimEnd('/'), useResponsesAPI = true,
+        )
+        server.enqueue(sse("""{"type":"response.failed","response":{"error":{"code":"server_error","message":"Failure: \u0074est-key"}}}"""))
+        val thrown = runCatching {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+        }.exceptionOrNull()
+        val error = generateSequence(thrown) { it.cause }.filterIsInstance<LLMError>().first()
+        assertTrue(error is LLMError.TransientError)
+        assertTrue(error.message.orEmpty().contains("[redacted]"))
+        assertTrue(!error.message.orEmpty().contains("test-key"))
+        val reach = error.nmProviderReach!!
+        assertNull(reach.httpStatus) // The event does not contain an HTTP status.
+        assertEquals("Failure: [redacted]", reach.originalMessage)
+        assertEquals(JSONObject(server.takeRequest().body.readUtf8()).getString("model"), reach.modelId)
+    }
+
+    @Test
+    fun `midstream provider code is not an HTTP status and keeps retry behavior`() = runBlocking {
+        // The HTTP response is successful; this 429 is inside the SSE data, not its status.
+        server.enqueue(sse("""{"error":{"code":429,"message":"Exceeded your current quota, test-key"}}"""))
+        val thrown = runCatching {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+        }.exceptionOrNull()
+        val error = generateSequence(thrown) { it.cause }.filterIsInstance<LLMError>().first()
+        val request = JSONObject(server.takeRequest().body.readUtf8())
+        val reach = error.nmProviderReach!!
+        assertTrue(error is LLMError.RateLimited)
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.QUOTA, reach.kind)
+        assertNull(reach.httpStatus)
+        assertTrue(!reach.detail.contains("HTTP 429"))
+        assertEquals(request.getString("model"), reach.modelId)
+        assertTrue(reach.originalMessage.contains("[redacted]"))
+        assertTrue(!reach.originalMessage.contains("test-key"))
+        assertEquals(reach, io.github.nanomuse.net.ProviderReach.classify(io.github.nanomuse.net.ProviderReach.canonical(reach)))
+    }
+
+    @Test
+    fun `unnumbered or non-status stream errors get a generic card without invented HTTP`() = runBlocking {
+        for (body in listOf(
+            """{"error":{"message":"Failed, test-key"}}""",
+            """{"error":{"code":1234,"message":"Failed, test-key"}}""",
+        )) {
+            server.enqueue(sse(body))
+            val thrown = runCatching {
+                provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+            }.exceptionOrNull()
+            val error = generateSequence(thrown) { it.cause }.filterIsInstance<LLMError>().first()
+            val reach = error.nmProviderReach!!
+            assertEquals(io.github.nanomuse.net.ProviderReach.Kind.PROVIDER_ERROR, reach.kind)
+            assertNull(reach.httpStatus)
+            assertEquals("Failed, [redacted]", reach.originalMessage)
+            assertTrue(!error.message.orEmpty().contains("HTTP 0"))
+            server.takeRequest()
+        }
+    }
+
+    @Test
+    fun `relay refusal in a successful SSE response keeps guidance without a false HTTP status`(): Unit = runBlocking {
+        server.enqueue(sse("""{"error":{"type":"nanomuse_cloud","code":413,"message":"Too large, test-key"}}"""))
+        val thrown = runCatching {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 8192)
+        }.exceptionOrNull()
+        val error = generateSequence(thrown) { it.cause }.filterIsInstance<LLMError>().first()
+        val refusal = error.nmRelayError!!.refusal
+        assertEquals(io.github.nanomuse.cloud.RelayRefusal.Kind.TOO_LARGE, refusal.kind)
+        assertEquals(0, refusal.status)
+        assertEquals("stream_413", refusal.code)
+        assertEquals("too_large", refusal.toException().code)
+        assertEquals("Too large, [redacted]", refusal.message)
+        assertEquals(refusal, io.github.nanomuse.cloud.RelayRefusal.fromCanonical(io.github.nanomuse.cloud.RelayRefusal.canonical(refusal)))
+        assertNull(error.nmProviderReach)
+        server.takeRequest()
+        Unit // JUnit 4 requires a void test method, not MockWebServer's RecordedRequest.
+    }
+
+    @Test
+    fun `image failures keep their submitted model and redact the overriding request credential`() = runBlocking {
+        val credential = "fixture-override"
+        val secondCredential = "fixture-second"
+        provider.imageExtraHeaders = mapOf("Authorization" to "Bearer $credential", "api-key" to secondCredential)
+        fun errorResponse() = MockResponse().setResponseCode(413).setBody(
+            """{"error":{"message":"Request too large, \u0066ixture-override and \u0066ixture-second"}}""",
+        )
+        server.enqueue(errorResponse())
+        val generateError = runCatching { provider.generateImage("test") }.exceptionOrNull() as LLMError
+        val generateRequest = server.takeRequest()
+        val generatedModel = JSONObject(generateRequest.body.readUtf8()).getString("model")
+        assertEquals(generatedModel, generateError.nmProviderReach?.modelId)
+        assertTrue(generateError.nmProviderReach!!.originalMessage.contains("[redacted]"))
+        assertTrue(!generateError.nmProviderReach!!.originalMessage.contains(credential))
+        assertTrue(!generateError.nmProviderReach!!.originalMessage.contains(secondCredential))
+
+        server.enqueue(errorResponse())
+        val image = LLMMessage.ImagePart(byteArrayOf(1, 2, 3), "image/png")
+        val editError = runCatching { provider.editImage("test", listOf(image)) }.exceptionOrNull() as LLMError
+        val editRequest = server.takeRequest().body.readUtf8()
+        assertTrue(editRequest.contains(generatedModel))
+        assertEquals(generatedModel, editError.nmProviderReach?.modelId)
+        assertTrue(editError.nmProviderReach!!.originalMessage.contains("[redacted]"))
+        assertTrue(!editError.nmProviderReach!!.originalMessage.contains(credential))
+        assertTrue(!editError.nmProviderReach!!.originalMessage.contains(secondCredential))
     }
 
     @Test

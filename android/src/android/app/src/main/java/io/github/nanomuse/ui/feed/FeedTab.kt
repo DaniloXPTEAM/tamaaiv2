@@ -376,7 +376,7 @@ private fun EmptyState(generating: Boolean, onWriteNow: () -> Unit) {
         Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             if (generating) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.action)
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.accent)
                     Spacer(Modifier.width(10.dp))
                     Text(stringResource(R.string.nm_feed_generating), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
                 }
@@ -396,7 +396,7 @@ private fun EmptyState(generating: Boolean, onWriteNow: () -> Unit) {
 private fun GeneratingCard() {
     FeedCard {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.action)
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.accent)
             Spacer(Modifier.width(10.dp))
             Text(stringResource(R.string.nm_feed_generating), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
         }
@@ -445,7 +445,7 @@ private fun FeedSettingsSheet(onDismiss: () -> Unit, onEditRoutine: (String) -> 
                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MuseTones.action,
+                    focusedBorderColor = MuseTones.accent,
                     unfocusedBorderColor = MuseTones.hairline,
                 ),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
@@ -480,7 +480,7 @@ private fun FeedSettingsSheet(onDismiss: () -> Unit, onEditRoutine: (String) -> 
                         Text(
                             stringResource(if (generating) R.string.nm_feed_generating else R.string.nm_feed_write_now),
                             fontSize = 15.sp,
-                            color = if (generating) ChatColors.secondaryText else MuseTones.action,
+                            color = if (generating) ChatColors.secondaryText else MuseTones.accent,
                             fontWeight = FontWeight.Medium,
                         )
                     }

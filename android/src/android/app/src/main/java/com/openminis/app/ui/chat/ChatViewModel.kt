@@ -21,6 +21,16 @@ import io.github.nanomuse.chat.CompactSummaryIdleTimeoutException // nanoMuse
 import io.github.nanomuse.chat.CompactSummaryOutputException // nanoMuse
 import io.github.nanomuse.chat.ContextBudget // nanoMuse
 import io.github.nanomuse.chat.ContextEstimate // nanoMuse
+import io.github.nanomuse.chat.PromptSize // nanoMuse: count-only prompt diagnostics
+import io.github.nanomuse.chat.PromptProfiles // nanoMuse: one snapshot for the actual outbound profile
+import io.github.nanomuse.router.Need
+import io.github.nanomuse.router.Profile
+import io.github.nanomuse.router.ProviderBudget
+import io.github.nanomuse.router.ProviderBudgetStore
+import io.github.nanomuse.router.Route
+import io.github.nanomuse.router.SessionState
+import io.github.nanomuse.router.TurnRequestPlanner
+import io.github.nanomuse.router.TurnRouter
 import io.github.nanomuse.chat.ContextCalibrationStore // nanoMuse
 import io.github.nanomuse.chat.ContextTrimming // nanoMuse
 import io.github.nanomuse.chat.ContextTrimStore // nanoMuse
@@ -166,6 +176,10 @@ class ChatViewModel(
             // `DataInspectionFailed`) is about the words, not the size; halving sends the same
             // words twice, and one long chat was refused two hundred times in an hour that way.
             if (error is LLMError.ProviderError && io.github.nanomuse.cloud.RelayRefusal.contentCheck(error.detail)) return false
+            // nanoMuse: credit/payment and access refusals cannot be fixed by splitting the input.
+            if (error is LLMError.ProviderError &&
+                (error.detail.startsWith("[402]") || error.detail.startsWith("HTTP 402:") ||
+                    error.detail.startsWith("[403]") || error.detail.startsWith("HTTP 403:"))) return false
             if (error is LLMError) {
                 return when (error) {
                     // Never worth a smaller payload:
@@ -1149,12 +1163,67 @@ class ChatViewModel(
     // streaming, hiding the Stop button while the new turn was live).
     @Volatile
     private var streamJob: Job? = null
+    // nanoMuse: Stop must only retire the tracker run owned by the job it cancels.
+    private val nmTrackedLocalRuns = io.github.nanomuse.pet.PetRunBindings<Job>()
     private var currentProvider: LLMProvider? = null
     private var currentModel: LLMModel? = null
+
+    // nanoMuse: a mode is a request shape, never an authorization to use tools.
+    private val _nmProfileOverride = MutableStateFlow<Profile?>(null)
+    val nmProfileOverride: StateFlow<Profile?> = _nmProfileOverride.asStateFlow()
+    private val _nmActiveProfile = MutableStateFlow<Profile?>(null)
+    val nmActiveProfile: StateFlow<Profile?> = _nmActiveProfile.asStateFlow()
+    @Volatile private var nmPreviousRoute = SessionState()
+
+    fun nmSetProfileOverride(profile: Profile?) {
+        _nmProfileOverride.value = profile
+    }
+
+    /** Reclassify a new user turn, including queued messages and attachments. */
+    private fun nmRouteLatest(): Route.Chat {
+        val user = agentHistory.lastOrNull { message ->
+            message.role == LLMMessage.Role.USER &&
+                !message.content.trimStart().startsWith("<system-reminder>") &&
+                (message.content.isNotBlank() || message.imageParts.isNotEmpty() ||
+                    message.contentParts.any { it is AgentContentPart.ImageData ||
+                        (it is AgentContentPart.Text && it.text.contains("<user-attached-files>")) })
+        }
+        return TurnRouter.route(
+            text = user?.content.orEmpty(),
+            session = nmPreviousRoute,
+            override = _nmProfileOverride.value,
+            hasImageAttachment = user?.let { message ->
+                message.imageParts.isNotEmpty() || message.contentParts.any { it is AgentContentPart.ImageData }
+            } == true,
+            hasFileAttachment = user?.contentParts?.any {
+                it is AgentContentPart.Text && it.text.contains("<user-attached-files>")
+            } == true,
+        )
+    }
+
+    /** No model inherits a different model's observed limit. Missing metadata stays unknown. */
+    private fun nmBudgetFor(provider: LLMProvider): ProviderBudget {
+        val config = providerRepository.config.value
+        val entry = config.modelEntries.find { it.id == _activeEntryId.value }
+            ?.takeIf { it.model.id == provider.model.id && this.currentProvider === provider }
+            ?: return ProviderBudget()
+        val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return ProviderBudget()
+        val vendor = io.github.nanomuse.cloud.ProviderCatalogue.match(
+            io.github.nanomuse.cloud.ProviderCatalogue.load(context), instance,
+        )
+        val modelLimits = vendor?.models?.get(provider.model.id)?.limits
+        val observedTpm = modelLimits?.freeTpm ?: vendor?.limits?.freeTpm
+        return ProviderBudget(
+            tokensPerMinute = ProviderBudgetStore.read(context, instance.id, observedTpm),
+            maxOutputTokens = modelLimits?.maxOutput ?: vendor?.limits?.maxOutput,
+        )
+    }
 
     // nanoMuse: model-scoped calibration survives Continue and process restart. The request
     // budget below is refreshed before each provider call, including model-group fallback.
     private val nmCalibrationStore by lazy { ContextCalibrationStore(context) }
+    // nanoMuse: remember a provider's confirmed smaller output cap by route and model.
+    private val nmOutputLimitStore by lazy { io.github.nanomuse.net.OutputLimitStore(context) }
     private var nmHistoryBudget: ContextBudget.Plan? = null
     private var nmHistoryCalibration = ContextEstimate.Calibration()
 
@@ -1224,8 +1293,8 @@ class ChatViewModel(
      * The cost is negligible — [AgentTools.makeAgentTools] just builds a
      * fixed list of definition objects, no I/O.
      */
-    private val agentTools: List<AgentToolDefinition>
-        get() = io.github.nanomuse.chat.PromptDiet.tools(AgentTools.makeAgentTools( // nanoMuse: browser_use worded densely (PromptDiet)
+    // nanoMuse: keep the original definitions available for count-only before/after diagnostics.
+    private fun originalAgentTools(): List<AgentToolDefinition> = AgentTools.makeAgentTools(
             // [T-android-vision-group / GH#182] The main model's own vision
             // capability. When false but a Vision Group is configured, read_image
             // is still exposed and routes through the group (see
@@ -1239,7 +1308,11 @@ class ChatViewModel(
                 providerRepository, context,
             ),
             memoryEnabled = _memoryEnabled.value,
-        ))
+        )
+
+    // nanoMuse: preserve the existing diet for all non-streaming callers, too.
+    private val agentTools: List<AgentToolDefinition>
+        get() = io.github.nanomuse.chat.PromptDiet.tools(originalAgentTools())
 
     /**
      * Per-session loop detector. Reset alongside [agentHistory] whenever the
@@ -1810,6 +1883,17 @@ class ChatViewModel(
             title = "Thinking",
             subtitle = "",
         ),
+        // nanoMuse: local profile commands change only subsequent request shapes.
+        SlashCommand(id = "leve", icon = Icons.Outlined.Build, title = "leve", subtitle = ""),
+        SlashCommand(id = "agente", icon = Icons.Outlined.Build, title = "agente", subtitle = ""),
+        SlashCommand(id = "auto", icon = Icons.Outlined.Build, title = "auto", subtitle = ""),
+        // nanoMuse: a local, zero-request measurement of the current prompt and tools.
+        SlashCommand(
+            id = "prompt-size",
+            icon = Icons.Outlined.Build,
+            title = "prompt-size",
+            subtitle = "",
+        ),
     )
 
     // [T-android-split-chat] filteredSlashCommands / updateSlashMenuState /
@@ -1871,6 +1955,10 @@ class ChatViewModel(
             "memory" -> toggleMemoryEnabled()
             "thinking" -> toggleThinking()
             "clear" -> _clearChatConfirmRequested.value = true
+            "leve" -> nmSetProfileOverride(Profile.LEAN) // nanoMuse: local, no model request
+            "agente" -> nmSetProfileOverride(Profile.BASIC)
+            "auto" -> nmSetProfileOverride(null)
+            "prompt-size" -> nmShowPromptSize() // nanoMuse: no model call, private text stays local.
             else -> AppLogger.info(TAG, "[Slash] unrecognized id=${cmd.id} — no dispatch")
         }
         // [T-android-slash-menu-align-ios-prepend] Action command: restore the
@@ -1999,6 +2087,68 @@ class ChatViewModel(
             content = "",
             toolBlocks = listOf(block),
         )
+    }
+
+    // nanoMuse: /prompt-size is a local snapshot, not a message to the model or a general log.
+    private fun nmShowPromptSize() {
+        if (_isStreaming.value || _isCompacting.value) {
+            appendSystemInfo(context.getString(R.string.nm_prompt_size_busy), "info")
+            return
+        }
+        val requestedSession = activeSessionId
+        viewModelScope.launch(Dispatchers.IO) {
+            val report = runCatching {
+                var sections: List<PromptSize.Measure<PromptSize.Section>>? = null
+                var input: PromptProfiles.Input? = null
+                var imageReady: Boolean? = null
+                buildSystemPrompt(
+                    onSnapshot = { input = it },
+                    onMeasured = { measured, image -> sections = measured; imageReady = image },
+                )
+                val before = originalAgentTools()
+                val tools = PromptSize.tools(before, io.github.nanomuse.chat.PromptDiet.tools(before))
+                val names = context.getString(R.string.nm_prompt_size_section_names).split('|')
+                buildString {
+                    appendLine(context.getString(R.string.nm_prompt_size_explanation))
+                    appendLine()
+                    appendLine(context.getString(R.string.nm_prompt_size_system))
+                    for (row in checkNotNull(sections)) {
+                        val label = names.getOrElse(row.label.ordinal) { row.label.name }
+                        appendLine("$label: ${row.beforeChars} → ${row.afterChars} (~${row.beforeTokens} → ~${row.afterTokens})")
+                    }
+                    appendLine()
+                    appendLine(context.getString(R.string.nm_prompt_size_tools))
+                    for (row in tools) {
+                        val label = row.label.name.lowercase(java.util.Locale.ROOT)
+                        appendLine("$label: ${row.beforeChars} → ${row.afterChars} (~${row.beforeTokens} → ~${row.afterTokens})")
+                    }
+                    // nanoMuse: profile totals use the current snapshot and last turn's hints;
+                    // they are estimates only and do not include history, images or output.
+                    appendLine()
+                    appendLine(context.getString(R.string.nm_router_profile_totals))
+                    for (profile in Profile.entries) {
+                        val hints = nmPreviousRoute.previousHints
+                        val built = PromptProfiles.build(profile, checkNotNull(input), hints)
+                        val schemas = PromptProfiles.tools(profile, before, hints)
+                        val chars = built.prompt.length + PromptSize.tools(emptyList(), schemas).last().afterChars
+                        appendLine("${profile.name}: $chars (~${PromptSize.estimateTokens(chars)})")
+                    }
+                    appendLine()
+                    append(context.getString(when (imageReady) {
+                        true -> R.string.nm_prompt_size_image_yes
+                        false -> R.string.nm_prompt_size_image_no
+                        null -> R.string.nm_prompt_size_image_unknown
+                    }))
+                }
+            }
+            withContext(Dispatchers.Main) {
+                if (activeSessionId != requestedSession) return@withContext
+                report.fold(
+                    onSuccess = { appendSystemInfo(context.getString(R.string.nm_prompt_size_title), "prompt_size", payload = it) },
+                    onFailure = { appendSystemInfo(context.getString(R.string.nm_prompt_size_failed), "info") },
+                )
+            }
+        }
     }
 
     /**
@@ -3308,6 +3458,7 @@ class ChatViewModel(
      * up. Mirrors iOS `pendingSendText` / `pendingSendAttachments`.
      */
     private var pendingSendText: String? = null
+    private var pendingSendPetGeneration: Long? = null // nanoMuse: keep the submitting Pet through compaction.
 
     private val _showCompactBeforeSendPrompt = MutableStateFlow(false)
     val showCompactBeforeSendPrompt: StateFlow<Boolean> = _showCompactBeforeSendPrompt.asStateFlow()
@@ -3322,9 +3473,11 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         val text = pendingSendText ?: return
         pendingSendText = null
+        val petGeneration = pendingSendPetGeneration // nanoMuse: retain the original Pet across compaction.
+        pendingSendPetGeneration = null // nanoMuse
         // nanoMuse: the outgoing-request guard performs one bounded attempt after the new
         // message is saved. A pre-send failure must not start the same attempt again (#719).
-        sendMessage(text, skipContextCheck = true)
+        sendMessage(text, skipContextCheck = true, petGeneration = petGeneration)
     }
 
     /** Dialog action: send without compacting. */
@@ -3332,7 +3485,9 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         val text = pendingSendText ?: return
         pendingSendText = null
-        sendMessage(text, skipContextCheck = true)
+        val petGeneration = pendingSendPetGeneration // nanoMuse
+        pendingSendPetGeneration = null // nanoMuse
+        sendMessage(text, skipContextCheck = true, petGeneration = petGeneration)
     }
 
     /** Dialog dismissed — restore the text to the composer so it isn't lost. */
@@ -3340,6 +3495,7 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         pendingSendText?.let { _inputText.value = it }
         pendingSendText = null
+        pendingSendPetGeneration = null // nanoMuse
     }
 
     // nanoMuse: local trims precede summaries, and an early failure can still leave room.
@@ -3675,7 +3831,7 @@ class ChatViewModel(
                 if (pinned != null && io.github.nanomuse.cloud.NanoMuseCloud.owns(context, pinned)) {
                     val cloudGroup = providerRepository.defaultPrimaryGroupId
                         ?.let { id -> config.modelGroups.firstOrNull { it.id == id } }
-                        ?.takeIf { it.name == io.github.nanomuse.cloud.NanoMuseCloud.LABEL && pinned.id !in it.memberEntryIds }
+                        ?.takeIf { io.github.nanomuse.cloud.NanoMuseCloud.ownsGroup(it.name) && pinned.id !in it.memberEntryIds }
                     if (cloudGroup != null && resolveProviderFromGroup(cloudGroup.id)) {
                         _selectedGroupId.value = cloudGroup.id
                         AppLogger.info(
@@ -4987,6 +5143,8 @@ class ChatViewModel(
         // Memory state — match iOS clearChat() field list one-for-one.
         _messages.value = emptyList()
         agentHistory.clear()
+        nmPreviousRoute = SessionState() // nanoMuse: a cleared chat has no prior tool turn
+        _nmActiveProfile.value = null
         _error.value = null
         _cachedLatestMarker = null
         toolLoopDetector.reset()
@@ -5632,47 +5790,51 @@ class ChatViewModel(
             }
         }
 
-        val baseSystemPrompt = buildSystemPrompt()
-        val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-            val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-            if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-            else "$prefix\n\n${baseSystemPrompt ?: ""}"
-        } else baseSystemPrompt
+        // nanoMuse: rebuild the provider-specific prefix for each actual request.
+        val nmPromptInput = nmCapturePromptInput()
 
         // _isStreaming was already set synchronously by the caller.
         val launchedProvider = provider
         streamJob = viewModelScope.launch(Dispatchers.IO) {
             AppLogger.info(TAG_STREAM, "$label streamJob ENTER sid=$activeSessionId")
             try {
-                SessionConcurrencyManager.acquireSlot(activeSessionId)
-                AppLogger.debug(TAG_STREAM, "$label streamJob slot acquired")
-                SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-                val activeFallbackStrategy = run {
-                    val groupId = _selectedGroupId.value
-                    groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                        ?: com.openminis.app.data.model.FallbackStrategy.default
+                val trackedSessionId = activeSessionId
+                val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                    AppLogger.debug(TAG_STREAM, "$label streamJob slot acquired")
+                    beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                } catch (e: Throwable) {
+                    SessionConcurrencyManager.releaseSlot(trackedSlot)
+                    throw e
                 }
-                val fallbackProviders = buildFallbackProviders(launchedProvider)
                 try {
+                    val activeFallbackStrategy = run {
+                        val groupId = _selectedGroupId.value
+                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                            ?: com.openminis.app.data.model.FallbackStrategy.default
+                    }
+                    val fallbackProviders = buildFallbackProviders(launchedProvider)
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop CALL")
                     runAgentLoop(
                         provider = launchedProvider,
-                        systemPrompt = systemPrompt,
+                        promptInput = nmPromptInput,
                         fallbackProviders = fallbackProviders,
                         fallbackStrategy = activeFallbackStrategy,
+                        onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                     )
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop RETURN normal")
                 } catch (e: CancellationException) {
+                    SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop CANCELLED")
                     Log.d(TAG, "Agent loop cancelled")
                 } catch (e: Exception) {
                     AppLogger.error(TAG_STREAM, "$label runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                     Log.e(TAG, "Agent loop error ($label)", e)
-                    setInlineError(e.message ?: "Unknown error")
+                    setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                     // T298: flag the upcoming setInactive() so the
                     // background completion notifier renders the ❌
                     // variant instead of a clean success.
-                    SessionActivityTracker.markStreamError(activeSessionId)
+                    SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                 } finally {
                     AppLogger.info(TAG_STREAM, "$label streamJob FINALLY enter")
                     // [T-android-overlay-reply-status-34599] Surface
@@ -5683,8 +5845,11 @@ class ChatViewModel(
                     // we're in the finally block of the agent loop and
                     // the stream has already flushed its last delta.
 
-                    finishTrackedReply(activeSessionId)
-                    SessionConcurrencyManager.releaseSlot(activeSessionId)
+                    try {
+                        finishTrackedReply(trackedSessionId, trackedTurnId)
+                    } finally {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                    }
                     AppLogger.info(TAG_STREAM, "$label streamJob FINALLY exit")
                 }
             } catch (e: CancellationException) {
@@ -5932,7 +6097,10 @@ class ChatViewModel(
      * current agent loop finishes, drainQueuedPrompts() consumes the queue.
      * Mirrors iOS AIChatViewModel.enqueuePrompt().
      */
-    fun enqueuePrompt(text: String) {
+    // nanoMuse: a queued line keeps its original Pet even when sent again after a remote task.
+    fun enqueuePrompt(text: String) = nmEnqueuePrompt(text, io.github.nanomuse.pet.PetEvents.generation(context))
+
+    private fun nmEnqueuePrompt(text: String, petGeneration: Long?) {
         val trimmed = text.trim()
         val pendingAttachments = _attachments.value
         if ((trimmed.isBlank() && pendingAttachments.isEmpty()) || !_isStreaming.value) return
@@ -5941,6 +6109,7 @@ class ChatViewModel(
             id = "queued_${System.currentTimeMillis()}_${(Math.random() * 1_000_000).toInt()}",
             text = trimmed,
             attachments = pendingAttachments,
+            petGeneration = petGeneration, // nanoMuse: null means this is an automated prompt.
         )
         _promptQueue.value = _promptQueue.value + prompt
 
@@ -6093,6 +6262,10 @@ class ChatViewModel(
             bodyPartsJson = queuedPaste?.partsJson,
         )
         val userEntity = chatRepository.appendMessage(sid, "user", userPartsJson)
+        // nanoMuse: one saved row can contain several queued person messages and routine prompts.
+        io.github.nanomuse.pet.PetEvents.queuedChats(context, userEntity.id, queued.map {
+            io.github.nanomuse.pet.PetQueuedOrigin(it.id, it.petGeneration)
+        })
         io.github.nanomuse.sync.ConversationSync.sent(sid) // nanoMuse: pushed at send (C8), then "working" (C9)
         agentHistory.add(
             LLMMessage(
@@ -6177,9 +6350,8 @@ class ChatViewModel(
      */
     private suspend fun drainQueuedPrompts(
         provider: LLMProvider,
-        systemPrompt: String?,
-        fallbackProviders: List<FallbackCandidate>,
         fallbackStrategy: com.openminis.app.data.model.FallbackStrategy,
+        onTerminalFailure: () -> Unit,
     ) {
         while (_promptQueue.value.isNotEmpty()) {
             val queued = _promptQueue.value
@@ -6239,7 +6411,11 @@ class ChatViewModel(
                 prepared.attachedFilesXml,
                 bodyPartsJson = drainPaste?.partsJson,
             )
-            chatRepository.appendMessage(sid, "user", userPartsJson)
+            val queuedRow = chatRepository.appendMessage(sid, "user", userPartsJson) // nanoMuse: identify the saved batch.
+            // nanoMuse: count only queued person messages, after persistence, without their text.
+            io.github.nanomuse.pet.PetEvents.queuedChats(context, queuedRow.id, queued.map {
+                io.github.nanomuse.pet.PetQueuedOrigin(it.id, it.petGeneration)
+            })
             io.github.nanomuse.sync.ConversationSync.sent(sid) // nanoMuse: pushed at send (C8), then "working" (C9)
 
             agentHistory.add(LLMMessage(
@@ -6254,10 +6430,11 @@ class ChatViewModel(
 
             try {
                 runAgentLoop(
-                    provider = provider,
-                    systemPrompt = systemPrompt,
-                    fallbackProviders = fallbackProviders,
+                    provider = this@ChatViewModel.currentProvider ?: provider,
+                    promptInput = nmCapturePromptInput(),
+                    fallbackProviders = buildFallbackProviders(this@ChatViewModel.currentProvider ?: provider),
                     fallbackStrategy = fallbackStrategy,
+                    onTerminalFailure = onTerminalFailure,
                 )
                 nmAfterTurn() // nanoMuse: queued prompts complete turns too
             } catch (e: CancellationException) {
@@ -6268,7 +6445,8 @@ class ChatViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Agent loop (queued-drain) error", e)
-                setInlineError(e.message ?: "Unknown error")
+                setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
+                onTerminalFailure()
                 break
             }
         }
@@ -6313,18 +6491,25 @@ class ChatViewModel(
     internal fun nmCancelHeadless(turnId: String): Boolean =
         io.github.nanomuse.hub.HeadlessTurn.stop(nmHeadlessReceipt, turnId) { cancelStream() }
 
-    fun sendMessage(text: String) {
+    fun sendMessage(text: String) = nmSendMessage(text, io.github.nanomuse.pet.PetEvents.generation(context)) // nanoMuse: capture at submission.
+
+    internal fun nmSendAutomatedMessage(text: String) = nmSendMessage(text, null) // nanoMuse: routines and RPCs are not typed on this phone.
+
+    private fun nmSendMessage(text: String, petGeneration: Long?) { // nanoMuse: null is an automated prompt.
         // nanoMuse: explicit device work is routed before any local model or avatar action.
         if (nmRemoteBridge.send(text, io.github.nanomuse.hub.Hub.others(context),
-                _attachments.value.isNotEmpty() || _pastedTexts.value.isNotEmpty(), _isCompacting.value)) return
-        if (_isStreaming.value) { enqueuePrompt(text); return }
-        if (nmInterceptAvatar(text)) { nmCountableTurn = false; return }
-        sendMessage(text, skipContextCheck = false)
+                _attachments.value.isNotEmpty() || _pastedTexts.value.isNotEmpty(), _isCompacting.value,
+                onUserSaved = { id -> petGeneration?.let { io.github.nanomuse.pet.PetEvents.chat(context, id, it) } })) return
+        if (_isStreaming.value) { nmEnqueuePrompt(text, petGeneration); return }
+        // nanoMuse: an automated prompt must not trigger a paid avatar request on its own.
+        if (petGeneration != null && nmInterceptAvatar(text, petGeneration)) { nmCountableTurn = false; return }
+        sendMessage(text, skipContextCheck = false, petGeneration = petGeneration) // nanoMuse: carry the submitting Pet through the guard.
     }
 
     // nanoMuse: only the adapter touches upstream state; the lifecycle lives in RemoteChatBridge.
     private val nmRemoteBridge: io.github.nanomuse.sync.RemoteChatBridge by lazy {
         val host = object : io.github.nanomuse.sync.RemoteChatBridge.Host {
+            private var trackedTurnId: String? = null
             override val busy: Boolean get() = _isStreaming.value
             override fun setBusy(value: Boolean) { _isStreaming.value = value }
             override fun error(issue: io.github.nanomuse.sync.RemoteChatBridge.Issue, device: String) {
@@ -6344,12 +6529,16 @@ class ChatViewModel(
             override suspend fun session(): String = ensureSession()
             override suspend fun user(sessionId: String, text: String) = nmAppendUserLine(sessionId, text)
             override fun started(sessionId: String) {
-                SessionActivityTracker.setActive(sessionId) { nmRemoteBridge.cancel() }
+                trackedTurnId = SessionActivityTracker.setActive(sessionId) { nmRemoteBridge.cancel() }
             }
-            override fun ended(sessionId: String, completed: Boolean) {
-                if (!completed) SessionActivityTracker.markReplyIncomplete(sessionId)
+            override fun ended(sessionId: String, completed: Boolean, failed: Boolean) {
+                val turnId = trackedTurnId ?: return
+                trackedTurnId = null
+                if (!SessionActivityTracker.isCurrentRun(sessionId, turnId)) return
+                if (failed) SessionActivityTracker.markStreamError(sessionId, turnId)
+                else if (!completed) SessionActivityTracker.markReplyIncomplete(sessionId, turnId)
                 publishOverlayReplyExcerpt(sessionId)
-                SessionActivityTracker.setInactive(sessionId)
+                SessionActivityTracker.setInactive(sessionId, turnId)
             }
             override fun show(id: String, task: io.github.nanomuse.sync.RemoteChatBridge.Task) {
                 val message = ChatMessage(id = "nm_remote_$id", role = "assistant", content = task.text,
@@ -6378,7 +6567,7 @@ class ChatViewModel(
         val draft = _inputText.value
         val draftAttachments = _attachments.value
         _attachments.value = next.attachments
-        sendMessage(next.text)
+        nmSendMessage(next.text, next.petGeneration) // nanoMuse: retain queued person/routine identity and generation.
         if (_inputText.value.isEmpty() || _inputText.value == draft) {
             _inputText.value = draft
             _attachments.value = draftAttachments
@@ -6401,7 +6590,7 @@ class ChatViewModel(
     private class NmPendingFace(val sid: String, val desc: String, val reference: android.graphics.Bitmap?, val blocked: Boolean)
     private var nmPendingFace: NmPendingFace? = null
 
-    private fun nmInterceptAvatar(text: String): Boolean {
+    private fun nmInterceptAvatar(text: String, petGeneration: Long?): Boolean { // nanoMuse: saved requests retain their submitting Pet.
         val flow = io.github.nanomuse.avatar.AvatarFlow
         val sid = realSessionId.ifEmpty { sessionId }
         // A pick or "again" while the options are up in this chat.
@@ -6410,7 +6599,7 @@ class ChatViewModel(
                 is io.github.nanomuse.avatar.AvatarFlow.Choice.Index -> {
                     if (io.github.nanomuse.avatar.AvatarStudio.slots.value.getOrNull(c.index) is io.github.nanomuse.avatar.AvatarStudio.Slot.Ready) {
                         viewModelScope.launch {
-                            nmAppendUserLine(sid, text)
+                            nmAppendUserLine(sid, text, petGeneration)
                             nmChooseAvatarInternal(sid, c.index)
                         }
                         return true
@@ -6419,7 +6608,7 @@ class ChatViewModel(
                 io.github.nanomuse.avatar.AvatarFlow.Choice.Regenerate -> {
                     val desc = (flow.stage.value as? io.github.nanomuse.avatar.AvatarFlow.Stage.Choosing)?.description.orEmpty()
                     viewModelScope.launch {
-                        nmAppendUserLine(sid, text)
+                        nmAppendUserLine(sid, text, petGeneration)
                         if (flow.regenerate(context)) {
                             nmAppendAssistantLine(sid, context.getString(R.string.nm_avatar_drawing_again))
                             nmAnnounceWhenDrawn(sid, desc)
@@ -6450,7 +6639,7 @@ class ChatViewModel(
             // A draft main chat gets its session row first, so the request and the
             // reply persist like any other turn.
             val realSid = ensureSession()
-            nmAppendUserLine(realSid, text)
+            nmAppendUserLine(realSid, text, petGeneration)
             val reference = withContext(Dispatchers.IO) { flow.loadReference(context, referenceUri) }
             // Pictures paid from the Cloud allowance are priced first: the card says what
             // this face costs and what is left today, and nothing is drawn until the yes.
@@ -6513,9 +6702,9 @@ class ChatViewModel(
 
     // ─── nanoMuse: the free allowance is spent ──────────────────────────────
     // The relay's 429 arrives through the model client as "rate limited"; the
-    // structured body was kept aside by AllowanceSignal. When the error is about
-    // to be shown, the card with the two ways on (own key, invite)
-    // is added under it — virtual, never persisted.
+    // structured body belongs to that exception. When the error is shown, the
+    // card with the two ways on (own key, invite) is added under it — virtual,
+    // never persisted.
 
     private val nmAllowanceCardId = "nm_allowance_card"
     private val _nmAllowance = kotlinx.coroutines.flow.MutableStateFlow<io.github.nanomuse.cloud.AllowanceSignal.Exhausted?>(null)
@@ -6525,21 +6714,24 @@ class ChatViewModel(
      * The error text to show for a failed turn — the allowance sentence when the relay said so
      * (with the ways-on card under it), the relay's other refusals as a canonical line the chat
      * renders as one sentence and a button (`RelayRefusal`: 413 → *New chat*, 401 → *Sign in*,
-     * busy → *Try again* …), the reach card's canonical line when a provider's 401/403/429 was
-     * kept aside by `ReachSignal`, [fallback] otherwise.
+     * busy → *Try again* …), or the diagnostic attached to this provider exception, [fallback]
+     * otherwise. Neither diagnostic is taken from another request's last-error slot.
      */
-    private fun nmAllowanceErrorText(fallback: String): String {
-        val info = io.github.nanomuse.cloud.AllowanceSignal.takeFresh()
+    private fun nmAllowanceErrorText(
+        fallback: String,
+        reach: io.github.nanomuse.net.ProviderReach.Reach? = null,
+        relayError: io.github.nanomuse.cloud.AllowanceSignal.HttpError? = null,
+    ): String {
+        if (reach != null) return io.github.nanomuse.net.ProviderReach.canonical(reach)
+        relayError ?: return fallback
+        val info = relayError.exhausted
         if (info == null) {
-            io.github.nanomuse.cloud.AllowanceSignal.takeFreshRefusal()?.let { refusal ->
-                // a key the relay no longer takes: the account's state follows (contract C12)
-                if (refusal.kind == io.github.nanomuse.cloud.RelayRefusal.Kind.SIGNED_OUT) {
-                    viewModelScope.launch { runCatching { io.github.nanomuse.cloud.NanoMuseCloud.refresh(context) } }
-                }
-                return io.github.nanomuse.cloud.RelayRefusal.canonical(refusal)
+            val refusal = relayError.refusal
+            // a key the relay no longer takes: the account's state follows (contract C12)
+            if (refusal.kind == io.github.nanomuse.cloud.RelayRefusal.Kind.SIGNED_OUT) {
+                viewModelScope.launch { runCatching { io.github.nanomuse.cloud.NanoMuseCloud.refresh(context) } }
             }
-            val reach = io.github.nanomuse.net.ReachSignal.takeFresh() ?: return fallback
-            return io.github.nanomuse.net.ProviderReach.canonical(reach)
+            return io.github.nanomuse.cloud.RelayRefusal.canonical(refusal)
         }
         _nmAllowance.value = info
         _messages.value = _messages.value.filterNot { it.id == nmAllowanceCardId } + ChatMessage(
@@ -6624,8 +6816,9 @@ class ChatViewModel(
         val sid = realSessionId.ifEmpty { sessionId }
         val flow = io.github.nanomuse.avatar.AvatarFlow
         if (!flow.isActiveIn(sid)) return
+        val petGeneration = io.github.nanomuse.pet.PetEvents.generation(context) // nanoMuse: this choice is the person's saved chat line.
         viewModelScope.launch {
-            nmAppendUserLine(sid, context.getString(R.string.nm_avatar_pick_line, index + 1))
+            nmAppendUserLine(sid, context.getString(R.string.nm_avatar_pick_line, index + 1), petGeneration)
             nmChooseAvatarInternal(sid, index)
         }
     }
@@ -6674,11 +6867,14 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun nmAppendUserLine(sid: String, text: String) {
+    // nanoMuse: return the saved row and credit only the Pet present when the person submitted it.
+    private suspend fun nmAppendUserLine(sid: String, text: String, petGeneration: Long? = null): String {
         val partsJson = """[{"type":"text","value":${escapeJson(text)}}]"""
         val entity = chatRepository.appendMessage(sid, "user", partsJson)
+        petGeneration?.let { io.github.nanomuse.pet.PetEvents.chat(context, entity.id, it) }
         agentHistory.add(LLMMessage(role = LLMMessage.Role.USER, content = text))
         _messages.value = _messages.value + ChatMessage(id = entity.id, role = "user", content = text)
+        return entity.id
     }
 
     private suspend fun nmAppendAssistantLine(sid: String, text: String) {
@@ -6738,10 +6934,12 @@ class ChatViewModel(
     /** A suggestion chip was tapped: name the agent and send the name as the user's message. */
     fun nmPickName(name: String) {
         nmFirstConversation.pick(name)
-        sendMessage(name, skipContextCheck = false)
+        sendMessage(name, skipContextCheck = false, petGeneration = io.github.nanomuse.pet.PetEvents.generation(context)) // nanoMuse
     }
 
-    private fun nmAfterTurn() {
+    // nanoMuse: the result's goal event belongs to this exact tracker job, not a replacement.
+    private suspend fun nmAfterTurn() {
+        val petGeneration = nmPetGenerationForJob(kotlin.coroutines.coroutineContext[Job])
         val sid = realSessionId.ifEmpty { sessionId }
         // Goal blocks in the reply just finished, and the turn budget of any
         // prompt addendum, are settled first — they apply to every session.
@@ -6754,7 +6952,7 @@ class ChatViewModel(
         // no error.
         val reply = nmReplyOfThisTurn()
         reply?.let { text ->
-            io.github.nanomuse.goals.GoalFlow.afterTurn(context, sid, text)
+            io.github.nanomuse.goals.GoalFlow.afterTurn(context, sid, text, petGeneration) // nanoMuse: bind the completed goal to this run.
             io.github.nanomuse.feed.FeedFlow.afterTurn(context, sid, text)
         }
         val fc = nmFirstConversation
@@ -6791,7 +6989,12 @@ class ChatViewModel(
      *   re-entry with `skipCompactCheck`.
      */
     // nanoMuse: the optional receipt identifies the exact headless invocation's user row.
-    private fun sendMessage(text: String, skipContextCheck: Boolean, headless: io.github.nanomuse.hub.HeadlessTurn.Receipt? = null) {
+    private fun sendMessage(
+        text: String,
+        skipContextCheck: Boolean,
+        headless: io.github.nanomuse.hub.HeadlessTurn.Receipt? = null,
+        petGeneration: Long? = null, // nanoMuse: null means an automated prompt, not a person.
+    ) {
         // [T-android-paste-mediaref] `[Pasted#N]` markers are NOT expanded here
         // any more.
         //
@@ -6811,7 +7014,7 @@ class ChatViewModel(
         val trimmed = text.trim()
         // While streaming, enqueue instead of silently dropping (iOS: send vs enqueuePrompt).
         if (_isStreaming.value) {
-            enqueuePrompt(text)
+            nmEnqueuePrompt(text, petGeneration) // nanoMuse: retain the submitting Pet, or the automated origin.
             return
         }
         // T180: allow attachments-only sends (no caption). Mirrors iOS, where
@@ -6834,6 +7037,7 @@ class ChatViewModel(
                 PreSendContextAction.PROCEED -> {}
                 PreSendContextAction.COMPACT_THEN_SEND -> {
                     pendingSendText = text
+                    pendingSendPetGeneration = petGeneration // nanoMuse
                     _inputText.value = ""
                     compactAndSendPending()
                     return
@@ -6842,6 +7046,7 @@ class ChatViewModel(
                     // Park the text on the VM (not the composer) so the dialog
                     // owns it; cancelCompactBeforeSend puts it back.
                     pendingSendText = text
+                    pendingSendPetGeneration = petGeneration // nanoMuse
                     _inputText.value = ""
                     _showCompactBeforeSendPrompt.value = true
                     return
@@ -6904,6 +7109,8 @@ class ChatViewModel(
         val editingId = _editingMessageId.value
         if (editingId != null) _editingMessageId.value = null
 
+        // nanoMuse: do not credit a later generation for a row saved after this send began.
+        val petChatGeneration = if (headless == null) petGeneration else null
         val headlessJob = viewModelScope.launch { // nanoMuse: retain the parent job that owns setup and streaming.
             streamJob = coroutineContext[Job] // nanoMuse: Stop during the setup (session, attachments, the user row) cancels it too, not only the agent loop launched below (#340)
             var streamLaunched = false
@@ -6941,6 +7148,10 @@ class ChatViewModel(
             headless?.saved(persistedUser.id) // nanoMuse: publish identity only after persistence.
             io.github.nanomuse.sync.ConversationSync.sent(activeSessionId) // nanoMuse: the person's line reaches the other devices at send (C8), then "working" (C9)
             io.github.nanomuse.chat.RoutineWakes.claim(activeSessionId, persistedUser.id) // nanoMuse: a routine's prompt is marked as such on its row
+            // nanoMuse: only a person's saved line counts, not a scheduled or headless prompt.
+            petChatGeneration?.let { generation ->
+                io.github.nanomuse.pet.PetEvents.chat(context, persistedUser.id, generation)
+            }
 
             val userMsg = ChatMessage(
                 id = persistedUser.id,
@@ -7030,14 +7241,9 @@ class ChatViewModel(
                 }
             }
 
-            // Build system prompt
-            // Anthropic OAuth requires the Claude Code prefix in the system prompt
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                else "$prefix\n\n${baseSystemPrompt ?: ""}"
-            } else baseSystemPrompt
+            // nanoMuse: capture the session once; prefix and profile follow the actual provider.
+            // nanoMuse: rebuild the provider-specific prefix for each actual request.
+            val nmPromptInput = nmCapturePromptInput()
 
             // Start agent loop with fallback. _isStreaming was set synchronously at top.
             streamLaunched = true
@@ -7054,27 +7260,34 @@ class ChatViewModel(
                             SessionConcurrencyManager.diagSnapshot(),
                     )
                     // Acquire concurrency slot (suspends if at max)
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
-                    AppLogger.debug(TAG_STREAM, "send streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-
-                    // Resolve the active group's fallback strategy
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                            ?: com.openminis.app.data.model.FallbackStrategy.default
+                    val trackedSessionId = activeSessionId
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "send streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
                     }
-
-                    // Build full fallback provider list upfront (mirrors iOS triedEntries approach)
-                    val fallbackProviders = buildFallbackProviders(provider)
-
                     try {
+
+                        // Resolve the active group's fallback strategy
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                                ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+
+                        // Build full fallback provider list upfront (mirrors iOS triedEntries approach)
+                        val fallbackProviders = buildFallbackProviders(provider)
+
                         AppLogger.info(TAG_STREAM, "send runAgentLoop CALL")
                         runAgentLoop(
                             provider = provider,
-                            systemPrompt = systemPrompt,
+                            promptInput = nmPromptInput,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "send runAgentLoop RETURN normal")
                         // nanoMuse: settle this turn before draining unrelated queued prompts.
@@ -7085,19 +7298,22 @@ class ChatViewModel(
                         nmAfterTurn() // nanoMuse: the first conversation steps forward when a turn completes
                         // Drain any prompts the user queued while this loop was running.
                         // Skipped on cancel: cancelled job won't reach here.
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy)
+                        drainQueuedPrompts(provider, activeFallbackStrategy) {
+                            SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                        }
                         AppLogger.info(TAG_STREAM, "send drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
                         headless?.requestStop() // nanoMuse: idle does not imply successful completion.
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "send runAgentLoop CANCELLED")
                         Log.d(TAG, "Agent loop cancelled")
                     } catch (e: Exception) {
                         headless?.fail() // nanoMuse: a partial reply cannot turn an error into success.
                         AppLogger.error(TAG_STREAM, "send runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Agent loop error (all fallbacks exhausted)", e)
-                        setInlineError(e.message ?: "Unknown error")
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // T298: completion notifier should show the ❌ variant.
-                        SessionActivityTracker.markStreamError(activeSessionId)
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "send streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -7108,8 +7324,11 @@ class ChatViewModel(
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
 
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        }
                         AppLogger.info(TAG_STREAM, "send streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -7150,6 +7369,13 @@ class ChatViewModel(
         }
     }
 
+    // nanoMuse: carry the diagnostic on the exception, including through wrapped Flow errors.
+    private fun setInlineError(error: Throwable) {
+        val actual = unwrapFlowException(error)
+        val llmError = actual as? LLMError
+        setInlineError(actual.message ?: "Unknown error", llmError?.nmProviderReach, llmError?.nmRelayError)
+    }
+
     /** Set error inline on the last assistant message (iOS: message.error).
      *
      *  Also clears [ChatMessage.isAwaitingModelResponse] — without this, an
@@ -7157,7 +7383,11 @@ class ChatViewModel(
      *  true at runAgentLoop ~4015) leaves the "nanoMuse is thinking" indicator
      *  on screen even though streaming is over. The flag is per-message and
      *  is not implicitly cleared by isStreaming=false. */
-    private fun setInlineError(errorText: String) {
+    private fun setInlineError( // nanoMuse: diagnostics belong to this error
+        errorText: String,
+        reach: io.github.nanomuse.net.ProviderReach.Reach? = null,
+        relayError: io.github.nanomuse.cloud.AllowanceSignal.HttpError? = null,
+    ) {
         // [T-error-persist-android] Never let an empty/blank error string reach
         // the banner. The UI gate is `message.error?.let { … }` — a non-null ""
         // would render an EMPTY error banner, and (now that errors persist) it
@@ -7168,6 +7398,7 @@ class ChatViewModel(
         // a Claude sign-in on a build without its identifier gets its sentence in the person's language (#373).
         val safeError = nmAllowanceErrorText(
             io.github.nanomuse.cloud.ClaudeSignIn.userText(context, errorText).ifBlank { context.getString(R.string.error_empty_response_generic) },
+            reach, relayError, // nanoMuse
         )
         // T-streaming-side-channel: before mutating the canonical message,
         // drain any in-flight streaming delta so the error frame carries
@@ -7421,48 +7652,54 @@ class ChatViewModel(
                 }
             }
 
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                else "$prefix\n\n${baseSystemPrompt ?: ""}"
-            } else baseSystemPrompt
+            // nanoMuse: rebuild the provider-specific prefix for each actual request.
+            val nmPromptInput = nmCapturePromptInput()
 
             // _isStreaming was already set synchronously at the top.
             streamLaunched = true
             streamJob = launch(Dispatchers.IO) {
                 AppLogger.info(TAG_STREAM, "retryLast streamJob ENTER sid=$activeSessionId")
                 try {
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
-                    AppLogger.debug(TAG_STREAM, "retryLast streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                            ?: com.openminis.app.data.model.FallbackStrategy.default
+                    val trackedSessionId = activeSessionId
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "retryLast streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
                     }
-                    val fallbackProviders = buildFallbackProviders(provider)
                     try {
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                                ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+                        val fallbackProviders = buildFallbackProviders(provider)
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop CALL")
                         runAgentLoop(
                             provider = provider,
-                            systemPrompt = systemPrompt,
+                            promptInput = nmPromptInput,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop RETURN normal")
                         nmAfterTurn() // nanoMuse
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy)
+                        drainQueuedPrompts(provider, activeFallbackStrategy) {
+                            SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                        }
                         AppLogger.info(TAG_STREAM, "retryLast drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop CANCELLED")
                         Log.d(TAG, "Agent loop cancelled")
                     } catch (e: Exception) {
                         AppLogger.error(TAG_STREAM, "retryLast runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Agent loop error (retryLast)", e)
-                        setInlineError(e.message ?: "Unknown error")
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // T298: completion notifier should show the ❌ variant.
-                        SessionActivityTracker.markStreamError(activeSessionId)
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "retryLast streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -7473,8 +7710,11 @@ class ChatViewModel(
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
 
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        }
                         AppLogger.info(TAG_STREAM, "retryLast streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -7629,10 +7869,13 @@ class ChatViewModel(
 
     private suspend fun runAgentLoop(
         provider: LLMProvider,
-        systemPrompt: String?,
+        promptInput: PromptProfiles.Input,
         fallbackProviders: List<FallbackCandidate> = emptyList(),
         fallbackStrategy: com.openminis.app.data.model.FallbackStrategy = com.openminis.app.data.model.FallbackStrategy.default,
+        onTerminalFailure: () -> Unit,
     ) {
+        // nanoMuse: every write in this loop belongs to the Pet present when its tracker run began.
+        val petRunGeneration = nmPetGenerationForJob(kotlin.coroutines.coroutineContext[Job])
         AppLogger.info(TAG_STREAM, "runAgentLoop ENTER provider=${provider.javaClass.simpleName} historySize=${agentHistory.size}")
         // [T-android-mem-probe-trust] Send-path context shape. The existing
         // `messages-shape` probe only runs on session LOAD, so the 2026-08-15
@@ -7754,6 +7997,8 @@ class ChatViewModel(
         var contextEstimate = ContextEstimate.Calibration()
         val usageMeter = ContextUsageMeter()
         var calibrationKey: String? = null
+        // nanoMuse: a one-off provider may retry, but must not persist a synthetic route identity.
+        var durableOutputKey: String? = null
         var calibratedModel: String? = null
         var preparedMessages: List<LLMMessage>? = null
         var requestBudget = ContextBudget.forModel(0, 0)
@@ -7762,16 +8007,44 @@ class ChatViewModel(
         val trimStore = ContextTrimStore(java.io.File(context.filesDir,
             "minis-sessions/${realSessionId.ifEmpty { sessionId }}/offloads/tools"))
 
+        // nanoMuse: this state belongs to the user turn, not the provider. A fallback
+        // rebuilds prefix, tools, limits and estimates for its own actual request.
+        var nmRoute = nmRouteLatest()
+        var nmCurrentInput = promptInput
+        var nmUsedTools = false
+        var nmWarnedWithoutTools = false
+        var nmAttempt: TurnRequestPlanner.Attempt? = null
+        var nmSystemPrompt: String? = null
+        var nmRequestTools: List<AgentToolDefinition> = emptyList()
+        fun nmProviderPrefix(): String =
+            if ((currentProvider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true)
+                io.github.nanomuse.cloud.ClaudeSignIn.identifier else ""
+        fun nmPlan(messages: List<LLMMessage>, budget: ProviderBudget): TurnRequestPlanner.Attempt? =
+            TurnRequestPlanner.prepare(nmCurrentInput, originalAgentTools(), nmRoute, budget, nmProviderPrefix()) { prompt, tools ->
+                val raw = ContextEstimate.request(messages, prompt, tools, imageTokens = BPETokenizer::countImageTokens)
+                // Calibration can raise the estimate; never use a downward calibration as quota evidence.
+                maxOf(raw, contextEstimate.estimate(raw))
+            }
+        fun nmInstall(attempt: TurnRequestPlanner.Attempt) {
+            nmAttempt = attempt
+            nmRoute = attempt.route
+            nmSystemPrompt = attempt.system
+            nmRequestTools = attempt.tools
+            _nmActiveProfile.value = attempt.route.profile
+        }
+
         fun alignContextEstimate() {
             val config = providerRepository.config.value
             val entry = config.modelEntries.find { it.id == _activeEntryId.value }
                 ?.takeIf { it.model.id == currentProvider.model.id }
             val instance = entry?.let { e -> config.instances.find { it.id == e.providerInstanceId } }
             // Store only the hashed identity. An unbound one-off provider gets an isolated key.
-            val key = if (instance != null && this@ChatViewModel.currentProvider === currentProvider) {
+            val boundRoute = instance != null && this@ChatViewModel.currentProvider === currentProvider
+            val key = if (boundRoute && instance != null) {
                 "${instance.id}|${instance.providerType}|${instance.customBaseURL.orEmpty()}|" +
                     "${instance.appendV1Suffix}|${instance.useResponsesAPI}"
             } else "${currentProvider.javaClass.name}|${System.identityHashCode(currentProvider)}"
+            durableOutputKey = key.takeIf { boundRoute } // nanoMuse: never retain one-off route identifiers.
             if (key != calibrationKey || calibratedModel != currentProvider.model.id) {
                 contextEstimate = nmCalibrationStore.load(key, currentProvider.model.id)
                 usageMeter.clear()
@@ -7782,19 +8055,19 @@ class ChatViewModel(
             nmHistoryCalibration = contextEstimate
             val window = effectiveContextWindowTokens(currentProvider) ?: currentProvider.model.contextWindowTokens
             val fixed = contextEstimate.estimate(ContextEstimate.request(
-                emptyList(), systemPrompt, agentTools,
+                emptyList(), nmSystemPrompt, nmRequestTools,
             ))
             requestBudget = ContextBudget.forModel(window,
                 currentProvider.effectiveMaxOutputTokens(nmResolvedModel(currentProvider)), fixed)
             nmHistoryBudget = requestBudget
         }
         fun rawTokens(messages: List<LLMMessage>): Int = ContextEstimate.request(
-            messages, systemPrompt, agentTools, imageTokens = BPETokenizer::countImageTokens,
+            messages, nmSystemPrompt, nmRequestTools, imageTokens = BPETokenizer::countImageTokens,
         )
         fun measureRawTokens(): Int = rawTokens(preparedMessages ?:
             applyRequestImageBudget(effectiveAgentHistory(), preview = true))
         fun usageSnapshot(messages: List<LLMMessage>) = usageMeter.snapshot(
-            calibrationKey.orEmpty(), currentProvider.model.id, messages, systemPrompt, agentTools,
+            calibrationKey.orEmpty(), currentProvider.model.id, messages, nmSystemPrompt, nmRequestTools,
             requestVariant = "${currentProvider.javaClass.name}|${_thinkingLevel.value}",
         )
         fun measureContextTokens(): Int {
@@ -7969,6 +8242,13 @@ class ChatViewModel(
             // Sanitize history before each API call (mirrors iOS pre-API validation)
             sanitizeAgentHistory()
 
+            // nanoMuse: fit on the prospective request before the context guard. If the raw
+            // history is too large even for LEAN, let the existing trimming guard run first;
+            // the actual prepared request must still fit before it is sent.
+            alignContextEstimate()
+            val nmPreview = applyRequestImageBudget(effectiveAgentHistory(), preview = true)
+            nmInstall(nmPlan(nmPreview, nmBudgetFor(currentProvider))
+                ?: checkNotNull(nmPlan(nmPreview, ProviderBudget())))
             // nanoMuse: deterministic trimming runs first and never edits saved history.
             prepareContext()
             when (inLoopContextCheck(contextMaintenance, requestBudget,
@@ -8145,8 +8425,20 @@ class ChatViewModel(
             // so we catch at collect level and unwrap.
             var collectDone = false
             var retryAttempt = 0  // per-turn auto-retry counter (resets on each new turn)
+            // nanoMuse: retry only this failed request; completed tools stay in history.
+            data class PendingOutputLimit(val provider: LLMProvider, val route: String?, val model: String, val limit: Int)
+            var pendingOutput: PendingOutputLimit? = null
+            var outputRetried = false
+            var rateRetried = false
+            var lastRequestedOutput = 0
             while (!collectDone) {
                 try {
+                    // nanoMuse: a failed partial stream cannot confirm the next attempt's cap
+                    // or carry its finish reason, reasoning or usage into another provider.
+                    turnFinishReason = null
+                    turnReasoningBlob = null
+                    lastUsage = null
+                    lastRequestedOutput = 0
                     // [T-android-enhanced-cache] Stamp the per-turn Enhanced
                     // Cache flag onto the active provider here — the single
                     // choke point every turn passes through, regardless of how
@@ -8196,6 +8488,10 @@ class ChatViewModel(
                     // nanoMuse: a fallback provider must rebuild its own budgeted view.
                     alignContextEstimate()
                     if (preparedMessages == null) {
+                        // nanoMuse: fallback may change provider, model vision and OAuth prefix.
+                        val preview = applyRequestImageBudget(effectiveAgentHistory(), preview = true)
+                        nmInstall(nmPlan(preview, nmBudgetFor(currentProvider))
+                            ?: checkNotNull(nmPlan(preview, ProviderBudget())))
                         prepareContext()
                         // nanoMuse: fallback to a smaller model must pass the same guard.
                         when (inLoopContextCheck(contextMaintenance, requestBudget,
@@ -8210,11 +8506,37 @@ class ChatViewModel(
                         }
                     }
                     val requestMessages = checkNotNull(preparedMessages)
-                    val requestTools = agentTools
+                    // nanoMuse: include the prepared history and images in this call's estimate.
+                    // A known limit that cannot fit LEAN is a stop, not permission to drop history.
+                    val requestBudgetLimit = nmBudgetFor(currentProvider)
+                    val planned = nmPlan(requestMessages, requestBudgetLimit)
+                        ?: throw LLMError.ProviderError(context.getString(R.string.nm_router_budget_exhausted))
+                    nmInstall(planned)
+                    alignContextEstimate()
+                    if (!nmWarnedWithoutTools && Need.TOOLS in planned.route.needs && planned.route.profile == Profile.LEAN) {
+                        nmWarnedWithoutTools = true
+                        withContext(Dispatchers.Main) {
+                            appendSystemInfo(context.getString(
+                                if (planned.route.budgetLimited) R.string.nm_router_budget_limited
+                                else R.string.nm_router_lean_tool_notice,
+                            ), "info")
+                        }
+                    }
+                    val requestTools = nmRequestTools
+                    // nanoMuse: the debug observer sees only counts for the exact outbound view.
+                    val sizeObserver = if (com.openminis.app.BuildConfig.DEBUG) io.github.nanomuse.chat.PromptSizeTrace.observer else null
+                    if (sizeObserver != null) runCatching {
+                        val imageReady = runCatching { io.github.nanomuse.media.MediaModels.imageEndpoint(context) != null }.getOrNull()
+                        sizeObserver(io.github.nanomuse.chat.PromptSizeTrace.Event.System(planned.systemSizes, imageReady))
+                        sizeObserver(io.github.nanomuse.chat.PromptSizeTrace.Event.Tools(
+                            PromptSize.tools(originalAgentTools(), requestTools),
+                        ))
+                        sizeObserver(io.github.nanomuse.chat.PromptSizeTrace.Event.Request(planned.system.length))
+                    }
                     var requestUsage: LLMUsage? = null
                     val requestSnapshot = usageSnapshot(requestMessages)
                     val requestEstimate = io.github.nanomuse.chat.ContextEstimate.request(
-                        requestMessages, systemPrompt, requestTools,
+                        requestMessages, nmSystemPrompt, requestTools,
                         imageTokens = BPETokenizer::countImageTokens,
                     )
                     alignContextEstimate()
@@ -8222,9 +8544,24 @@ class ChatViewModel(
                     // false high ratio cannot squeeze the answer to a single output token.
                     lastContextTokens = if (contextMaintenance.calibrationProbeGranted) requestEstimate
                         else usageMeter.estimate(requestSnapshot, requestEstimate, contextEstimate)
+                    // nanoMuse: a learned ceiling is route/model-specific; a newly proposed cap
+                    // is used only on the bounded retry until the provider accepts it.
+                    val learnedLimit = durableOutputKey?.let { key ->
+                        runCatching { nmOutputLimitStore.load(key, currentProvider.model.id) }.getOrNull()
+                    }
+                    val pendingLimit = pendingOutput?.takeIf {
+                        it.provider === currentProvider && it.model == currentProvider.model.id && it.route == durableOutputKey
+                    }?.limit
+                    val proposedOutput = io.github.nanomuse.net.ProviderRecovery.clamp(
+                        io.github.nanomuse.net.ProviderRecovery.clamp(dynamicMaxTokens(currentProvider, lastContextTokens), learnedLimit),
+                        pendingLimit,
+                    )
+                    lastRequestedOutput = TurnRequestPlanner.outputLimit(
+                        proposedOutput, requestBudgetLimit, maxOf(lastContextTokens, planned.inputEstimate),
+                    ) ?: throw LLMError.ProviderError(context.getString(R.string.nm_router_budget_exhausted))
                     currentProvider.streamMessage(
                         requestMessages,
-                        systemPrompt, dynamicMaxTokens(currentProvider, lastContextTokens),
+                        nmSystemPrompt, lastRequestedOutput,
                         tools = requestTools,
                         thinkingLevel = if (currentModelSupportsReasoning) _thinkingLevel.value else ThinkingLevel.OFF,
                     ).collect { chunk ->
@@ -8578,6 +8915,24 @@ class ChatViewModel(
                     }
                 }
                     }  // end collect
+                    // nanoMuse: only the actual cap of this completed response is confirmed;
+                    // the context budget might have lowered it further during the wait.
+                    pendingOutput?.takeIf {
+                        it.provider === currentProvider && it.model == currentProvider.model.id && it.route == durableOutputKey
+                    }?.let { accepted ->
+                        val confirmed = io.github.nanomuse.net.ProviderRecovery.confirmedOutput(
+                            accepted.limit, lastRequestedOutput, turnFinishReason != null,
+                        )
+                        if (confirmed != null) {
+                            accepted.route?.let { key ->
+                                runCatching { nmOutputLimitStore.save(key, accepted.model, confirmed) }
+                            }
+                            withContext(Dispatchers.Main) {
+                                appendSystemInfo(context.getString(R.string.nm_reach_output_adjusted, confirmed), "info")
+                            }
+                            pendingOutput = null
+                        }
+                    }
                     // nanoMuse: persist one final input sample, never partial or failed requests.
                     requestUsage?.let { usage ->
                         usageMeter.observe(requestSnapshot, ContextEstimate.inputTokens(usage), requestEstimate)
@@ -8628,41 +8983,96 @@ class ChatViewModel(
                         }
                     }
                 } catch (e: Exception) {
-                    if (e is CancellationException && e.cause == null) throw e  // real job cancellation
+                    // nanoMuse: a cancelled job must never start another request, even when
+                    // its CancellationException carries a cause; active flow wrappers may unwrap.
+                    if (e is CancellationException) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (e.cause == null) throw e
+                    }
                     val actual = unwrapFlowException(e)
                     val isRateLimit = actual is com.openminis.app.data.model.LLMError.RateLimited
-                    val is5xx = actual is com.openminis.app.data.model.LLMError.ProviderError &&
-                        actual.detail.contains(Regex("[5][0-9]{2}"))
+                    // nanoMuse: a token count such as 5000 in a 400 is not an HTTP 500.
+                    val reach = (actual as? LLMError)?.nmProviderReach
+                    val is5xx = reach?.httpStatus?.let { it in 500..599 } ?: (
+                        actual is com.openminis.app.data.model.LLMError.ProviderError &&
+                            Regex("""(?:\[5\d\d\]|\bHTTP\s+5\d\d\b)""", RegexOption.IGNORE_CASE).containsMatchIn(actual.detail)
+                    )
                     // Auto-retry on transient network/5xx/transient errors on the SAME provider
                     // before considering a fallback (mirrors iOS streamWithAutoRetry).
-                    // Rate limits are provider-level signals that should trigger fallback immediately,
-                    // not retry on the same provider.
-                    val isTransient = actual is com.openminis.app.data.model.LLMError.NetworkError ||
-                        actual is com.openminis.app.data.model.LLMError.TransientError ||
-                        is5xx
+                    val sizeRejection = reach?.kind == io.github.nanomuse.net.ProviderReach.Kind.REQUEST_TOO_LARGE ||
+                        reach?.kind == io.github.nanomuse.net.ProviderReach.Kind.RESPONSE_LIMIT
+                    val isTransient = !sizeRejection && (actual is com.openminis.app.data.model.LLMError.NetworkError ||
+                        actual is com.openminis.app.data.model.LLMError.TransientError || is5xx)
+                    // nanoMuse: a real HTTP 413 descends the profile ladder before any
+                    // fallback. Retry only if the system and schema really got smaller;
+                    // the completed tool results in history are never executed again.
+                    val smallerProfile = if (reach?.httpStatus == 413 &&
+                        reach.kind == io.github.nanomuse.net.ProviderReach.Kind.REQUEST_TOO_LARGE) {
+                        nmAttempt?.let { rejected ->
+                            val history = preparedMessages ?: applyRequestImageBudget(effectiveAgentHistory(), preview = true)
+                            TurnRequestPlanner.smallerAfter413(
+                                rejected, nmCurrentInput, originalAgentTools(), nmProviderPrefix(),
+                            ) { prompt, tools ->
+                                val raw = ContextEstimate.request(history, prompt, tools, imageTokens = BPETokenizer::countImageTokens)
+                                maxOf(raw, contextEstimate.estimate(raw))
+                            }
+                        }
+                    } else null
                     // nanoMuse: one server-overflow retry is allowed only after local work
                     // measurably shrinks the same request. No blind resend of identical history.
                     var recoveredContext = false
-                    if (!contextOverflowRetried && isContextTooLargeError(actual)) {
+                    if (smallerProfile == null && !contextOverflowRetried && isContextTooLargeError(actual)) {
                         contextOverflowRetried = true
                         val before = measureRawTokens()
                         prepareContext(force = true)
                         recoveredContext = measureRawTokens() < before
                     }
-                    if ((isTransient || recoveredContext) && retryAttempt < AUTO_RETRY_DELAYS_SEC.size) {
-                        val delaySec = if (recoveredContext) 0 else AUTO_RETRY_DELAYS_SEC[retryAttempt]
-                        retryAttempt += 1
+                    // nanoMuse: a verified upper bound changes the next request; a short 429
+                    // gets one bounded wait. Neither path repeats already executed tools.
+                    val outputRetry = io.github.nanomuse.net.ProviderRecovery.outputRetry(reach, lastRequestedOutput, outputRetried)
+                    val rateDelay = if (isRateLimit) io.github.nanomuse.net.ProviderRecovery.rateDelay(reach, rateRetried) else null
+                    if (smallerProfile != null ||
+                        ((isTransient || recoveredContext || outputRetry != null || rateDelay != null) && retryAttempt < AUTO_RETRY_DELAYS_SEC.size)) {
+                        if (smallerProfile != null) {
+                            nmInstall(smallerProfile)
+                            preparedMessages = null // recalculate the context view for this smaller shape
+                            withContext(Dispatchers.Main) {
+                                appendSystemInfo(context.getString(R.string.nm_router_retry_smaller), "info")
+                            }
+                        }
+                        if (outputRetry != null) {
+                            outputRetried = true
+                            pendingOutput = PendingOutputLimit(currentProvider, durableOutputKey, currentProvider.model.id, outputRetry)
+                        }
+                        if (rateDelay != null) rateRetried = true
+                        val delaySec = when {
+                            smallerProfile != null || recoveredContext || outputRetry != null -> 0
+                            rateDelay != null -> rateDelay
+                            else -> AUTO_RETRY_DELAYS_SEC[retryAttempt]
+                        }
+                        // Profile steps have their own finite ladder; they must not consume
+                        // or be suppressed by the unrelated transient retry counter.
+                        if (smallerProfile == null) retryAttempt += 1
                         val errDesc = actual.message ?: actual.javaClass.simpleName
                         Log.w(TAG, "🔁 Transient error on ${currentProvider.model.displayName}, retry $retryAttempt/${AUTO_RETRY_DELAYS_SEC.size} in ${delaySec}s: $errDesc")
                         withContext(Dispatchers.Main) {
                             _autoRetryAttempt.value = retryAttempt
-                            // Show the error inline on the streaming assistant message during countdown.
-                            // Keeps isStreaming=true so the UI doesn't tear down the streaming state.
-                            setTransientInlineError("$errDesc — retrying ($retryAttempt/${AUTO_RETRY_DELAYS_SEC.size})…")
+                            // nanoMuse: the new retry paths state only what is actually happening.
+                            val status = when {
+                                smallerProfile != null -> context.getString(R.string.nm_router_retry_smaller)
+                                outputRetry != null -> context.getString(R.string.nm_reach_output_retry, outputRetry)
+                                rateDelay != null -> context.getString(R.string.nm_reach_rate_wait, delaySec)
+                                is5xx -> context.getString(R.string.nm_reach_server_retry)
+                                else -> "$errDesc — retrying ($retryAttempt/${AUTO_RETRY_DELAYS_SEC.size})…"
+                            }
+                            setTransientInlineError(status)
                         }
                         try {
                             for (remaining in delaySec downTo 1) {
                                 _autoRetryCountdown.value = remaining
+                                if (rateDelay != null) withContext(Dispatchers.Main) {
+                                    setTransientInlineError(context.getString(R.string.nm_reach_rate_wait, remaining))
+                                }
                                 kotlinx.coroutines.delay(1000)
                             }
                         } finally {
@@ -8713,6 +9123,13 @@ class ChatViewModel(
                         lastOtherToolInputMs = 0L
                         continue  // retry on same provider
                     }
+                    // nanoMuse: distinguish an exhausted LEAN request from a successful
+                    // downgrade; retain the original provider diagnostic on the error card.
+                    if (reach?.httpStatus == 413 && nmRoute.profile == Profile.LEAN) {
+                        withContext(Dispatchers.Main) {
+                            appendSystemInfo(context.getString(R.string.nm_router_lean_too_large), "info")
+                        }
+                    }
                     // Retries exhausted or non-retryable — proceed to fallback / throw.
                     _autoRetryAttempt.value = 0
                     _autoRetryCountdown.value = 0
@@ -8728,8 +9145,10 @@ class ChatViewModel(
                     // makes the intent explicit and avoids a one-frame
                     // flash of the stale banner.
                     withContext(Dispatchers.Main) { clearInlineError() }
-                    val shouldFallback = isRateLimit || is5xx ||
-                        fallbackStrategy == com.openminis.app.data.model.FallbackStrategy.always
+                    // nanoMuse: never forward an unchanged size/output rejection to a group
+                    // model. Profile downgrade and an output-cap retry need their own guards.
+                    val shouldFallback = !sizeRejection && (isRateLimit || is5xx ||
+                        fallbackStrategy == com.openminis.app.data.model.FallbackStrategy.always)
                     val nextCandidate = if (shouldFallback) remainingFallbacks.removeFirstOrNull() else null
                     val next = nextCandidate?.provider
                     if (next != null && nextCandidate != null) {
@@ -8752,6 +9171,11 @@ class ChatViewModel(
                         val isRealModelChange = next.model.id != currentProvider.model.id
                         fallbackReasons.add("⚠️ ${currentProvider.model.displayName}: $reason")
                         Log.i(TAG, "🔀 $reason on ${currentProvider.model.displayName}, switching to ${next.model.displayName} (realModelChange=$isRealModelChange)")
+                        // nanoMuse: a different route must not inherit a proposal or its one-shot flags.
+                        // The existing overall retry counter remains bounded across the group.
+                        pendingOutput = null
+                        outputRetried = false
+                        rateRetried = false
                         currentProvider = next
                         // Also update class-level provider so the next sendMessage() starts from here
                         this@ChatViewModel.currentProvider = next
@@ -8835,7 +9259,11 @@ class ChatViewModel(
                             if (fallbackReasons.isNotEmpty() || skipped.isNotEmpty()) {
                                 val trail = (fallbackReasons + skipped).joinToString("\n")
                                 val finalDesc = actual.message ?: actual.toString()
-                                throw com.openminis.app.data.model.LLMError.ProviderError("$trail\n$finalDesc")
+                                throw com.openminis.app.data.model.LLMError.ProviderError("$trail\n$finalDesc").apply {
+                                    // nanoMuse: carry only the final failing call's diagnostics.
+                                    nmProviderReach = (actual as? LLMError)?.nmProviderReach
+                                    nmRelayError = (actual as? LLMError)?.nmRelayError
+                                }
                             }
                         }
                         throw actual  // re-throw unwrapped, all fallbacks exhausted
@@ -8895,6 +9323,8 @@ class ChatViewModel(
 
             // If no tool calls, we're done
             if (toolCalls.isEmpty()) {
+                // nanoMuse: keep the profile only when this user turn actually used tools.
+                nmPreviousRoute = SessionState(nmRoute.profile, nmRoute.hints, nmUsedTools)
                 AppLogger.info(TAG_STREAM, "runAgentLoop turn=$turn no tool calls → break (finishReason=$turnFinishReason)")
                 withContext(Dispatchers.Main) {
                     updateAssistantMessage(assistantId, accumulatedText, false, allToolBlocks)
@@ -8939,6 +9369,7 @@ class ChatViewModel(
                             context.getString(R.string.chat_error_stream_dropped_partial),
                         )
                     }
+                    onTerminalFailure()
                     // [T-android-group-pause-badge-restamp] A LIVE interruption just
                     // happened: this is a real entry into the paused state, so the
                     // badge's 24h freshness stamp must be refreshed. Cancel any
@@ -9009,6 +9440,7 @@ class ChatViewModel(
                             context.getString(R.string.error_empty_response_generic)
                     }
                     withContext(Dispatchers.Main) { setInlineError(hint) }
+                    onTerminalFailure()
                 }
                 // Auto-title after first exchange
                 if (turn == 0) generateSessionTitleIfNeeded()
@@ -9041,6 +9473,22 @@ class ChatViewModel(
             // Execute all tool calls
             val resultParts = mutableListOf<AgentContentPart>()
             for ((id, name, args) in toolCalls) {
+                // nanoMuse: an unsolicited or hallucinated tool name is never dispatched,
+                // especially after reducing to LEAN. RiskGate/OffloadGate still apply to
+                // every tool that was actually offered.
+                if (nmRequestTools.none { it.name == name }) {
+                    val reason = "Error: this tool was not offered in the current request and was not executed."
+                    val block = allToolBlocks.indexOfFirst { it.id == id }
+                    if (block >= 0) allToolBlocks[block] = allToolBlocks[block].copy(
+                        toolStatus = ToolBlockStatus.FAILED, content = reason,
+                    )
+                    toolLoopDetector.record(name, parseToolParams(args.toString()),
+                        result = null, errorMessage = reason, toolCallId = id)
+                    resultParts.add(AgentContentPart.ToolResult(id = id, name = name, content = reason, isError = true))
+                    toolInputChunkRings.remove(id)
+                    continue
+                }
+                nmUsedTools = true
                 // [T-android-overlay-tool-title] Pull tool_title uniformly
                 // from args for ALL tools — without this browser_use's
                 // tool_title never reached the overlay (only shell_execute
@@ -9062,7 +9510,7 @@ class ChatViewModel(
                 // the repaired payload. Mirrors iOS repairToolArgs in
                 // AIChatViewModel.swift.
                 val repairs = com.openminis.app.provider.ToolJsonRepair.repair(
-                    name, args, toolInputChunkRings[id]?.lastOrNull(), agentTools,
+                    name, args, toolInputChunkRings[id]?.lastOrNull(), nmRequestTools, // nanoMuse: validate the schemas actually sent
                 )
                 if (repairs.isNotEmpty()) {
                     AppLogger.warning(
@@ -9174,7 +9622,7 @@ class ChatViewModel(
                 // AIChatViewModel.swift. Synthesizes a tool_result error so the
                 // model can self-correct on the next turn without us spawning
                 // shells or touching the filesystem on `{}` args.
-                val preflightError = preflightValidateToolCall(name, args, agentTools)
+                val preflightError = preflightValidateToolCall(name, args, nmRequestTools) // nanoMuse: the outbound schema, not a different profile
                 if (preflightError != null) {
                     val chunkRing: List<String> = toolInputChunkRings.remove(id) ?: emptyList()
                     AppLogger.warning(
@@ -9222,6 +9670,10 @@ class ChatViewModel(
 
                 android.util.Log.d("ToolChain[VM]", "[turn=$turn] executeTool START name=$name args=${argsStr.take(200)}")
                 val result = executeTool(name, argsStr, id, allToolBlocks, assistantId, accumulatedText)
+                // nanoMuse: only confirmed, intact writes advance the Pet bound to this tracker run.
+                if (result.success && truncationRepairTag == null) {
+                    io.github.nanomuse.pet.PetEvents.tool(context, realSessionId.ifEmpty { sessionId }, id, name, petRunGeneration)
+                }
                 android.util.Log.d("ToolChain[VM]", "[turn=$turn] executeTool END name=$name success=${result.success} title=${result.toolTitle} outputLen=${result.output.length} output=${result.output.take(200)}")
 
                 // Record post-execution. WARNING text is appended to the tool
@@ -9359,6 +9811,7 @@ class ChatViewModel(
                 contentParts = resultParts,
                 dbMessageId = toolResultDbId,
             ))
+            nmPreviousRoute = SessionState(nmRoute.profile, nmRoute.hints, nmUsedTools) // nanoMuse: survive a later interrupted request
 
             // Auto-title after first exchange (mirrors iOS generateSessionTitleIfNeeded)
             if (turn == 0) {
@@ -9406,6 +9859,14 @@ class ChatViewModel(
                     null
                 }
                 if (handled != null) {
+                    // nanoMuse: a queued interruption is a new user turn, not the old
+                    // prompt under a new bubble. Keep continuity and classify its content.
+                    nmPreviousRoute = SessionState(nmRoute.profile, nmRoute.hints, nmUsedTools)
+                    nmRoute = nmRouteLatest()
+                    nmCurrentInput = nmCapturePromptInput()
+                    nmUsedTools = false
+                    nmWarnedWithoutTools = false
+                    preparedMessages = null
                     // Switch loop-scope state to the new bubble. Subsequent
                     // iterations populate `handled.newAssistantId` and slice
                     // `allToolBlocks` from the freshly-zeroed start index
@@ -9435,6 +9896,7 @@ class ChatViewModel(
         // (a) must NOT be touched or every normal completion gets a fake "hit
         // 200 turns" sticker (the bug user hit at v1.4.0-dev tip).
         if (!loopExitedNormally) {
+            onTerminalFailure()
             AppLogger.warning(
                 TAG_STREAM,
                 "runAgentLoop EXIT — hit MAX_AGENT_TURNS=$MAX_AGENT_TURNS, finalizing as resumable",
@@ -9666,6 +10128,7 @@ class ChatViewModel(
      *  distinct from a script that legitimately exits 127 (T-bash-on-demand M5). */
     private val BASH_MISSING_SENTINEL = 119
 
+    // nanoMuse: shell completion markers are decoded incrementally.
     /** Wrap a script to run under bash via a guest-side self-written temp file
      *  (base64, single line, self-cleaning), guarding on `command -v bash` so a
      *  vanished bash is detected precisely for inline self-heal.
@@ -9674,7 +10137,7 @@ class ChatViewModel(
      *  Android: PersistentShell drives commands as `{cmd}; echo …_EXIT_$?…` and
      *  reads the exit code from that marker line. A bare `|| exit 119` would exit
      *  the persistent shell process itself BEFORE the marker echo runs, so no
-     *  marker is emitted and PersistentShell.parseExitCode falls back to -1 —
+     *  marker is emitted and PersistentShell reports failure (-1) —
      *  the M5 self-heal sentinel check (== 119 / 30464) then never matches and a
      *  vanished bash is never re-installed. Wrapping in a subshell makes
      *  `exit 119` leave only the subshell, so `$?` = 119 reaches the marker. */
@@ -10444,7 +10907,18 @@ class ChatViewModel(
         return entity.id
     }
 
-    private fun buildSystemPrompt(): String? {
+    // nanoMuse: retries and fallbacks derive their prompt from this exact session snapshot.
+    private fun nmCapturePromptInput(): PromptProfiles.Input {
+        var snapshot: PromptProfiles.Input? = null
+        buildSystemPrompt(onSnapshot = { snapshot = it })
+        return checkNotNull(snapshot)
+    }
+
+    // nanoMuse: an optional local, count-only snapshot for /prompt-size.
+    private fun buildSystemPrompt(
+        onSnapshot: ((io.github.nanomuse.chat.PromptProfiles.Input) -> Unit)? = null,
+        onMeasured: ((List<PromptSize.Measure<PromptSize.Section>>, Boolean?) -> Unit)? = null,
+    ): String? {
         // Cache-friendly layout: keep `base` byte-stable by stripping out anything
         // that varies per request, then append a "Runtime context" suffix at the
         // very end with all the dynamic bits (date, timezone, locale, configured
@@ -10482,134 +10956,11 @@ class ChatViewModel(
         // aren't reachable when the user asks. The fragment / tool dual
         // gate is symmetrical: enable both or disable both, never mismatch.
         val memoryOn = _memoryEnabled.value
-        val toolListMemoryBullets = if (memoryOn) {
-            """
-- memory_write: Save a memory entry to today's daily log (YYYY-MM-DD.md). Use proactively to note user preferences, project patterns, and important context.
-- memory_get: Recall memories with keyword search. Check memory at the start of new topics to leverage past knowledge."""
-        } else {
-            // Empty — no memory_write / memory_get bullets when disabled.
-            // The "Memory system:" section below also collapses, so the
-            // model gets a coherent picture rather than half-mentioned
-            // tools it can't actually call.
-            ""
-        }
-        val memorySystemSection = if (memoryOn) {
-            """
-
-Memory system (currently ENABLED):
-- memory_write writes to today's daily log (YYYY-MM-DD.md) — use it for session notes, key facts, project context, things learned, and action items.
-- GLOBAL.md (/var/minis/memory/GLOBAL.md) stores persistent preferences, settings, and general-purpose conventions. To read it, use file_read (NOT memory_get). To update it, use file_read first then file_edit. If GLOBAL.md does not exist yet, use file_write to create it directly.
-- IMPORTANT: Only write to GLOBAL.md when the user explicitly asks (e.g. 'remember this globally', 'save to global memory'). Before editing, deduplicate and clean up — avoid ambiguity, repetition, or daily-log-style entries. GLOBAL.md should contain only concise, reusable knowledge (preferences, settings, conventions), NOT session logs or transient context.
-- Use memory_get to recall past knowledge before starting tasks — check if there are relevant memories that can help.
-- Proactively save memories (via memory_write to daily log) when you discover user preferences or important patterns — don't wait to be asked.
-- When the user says 'remember this' or similar, use memory_write to persist to the daily log. Only write to GLOBAL.md if the user specifically asks for global/persistent storage.
-- What NOT to remember: passwords, API keys, tokens, secrets, or any sensitive credentials. Warn the user about the risk first; only proceed if they explicitly confirm.
-- Keep memories concise, factual, and general-purpose — avoid noise that won't be useful later."""
-        } else {
-            """
-
-Memory system (currently DISABLED):
-- The user has turned OFF memory injection and memory tools for this session. GLOBAL.md and recent daily logs are NOT included in this prompt, and the memory_write / memory_get tools are NOT available — do not attempt to call them.
-- If the user asks why earlier memories aren't visible, or asks you to save something, tell them memory is currently disabled and point them at the /memory slash command or [Settings → Memory](minis://settings/memory) to re-enable it.
-- SOUL.md (personality / identity) is unaffected by this toggle; the persona section above still applies."""
-        }
-        // nanoMuse: these former interpolation points stay empty; their unchanged text is emitted
-        // in the deterministic volatile suffix after RiskPolicy and Hands. The Feed line below
-        // teaches the agent the read-only feedback contract without treating silence as dislike.
-        val memoryToolListInStablePrefix = ""
-        val memoryGuidanceInStablePrefix = ""
-        val base = identitySection + """You should proactively use shell commands to accomplish the user's tasks — installing packages (apk add), writing and running scripts, managing files, networking, and any other operations a Linux terminal can perform.
-
-Available tools:
-- shell_execute: Run any shell command. Each invocation is an isolated process with stdout/stderr captured. Prefer this for most tasks — it is a real Linux environment with persistent filesystem. Common tools (python3, pip, curl, wget, git, ssh, etc.) can be installed via apk add; Python packages via pip install. Use `which <cmd>` to check if a tool is already installed before running apk add — many packages persist across sessions. When you need to wait before checking results (e.g. polling, waiting for a process), use the `delay` parameter instead of `sleep` in the command — delay blocks the agent flow without occupying the shell, so other concurrent tasks can use it during the wait. This avoids resource contention. Execution discipline for long-running or dispatched work: make tool calls immediately instead of describing intentions, and keep working until the task is complete. Without a scheduler or timed-callback tool, `delay` is your ONLY wait mechanism within a turn — to follow up on something still running, chain delay-then-check calls at a task-appropriate interval until you have the result or hit a sensible retry cap. NEVER end a turn with a promise of future action: 'I'll keep monitoring', 'will sync the result later', and ending right after a single still-running status check with 'let's keep waiting' are all the same violation — once your turn ends, NOTHING runs until the user's next message. If polling to completion is genuinely not worth blocking the turn, close honestly instead: state that the task keeps running in the background, that you will only learn its outcome when the user next messages (or they ask you to check), and — if something must fire on a schedule beyond this conversation — point them to the options under 'Scheduled tasks' later in this prompt (native alarm reminder or a system-level schedule; those notify the USER, they do not wake you).
-- file_read: Read file contents (faster than cat).
-- file_write: Create new files or overwrite existing files (faster than echo/tee).
-- file_edit: Edit existing files with exact string replacement (old_string → new_string). Preferred over file_write for modifications — always file_read first.
-- browser_use: Web browsing (navigate, screenshot, click, type, get_text, scroll, scroll_and_collect, get_readable, get_backbone, fetch, etc.). Starts with a desktop Chrome user agent. Use screenshot to see the page.
-  当 browser_use 触达 Google 登录 / OAuth 页（accounts.google.com、signin.google.com、myaccount.google.com、oauth2.googleapis.com 等）或网页返回 "disallowed_useragent" / 403 包含 "browser is not secure" 字样时，**不要重试或尝试登录** — Google 永久禁止 in-app WebView 完成登录，重试只会浪费 turn。改为告诉用户："此页面需要在系统 Chrome 完成登录" 并给出可点击的 Markdown link [在 Chrome 中打开](https://accounts.google.com/...)。点该 link 时 app 会跳出 Custom Tab；用户在 Chrome 完成操作后，请他**把所需结果（邮件正文 / 文档摘要 / 表格数据）粘贴回 chat**，你再继续帮他处理。这是 Android 平台限制，不是 bug。${memoryToolListInStablePrefix}
-
-Sandbox directory /var/minis/ (writeability is stated per path):
-  /var/minis/attachments/ — Media files (images, audio, video). Display inline with ![desc](minis://attachments/filename).
-  /var/minis/workspace/   — Working files (scripts, data, configs). Link with [name](minis://workspace/filename).
-  /var/minis/offloads/    — Auto-saved large outputs. Read with file_read.
-  /var/minis/browser/     — Browser screenshots and extracts.
-  /var/minis/shared/      — Cross-session shared storage for artifacts and documents. Organize by project or topic (e.g. shared/myproject/, shared/datasets/). Do NOT store temporary files here.
-  /var/minis/memory/GLOBAL.md    — Persistent global memory (read-only, user-maintained via Settings).
-  /var/minis/memory/YYYY-MM-DD.md — Daily memory log.
-  /var/minis/feed/YYYY-MM-DD/NN.md — Read-only Feed posts. "liked: true" is explicit positive feedback; no liked field means only "not liked yet", never dislike. Use aggregate patterns to improve future Feed topics, not to infer a negative preference from silence.
-  /var/minis/mounts/<name>/      — User-mounted external folders from Settings → Mount External Folders. Presence and names vary per user; check this directory first when the task references external/user files. Some mounts may be read-only — file_write / file_edit will reject writes with a clear error message.
-
-The minis:// URL scheme:
-  minis://attachments/file.png  →  /var/minis/attachments/file.png
-  minis://workspace/data.csv    →  /var/minis/workspace/data.csv
-  minis://shared/project/f.txt  →  /var/minis/shared/project/f.txt
-
-IMPORTANT: minis:// URLs are app-internal — they are NOT web URLs. Do NOT pass minis:// action URLs (open_terminal, views, settings) to browser_use — those are app deep links, use Markdown links in chat instead. However, minis:// resource URLs CAN be opened in browser_use with navigate. All directories under /var/minis/ are accessible: workspace, attachments, offloads, shared, etc. The built-in browser fully supports minis:// — HTML pages and all sub-resources (JS, CSS, images, fonts, etc.) referenced via minis:// absolute URLs or relative paths resolve correctly within the current session. When building multi-file web projects, use file_write to create files in the same directory (e.g. /var/minis/workspace/myapp/), then reference sub-resources with relative paths in HTML (e.g. <link href="style.css">, <script src="app.js">, <img src="logo.png">). The browser resolves relative paths against the minis:// base URL automatically. Cross-directory references also work with absolute minis:// URLs (e.g. <img src="minis://attachments/photo.png"> from a workspace HTML page). Navigate to the entry HTML to preview, e.g. minis://workspace/myapp/index.html.
-To display a minis:// URL in chat, write it as a Markdown link or image (e.g. [name](minis://...)) — the app handles it when the user taps it.
-IMPORTANT: minis:// URLs MUST be percent-encoded. Non-ASCII characters (Chinese, emoji, spaces, etc.) in filenames will break Markdown rendering if not encoded. Use the minis_url from tool results directly — it is already encoded. If you construct a minis:// URL manually, percent-encode the filename (e.g. %E4%B8%AD%E6%96%87 for non-ASCII characters).
-When you write files to /var/minis/, the tool result includes a minis_url you can embed directly in Markdown.
-Inline media — use the ![desc](minis://...) image syntax for ALL of images, audio, AND video. The same ![]() syntax renders an inline audio player or video player, not just images:
-  - Images: ![chart](minis://attachments/chart.png)   → inline image (.png/.jpg/.gif/.webp)
-  - Audio:  ![song](minis://attachments/song.mp3)     → inline audio player (.mp3/.m4a/.wav)
-  - Video:  ![clip](minis://attachments/clip.mp4)     → inline video player (.mp4/.mov/.m4v)
-Do NOT use the [text](url) link form for audio/video when you want them to play inline — that only produces a tappable link. Use ![]() to embed an actual player.
-For non-media files, use Markdown links: [filename](minis://workspace/filename).
-Tappable link previews: text/code (.py/.json/.md/etc), images, audio, video, HTML, and PDF files open native previews when the user taps a [name](minis://...) link.
-Use Markdown links for all non-media minis:// files — the user can tap to preview them directly in chat.
-
-File creation guidelines:
-- Use file_write to CREATE new files. Use file_edit to MODIFY existing files. The shell is BusyBox ash: heredoc syntax (cat << EOF, python3 << 'EOF') may mis-parse braces, quotes, or special characters and execute abnormally — avoid it whenever possible, and prefer file_write over echo/printf for writing file contents. When you hit escaping or parsing errors with long inline content, write the content to a file first (file_write), then pass or execute the file (e.g. `python3 /tmp/script.py`).
-- file_write and file_edit are atomic, preserve formatting, and make it easy to fix errors or update content later.
-- shell_execute is for RUNNING commands, not for writing files.
-- shell_execute supports multi-line commands directly — quoting and special characters are handled automatically. However, commands MUST NOT exceed 1000 characters. If longer, write a script file with file_write first, then run it.
-- ICMP is blocked by the PRoot sandbox — `ping` will hang indefinitely. Use `curl` or `wget` to test network connectivity instead.
-- Also (BusyBox ash, NOT bash): `**` recursive glob (globstar) is NOT supported. Use `find <dir> -name '*.ext'` for recursive file search, and pipe to `xargs` for tools like `wc`. Brace expansion ({a,b,c}) and bash arrays (arr=(...), ${'$'}{arr[@]}) are also unsupported — use space-separated strings with a for loop or multiple arguments instead.
-- Python packages: many PyPI packages (numpy, pandas, scipy, pillow, etc.) lack musllinux_aarch64 wheels and will fail to build from source. Use Alpine's native packages instead: `apk search py3-<name>` then `apk add py3-numpy py3-pandas py3-matplotlib py3-pillow py3-scipy py3-requests`. Only fall back to `pip install` for pure-Python packages not available via apk. For matplotlib, always set `matplotlib.use('Agg')` before importing pyplot — there is no display server in the sandbox.
-- Background services: each shell_execute runs in an isolated process. When starting a background server (e.g. `python3 -m http.server &`), you MUST redirect stdout/stderr to avoid SIGPIPE when the shell exits: `python3 -m http.server 8765 > /dev/null 2>&1 &`. Without redirection the server dies silently after the command finishes.
-- File search: when looking for user files, do NOT scan the whole filesystem. Search under /var/minis/ first (workspace/attachments/shared for the current session, mounts/* for user-provided external folders). Only widen the scope if the file is clearly not under /var/minis/.
-
-Tool call style:
-- Default: do not narrate routine, low-risk tool calls — just call the tool directly.
-- Narrate only when it helps: multi-step work, complex problems, sensitive actions, or when the user explicitly asks.
-- Keep narration brief and value-dense; avoid repeating obvious steps.
-- When a tool exists for an action, use it directly instead of explaining what you plan to do or asking the user to confirm.
-- Use reasonable defaults and contextual inference to fill in missing details (e.g. 'tonight' means today, 'remind me' implies creating a reminder immediately). Only ask for clarification when genuinely ambiguous.
-
-Tone and style:
-- Reply in the language that best matches the user's input. Only switch languages when the user explicitly asks.
-- Be concise. Prefer action over explanation — when the user asks for something that can be done via shell, do it directly.
-
-Android-only tools (android-* CLIs):
-CLI tools at /usr/local/bin with the `android-` prefix give you access to Android framework capabilities and on-device control. Invoke them from shell_execute like any other binary — they are already on PATH. Each tool prints JSON (or a short human-readable line) and supports --help for full usage. Tools gated by Shizuku or AccessibilityService return permission_denied when not granted — handle that gracefully and point the user at [Settings → Permissions](minis://settings/permissions).
-- android-alarm — schedule alarms/timers in the system Clock app (`schedule <HH:MM> --label <L> [--repeat ONCE|DAILY|WEEKDAYS]`, `timer <seconds> --label <L>`, `open`). Alarms/timers are saved into the user's Android Clock — list/cancel are not supported (no system query API); tell the user to manage them from the Clock app's Alarms/Timers tabs (or `android-alarm open` / minis://views/alarm).
-- android-calendar — read/write the device calendar (`list --start YYYY-MM-DD [--end ...] [--max N]`; `create --title <T> --start <ISO> [--end <ISO>] [--description <D>] [--location <L>] [--all-day]`).
-- android-clipboard — `get | set <text> [--label L] | clear`.
-- android-contacts — `list [--max N] | search <query> [--max N] | get <id> | delete <id>`. Requires READ_CONTACTS (delete also needs WRITE_CONTACTS).
-- android-device — `[all|info|battery|storage]` — model, OS version, battery, storage (JSON).
-- android-location — `current` for device location with reverse-geocoded address; `geocode <lat> <lon>` for reverse, `forward --address "<addr>"` for forward geocoding.
-- android-notification — `send --title <T> [--body <B>] | clear | list [--max N]`. `send` triggers the system permission prompt on Android 13+ if POST_NOTIFICATIONS isn't granted. `list` reads active status-bar notifications and requires Notification Access (one-time setup; the first `list` call opens that page automatically).
-- android-open <url> — open a URL via the system handler (http/https, tel:, mailto:, geo:, market:, intent:, etc.). Use this to open something immediately. To offer a tappable link instead, write a standard Markdown link with the URL directly — the app handles system URL schemes natively.
-- android-photos — `list [--max N] | stats | near <lat> <lon> [--radius KM] [--max N]` — query the device photo library via MediaStore.
-- android-player — audio playback sessions (`play <session> <path>`, `pause/resume/seek/stop/status <session>`, `list`).
-- android-speak — device TTS (`<text> [--rate F] [--pitch F] [--volume F]`; `--stop | --status`).
-- android-speech — microphone transcription (`listen [--language BCP47] [--max N] [--timeout SEC]`; `status`). Requires RECORD_AUDIO.
-- android-weather <latitude> <longitude> — Open-Meteo forecast (current + hourly + daily). No API key needed.
-- android-shizuku-cli — invoke privileged Android system APIs (package management, settings, system commands) via Shizuku when granted. Curated subcommands return structured JSON; for anything not covered, fall back to `android-shizuku-cli exec <any shell command>` which runs the command via `sh -c` with Shizuku privilege (same surface as `adb shell`). Run with no args (or --help) for the subcommand list.
-- android-a11y-cli — drive system UI (read screen, tap, type, swipe, scroll) via the Android AccessibilityService when enabled. Run with no args (or --help) for the subcommand list.
-- minis-open <url-or-path>: Opens a resource inside nanoMuse without leaving the chat. Accepts http/https URLs (→ built-in WebKit preview) and chat-resource file paths under /var/minis/** (→ built-in file preview, routed by extension: images to the image viewer, .md to markdown preview, .html to HTML preview, .pdf/office docs to QuickLook, audio/video to the media player, else share sheet). Examples: minis-open https://example.com, minis-open /var/minis/workspace/report.md, minis-open /var/minis/attachments/chart.png. Prefer this over android-open for anything that can be previewed in-app so the user doesn't lose conversation context. Use android-open for non-web schemes (tel:, mailto:, geo:, intent:, etc.) or when the user explicitly wants the system handler.
-- minis-sessions-cli: Manage chat sessions. `list` recent or by date range, `search --keywords` cross-session, `messages --id` to read, `send` to create/continue a session, `retry` to re-run, `status` to check, `open` to navigate the app UI. Run --help for full options.
-- minis-model-use: Invoke other LLM models pre-configured by the user. Use `minis-model-use list` to see them (includes each model's modality capabilities like image_output, audio_output, etc.), `minis-model-use search <query>` to filter by name/provider. `minis-model-use run --model <id_or_name>` sends an OpenAI-compatible messages request; pass input via --input <json_file> or stdin, output goes to stdout or --output <path>. The OpenAI shape is the PRIMARY input for every model and modality; standard params are auto-converted to the underlying provider, so do not hand-write provider-native bodies as the primary input. For provider-specific extras the standard schema doesn't model (web-search plugins, image-to-image fields, TTS/video or other custom endpoints), escape hatches exist for OpenAI-compatible providers (they error or are ignored on Anthropic/Gemini models): `extra_body` (object merged verbatim into the request body), a custom `endpoint` path, and a top-level `passthrough` envelope for fully verbatim requests with RAW (unparsed) responses. Results may carry `warnings` (fields that were ignored/downgraded and why) and `applied_extras` (which extras actually took effect) — read them to self-correct. Run --help for the full contract before using these. Models may support multimodal output (image generation, TTS/audio, video) — check the modalities field in list output. For image_output models, pass generation params in the input JSON: top-level `n`/`size`/`quality`/`prompt` (OpenAI /images/generations style) or `generation_config.{aspect_ratio,image_size,number_of_images,person_generation}` (Gemini). Run with --help for full usage.
-- minis-config: Read or change nanoMuse settings programmatically. Run `minis-config --help` for subcommands and `minis-config topic-help <topic>` for details on a specific area. For array-valued fields (e.g. `models`, `groups`, `envvars`, `defaults.agentLoopEntries`) the `get` subcommand accepts `--filter <keywords>` (whitespace-AND, case-insensitive substring match against each element's JSON) and `--page <N> --page-size <N>` (default 20, max 100) — use these instead of dumping the full list when you only need a subset, and check the response's `pagination` / `agent_hint` fields for the next-page command. Every write triggers an in-app confirmation sheet and is logged to a revertable audit (1000-entry rolling log). After a successful change the response includes a `user_message` field — relay it (or paraphrase) so the user knows how to review or revert via Settings → Logs → Config Changes. If the call returns `permission_denied`, the user has disabled minis-config in [Settings → Permissions](minis://settings/permissions); relay that message and don't retry. You CAN add new providers and write their `apiKey` (literal string OR a `${'$'}${'$'}ENV_VAR` reference to copy from an env var at write time), but `get` never echoes API keys / OAuth tokens / env var values back — those reads return `permission_denied` by design. OAuth tokens and env var values are not settable via this tool; for an env var, point the user at [Set ENV_NAME](minis://settings/environments?create_key=ENV_NAME&create_value=) so they enter the value themselves.
-- minis-scheduled: Create and manage scheduled tasks — prompts that run automatically at a chosen time. `minis-scheduled create --time HH:MM --prompt "..." [--label L] [--repeat once|daily|weekdays|custom --days mon,tue,...] [--target new|follow-up|rerun --session <id> --message <id>] [--model <modelId>] [--start YYYY-MM-DD] [--end YYYY-MM-DD]` schedules it; `list` shows existing tasks (with nextTriggerMs and run history), `delete --id <taskId>`, `enable`/`disable --id <taskId>`, and `run --id <taskId>` fires one immediately. Target modes: `new` runs the prompt in a fresh chat; `follow-up` appends the prompt to an existing chat (--session); `rerun` re-runs an existing chat (--session) from a chosen user message (--message). Use this when the user asks to "remind me / do X every morning / run this later / schedule a task". Run --help for full usage.
-Interactive terminal: minis://open_terminal opens a terminal for tasks that require interactive stdin (passwords, ssh, TUI apps like htop/vi). Write it as a Markdown link in your response — the app opens it when tapped. The optional init_command parameter pre-fills (NOT executes) a command; it MUST be fully percent-encoded (spaces → %20, & → %26, | → %7C, etc.). Only use this for genuinely interactive sessions — for everything else, use shell_execute. Examples: [Open Terminal](minis://open_terminal), [Login to SSH](minis://open_terminal?init_command=ssh%20user%40host).
-
-Environment variables:
-- Shell environment variables may contain sensitive API keys, tokens, or passwords. NEVER echo, print, cat, or otherwise output their values to stdout/stderr. Always reference them by variable name (e.g. ${'$'}API_KEY) inside scripts or commands — never inline the literal value.
-- When a skill or task requires an environment variable that is not set, tell the user which variable is missing and provide a tappable deep link to create it: [Set ENV_NAME](minis://settings/environments?create_key=ENV_NAME&create_value=) — the user can tap it to open the Environment Variables page with the key pre-filled.
-- Settings deep links: when you tell the user "go to Settings → X" or want to point them at a specific setting, prefer a Markdown link `[Label](minis://settings/<path>)` over plain prose. Available paths: providers (list), providers/<instanceId> (one provider), model-groups (incl. Agent Loop), model-groups/<groupId>, usage (token usage), skills, memory, storage, shared-folders (Shared Folders: /var/minis/{shared,skills,memory}), mount-external (Mount External Folders), logs, appearance, background, about, permissions, environments[?create_key=K&create_value=V[&create_note=N]], rootfs (also reachable as mirrors). Unknown paths fall back to Settings home, but prefer the exact path so users land where they want. These settings/action links are app deep links — render them as Markdown links in chat (same action-vs-resource rule as the minis:// section above: only /var/minis resource URLs may go to browser_use).
-- To check if a variable is set, use `[ -n "${'$'}VAR" ] && echo 'set' || echo 'not set'`. NEVER use echo ${'$'}VAR, printenv VAR, or any command that would output the actual value into the conversation context.${memoryGuidanceInStablePrefix}
-
-Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended, so in-app scheduled scripts may not run as expected. For recurring tasks that must fire while the app is backgrounded, use the native alarm tool (AlarmManager) or tell the user to set up a system-level schedule (Google Calendar event, Tasker automation, etc.). (Waiting or polling WITHIN the current turn is different — that is what shell_execute `delay` chains are for, per the shell_execute notes above.)"""
+        // nanoMuse: share the exact memory instructions with the count-only host fixture.
+        val toolListMemoryBullets = io.github.nanomuse.chat.AgentMemoryPrompt.toolList(memoryOn)
+        val memorySystemSection = io.github.nanomuse.chat.AgentMemoryPrompt.guidance(memoryOn)
+        // nanoMuse: the same stable template is shared with the host measurement.
+        val base = io.github.nanomuse.chat.AgentBasePrompt.build(identitySection)
 
         // nanoMuse: match iOS suffix groups: model/tool/session state, then memory and USER.md;
         // PromptCacheLayout appends runtime context last by contract.
@@ -10662,29 +11013,47 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         } else {
             null
         }
-        return io.github.nanomuse.chat.PromptCacheLayout.build(
-            stableSections = listOf(
-                io.github.nanomuse.chat.PromptDiet.prompt(base), // nanoMuse: the minis-* paragraphs condensed (PromptDiet)
-                io.github.nanomuse.guard.RiskPolicy.promptParagraph(),
-                io.github.nanomuse.hands.Hands.promptParagraph(context),
-            ),
-            volatileSections = listOf(
-                skillFragment,
-                mcpFragment,
-                namingAddendum,
-                io.github.nanomuse.media.MediaModels.promptParagraph(context),
-                io.github.nanomuse.reach.Computers.promptParagraph(context),
-                io.github.nanomuse.chat.SessionAddenda.forPrompt(sessionKey),
-                io.github.nanomuse.goals.GoalFlow.systemAddendum(context, sessionKey),
-                io.github.nanomuse.feed.FeedFlow.systemAddendum(context, sessionKey),
-                toolListMemoryBullets,
-                memorySystemSection,
-                globalMemoryFragment,
-                dailyMemoryFragment,
-                io.github.nanomuse.sysfiles.UserFile.promptFragment(context),
-            ),
-            runtimeContext = runtimeContext,
-        ).prompt
+        // nanoMuse: label each actual section once, so diagnostics cannot change its contents
+        // or order. A local command or isolated debug test receives counts, never fragments.
+        val dietedBase = io.github.nanomuse.chat.PromptDiet.prompt(base)
+        val stable: List<Pair<PromptSize.Section, String?>> = listOf(
+            PromptSize.Section.RISK_POLICY to io.github.nanomuse.guard.RiskPolicy.promptParagraph(),
+            PromptSize.Section.HANDS to io.github.nanomuse.hands.Hands.promptParagraph(context),
+        )
+        val volatile: List<Pair<PromptSize.Section, String?>> = listOf(
+            PromptSize.Section.SKILLS to skillFragment,
+            PromptSize.Section.MCP to mcpFragment,
+            PromptSize.Section.NAMING to namingAddendum,
+            PromptSize.Section.MEDIA to io.github.nanomuse.media.MediaModels.promptParagraph(context),
+            PromptSize.Section.COMPUTERS to io.github.nanomuse.reach.Computers.promptParagraph(context),
+            PromptSize.Section.SESSION to io.github.nanomuse.chat.SessionAddenda.forPrompt(sessionKey),
+            PromptSize.Section.GOALS to io.github.nanomuse.goals.GoalFlow.systemAddendum(context, sessionKey),
+            PromptSize.Section.FEED to io.github.nanomuse.feed.FeedFlow.systemAddendum(context, sessionKey),
+            PromptSize.Section.MEMORY_TOOLS to toolListMemoryBullets,
+            PromptSize.Section.MEMORY_GUIDANCE to memorySystemSection,
+            PromptSize.Section.GLOBAL_MEMORY to globalMemoryFragment,
+            PromptSize.Section.DAILY_MEMORY to dailyMemoryFragment,
+            PromptSize.Section.USER_FILE to io.github.nanomuse.sysfiles.UserFile.promptFragment(context),
+        )
+        // nanoMuse: capture the exact session fragments once; retries derive smaller profiles
+        // from this snapshot instead of re-reading memory or rebuilding completed tool results.
+        val profileInput = io.github.nanomuse.chat.PromptProfiles.Input(identitySection, base, stable, volatile, runtimeContext)
+        onSnapshot?.invoke(profileInput)
+        val prompt = io.github.nanomuse.chat.PromptProfiles.build(io.github.nanomuse.router.Profile.FULL, profileInput).prompt
+        if (onMeasured != null) runCatching {
+            val rows = PromptSize.system(
+                beforeBase = base,
+                afterBase = dietedBase,
+                identityLength = identitySection.length,
+                stable = stable,
+                volatile = volatile,
+                runtime = runtimeContext,
+            )
+            // nanoMuse: resolving a configured image endpoint is local; no image is generated.
+            val imageReady = runCatching { io.github.nanomuse.media.MediaModels.imageEndpoint(context) != null }.getOrNull()
+            onMeasured(rows, imageReady)
+        }
+        return prompt
     }
 
     // ─── Legacy tool execution methods (kept for compatibility) ───────────
@@ -11715,13 +12084,56 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         }?.content
         SessionActivityTracker.publishLastReply(sessionId, text)
     }
-    // nanoMuse: every stream path shares completion classification before publishing its badge.
-    private suspend fun finishTrackedReply(id: String) {
-        if (kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]?.isCancelled == true) {
-            SessionActivityTracker.markReplyIncomplete(id)
+    // nanoMuse: read only this job's still-current tracker run; -1 cannot pay any generation.
+    private fun nmPetGenerationForJob(job: Job?): Long {
+        val binding = job?.let { nmTrackedLocalRuns.current(it) } ?: return -1L
+        return SessionActivityTracker.petGenerationForRun(binding.sessionId, binding.turnId)
+    }
+
+    // nanoMuse: bind the run to its actual coroutine, including a Stop racing slot acquisition.
+    private fun beginTrackedReply(id: String, job: Job): String {
+        val binding = nmTrackedLocalRuns.begin(job, { job.isActive }) {
+            val turnId = SessionActivityTracker.setActive(id, onStop = {
+                if (streamJob === job) cancelStream()
+                else stopObsoleteTrackedReply(job)
+            })
+            io.github.nanomuse.pet.PetRunBinding(id, turnId)
+        } ?: throw CancellationException("Stopped before tracker start")
+        // A parent scope can cancel independently of cancelStream while registration is running.
+        if (!job.isActive) {
+            stopObsoleteTrackedReply(job)
+            throw CancellationException("Stopped during tracker start")
         }
+        return binding.turnId
+    }
+
+    // nanoMuse: a callback captured by an older job must never cancel the newer streamJob.
+    private fun stopObsoleteTrackedReply(job: Job) {
+        val binding = nmTrackedLocalRuns.stop(job) { job.cancel() }
+        finishStoppedReply(binding, publishReply = false)
+    }
+
+    private fun finishStoppedReply(binding: io.github.nanomuse.pet.PetRunBinding?, publishReply: Boolean) {
+        if (binding == null) return
+        val (id, turnId) = binding
+        SessionActivityTracker.markReplyIncomplete(id, turnId)
+        if (SessionActivityTracker.isCurrentRun(id, turnId)) {
+            if (publishReply) publishOverlayReplyExcerpt(id)
+            SessionActivityTracker.clearToolRunning(com.openminis.app.service.ToolOutcome.Cancelled)
+        }
+        SessionActivityTracker.setInactive(id, turnId)
+    }
+
+    // nanoMuse: every stream path shares completion classification before publishing its badge.
+    private suspend fun finishTrackedReply(id: String, turnId: String) {
+        val job = kotlin.coroutines.coroutineContext[Job] ?: return
+        val binding = nmTrackedLocalRuns.finish(job) ?: return
+        if (binding.sessionId != id || binding.turnId != turnId) return
+        if (!SessionActivityTracker.isCurrentRun(id, turnId)) return
+        if (job.isCancelled) SessionActivityTracker.markReplyIncomplete(id, turnId)
+        if (!SessionActivityTracker.isCurrentRun(id, turnId)) return
         publishOverlayReplyExcerpt(id)
-        SessionActivityTracker.setInactive(id)
+        SessionActivityTracker.setInactive(id, turnId)
     }
 
 
@@ -11731,7 +12143,9 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         nmHeadlessReceipt?.requestStop() // nanoMuse: request local Stop before publishing idle.
         AppLogger.info(TAG_STREAM, "cancelStream invoked _isStreaming=false (sid=$activeSessionId)")
         if (_isStreaming.value) io.github.nanomuse.ui.feedback.TurnFeedback.stopped(activeSessionId) // nanoMuse: the record hears the Stop; the chat asks why, once (relay 0.31)
-        streamJob?.cancel()
+        // nanoMuse: snapshot the stopped job and its own run under the registration lock.
+        val stoppedJob = streamJob
+        val stoppedBinding = stoppedJob?.let { job -> nmTrackedLocalRuns.stop(job) { job.cancel() } }
         _isStreaming.value = false
         // T-streaming-side-channel: flush any in-flight delta back into the
         // canonical message so the rest of cancelStream's cleanup (publish
@@ -11748,15 +12162,8 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // surface any reply we already streamed + tag outcome as
         // Cancelled so the overlay's glyph reflects the actual end
         // state (⊘) instead of carrying over the prior tool's outcome.
-        // nanoMuse: cancellation must be recorded before the immediate tracker teardown.
-        SessionActivityTracker.markReplyIncomplete(activeSessionId)
-        publishOverlayReplyExcerpt(activeSessionId)
-        SessionActivityTracker.clearToolRunning(com.openminis.app.service.ToolOutcome.Cancelled)
-        SessionActivityTracker.setInactive(activeSessionId)
-        if (isDraft && realSessionId.isNotEmpty() && activeSessionId != sessionId) {
-            SessionActivityTracker.markReplyIncomplete(sessionId)
-            SessionActivityTracker.setInactive(sessionId)
-        }
+        // nanoMuse: never tear down another job's tracker run, even after draft promotion.
+        finishStoppedReply(stoppedBinding, publishReply = true)
         // Stop whichever shell the agent loop is actually dispatching against.
         // Before `ensureSession()` that is the draft id; after, the real id.
         // Stopping the wrong one leaves a runaway yt-dlp/ffmpeg alive.
@@ -11839,13 +12246,6 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 }
             }
 
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                else "$prefix\n\n${baseSystemPrompt ?: ""}"
-            } else baseSystemPrompt
-
             // T145: claim the streaming flag synchronously before launching
             // the streamJob so a concurrent send/retry tap is rejected by the
             // entry guard. Mirrors sendMessage discipline.
@@ -11857,34 +12257,38 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             streamJob = launch(Dispatchers.IO) {
                 AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob ENTER sid=$activeSessionId")
                 try {
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
-                    AppLogger.debug(TAG_STREAM, "resumeQueueAfterCancel streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                            ?: com.openminis.app.data.model.FallbackStrategy.default
+                    val trackedSessionId = activeSessionId
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "resumeQueueAfterCancel streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
                     }
-                    val fallbackProviders = buildFallbackProviders(provider)
-
                     try {
+
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                                ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drainQueuedPrompts CALL")
                         drainQueuedPrompts(
                             provider = provider,
-                            systemPrompt = systemPrompt,
-                            fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drain CANCELLED")
                     } catch (e: Exception) {
                         AppLogger.error(TAG_STREAM, "resumeQueueAfterCancel drain EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Queued drain error (resumeQueueAfterCancel)", e)
-                        setInlineError(e.message ?: "Unknown error")
-                        // nanoMuse: a failed resumed run is not a new unread answer.
-                        SessionActivityTracker.markReplyIncomplete(activeSessionId)
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
+                        // An error suppresses unread and remains distinct from a user cancellation.
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -11894,8 +12298,11 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         // non-null excerpt. Reading _messages here is safe:
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        }
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -12129,50 +12536,55 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         }
 
         viewModelScope.launch {
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt =
-                if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                    val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                    if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                    else "$prefix\n\n${baseSystemPrompt ?: ""}"
-                } else baseSystemPrompt
+            // nanoMuse: rebuild the provider-specific prefix for each actual request.
+            val nmPromptInput = nmCapturePromptInput()
 
             AppLogger.info(TAG_STREAM, "resume _isStreaming=true (sid=$activeSessionId)")
             _isStreaming.value = true
             streamJob = launch(Dispatchers.IO) {
                 AppLogger.info(TAG_STREAM, "resume streamJob ENTER sid=$activeSessionId")
                 try {
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
-                    AppLogger.debug(TAG_STREAM, "resume streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let {
-                            providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy
-                        } ?: com.openminis.app.data.model.FallbackStrategy.default
+                    val trackedSessionId = activeSessionId
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "resume streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
                     }
-                    val fallbackProviders = buildFallbackProviders(provider)
                     try {
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let {
+                                providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy
+                            } ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+                        val fallbackProviders = buildFallbackProviders(provider)
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop CALL")
                         runAgentLoop(
                             provider = provider,
-                            systemPrompt = systemPrompt,
+                            promptInput = nmPromptInput,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop RETURN normal")
                         nmAfterTurn() // nanoMuse
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy)
+                        drainQueuedPrompts(provider, activeFallbackStrategy) {
+                            SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                        }
                         AppLogger.info(TAG_STREAM, "resume drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop CANCELLED")
                         Log.d(TAG, "Agent loop cancelled (resume)")
                     } catch (e: Exception) {
                         AppLogger.error(TAG_STREAM, "resume runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                         Log.e(TAG, "Agent loop error (resume)", e)
-                        setInlineError(e.message ?: "Unknown error")
-                        // nanoMuse: a failed resumed run is not a new unread answer.
-                        SessionActivityTracker.markReplyIncomplete(activeSessionId)
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
+                        // An error suppresses unread and remains distinct from a user cancellation.
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "resume streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -12182,8 +12594,11 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         // non-null excerpt. Reading _messages here is safe:
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        }
                         AppLogger.info(TAG_STREAM, "resume streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {

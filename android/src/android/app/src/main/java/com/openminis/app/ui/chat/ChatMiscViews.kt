@@ -12,6 +12,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import java.io.File
+import io.github.nanomuse.ui.chat.tracePromptSizePointer
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -521,7 +522,11 @@ private fun BorderedMarkdownTable(
 // notices, and model-switch fallback notices — no card, no attribution.
 
 @Composable
-internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = null) {
+internal fun FallbackInfoBlock(
+    block: AssistantBlock,
+    onRevert: (() -> Unit)? = null,
+    onOpenDetail: (() -> Unit)? = null, // nanoMuse: allow a list owner to keep a detail sheet alive.
+) {
     val divider = ChatColors.separator
     val fg = ChatColors.secondaryText
     val icon = when (block.toolName) {
@@ -589,14 +594,35 @@ internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = 
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 if (hasDetail) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = "Show full summary",
-                        tint = fg,
-                        modifier = Modifier
-                            .size(14.dp)
-                            .clickable { showDetail = true },
-                    )
+                    val open = {
+                        if (block.toolName == "prompt_size") {
+                            io.github.nanomuse.ui.chat.PromptSizeDetailTrace.record(
+                                io.github.nanomuse.ui.chat.PromptSizeDetailTrace.Event.ROW_CLICK,
+                            )
+                        }
+                        if (onOpenDetail != null) onOpenDetail() else showDetail = true
+                    }
+                    if (block.toolName == "prompt_size") {
+                        // nanoMuse: the 14dp glyph remains subtle, but its actual measured
+                        // touch target is 48dp and stays inside the lazy row's bounds. An
+                        // expanded hit area outside a 14dp row can be clipped or overlap the
+                        // composer, particularly while the keyboard is visible.
+                        IconButton(onClick = open, modifier = Modifier.size(48.dp).tracePromptSizePointer()) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = stringResource(R.string.nm_prompt_size_details),
+                                tint = fg,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Show full summary",
+                            tint = fg,
+                            modifier = Modifier.size(14.dp).clickable(onClick = open),
+                        )
+                    }
                 }
             }
         }.map { it.measure(androidx.compose.ui.unit.Constraints(maxWidth = labelMax)) }
@@ -634,6 +660,8 @@ internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = 
     if (showDetail && hasDetail) {
         CompactSummarySheet(
             summary = block.toolArgs,
+            // nanoMuse: reuse the scrollable, copyable sheet without calling it a compact summary.
+            title = if (block.toolName == "prompt_size") stringResource(R.string.nm_prompt_size_title) else "Compact Summary",
             onDismiss = { showDetail = false },
             onRevert = onRevert,
         )
@@ -646,8 +674,10 @@ internal fun FallbackInfoBlock(block: AssistantBlock, onRevert: (() -> Unit)? = 
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun CompactSummarySheet(
+// nanoMuse: the chat can host the prompt report outside its recycled list item.
+internal fun CompactSummarySheet(
     summary: String,
+    title: String, // nanoMuse: title is specific to the kind of local info.
     onDismiss: () -> Unit,
     onRevert: (() -> Unit)? = null,
 ) {
@@ -657,7 +687,7 @@ private fun CompactSummarySheet(
     val scope = rememberCoroutineScope()
 
     StandardChatSheet(
-        title = "Compact Summary",
+        title = title, // nanoMuse: compact and prompt diagnostics have different titles.
         onDismiss = onDismiss,
         leadingAction = {
             IconButton(onClick = {
@@ -670,7 +700,7 @@ private fun CompactSummarySheet(
             }) {
                 Icon(
                     imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                    contentDescription = "Copy",
+                    contentDescription = stringResource(R.string.common_copy), // nanoMuse: localized copy action.
                     tint = if (copied) Color(0xFF34C759) else ChatColors.secondaryText,
                 )
             }

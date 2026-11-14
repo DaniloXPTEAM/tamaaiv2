@@ -48,7 +48,7 @@ fun FaceCostDialog(job: FaceCost.Job, onConfirm: () -> Unit, onDismiss: () -> Un
         text = {
             if (!loaded) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MuseTones.action)
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MuseTones.accent)
                     Spacer(Modifier.width(10.dp))
                     Text(stringResource(R.string.nm_face_cost_checking), fontSize = 14.sp)
                 }
@@ -60,7 +60,7 @@ fun FaceCostDialog(job: FaceCost.Job, onConfirm: () -> Unit, onDismiss: () -> Un
             TextButton(onClick = onConfirm, enabled = loaded) {
                 Text(
                     stringResource(if (blocked) R.string.nm_face_cost_anyway else R.string.nm_face_cost_go),
-                    color = if (blocked) MaterialTheme.colorScheme.onSurfaceVariant else MuseTones.action,
+                    color = if (blocked) MaterialTheme.colorScheme.onSurfaceVariant else MuseTones.accent,
                 )
             }
         },

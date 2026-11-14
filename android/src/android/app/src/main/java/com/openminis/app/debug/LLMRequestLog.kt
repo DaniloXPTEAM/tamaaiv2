@@ -38,19 +38,12 @@ object LLMRequestLog {
 
     private val entries = mutableListOf<Entry>()
 
-    // nanoMuse: header names whose values are credentials; matched case-insensitively, and any
-    // name containing "token" or "secret" counts too. The copy keeps the caller's order (#347).
-    private val CREDENTIAL_HEADERS = setOf(
-        "authorization", "proxy-authorization", "x-api-key", "api-key", "apikey",
-        "x-goog-api-key", "cookie", "set-cookie",
-    )
-
+    // nanoMuse: use the same case-insensitive header rules as provider-error redaction.
+    // The copy keeps the caller's order (#347); unknown custom names can still contain secrets.
     private fun maskHeaders(headers: Map<String, String>): Map<String, String> {
         val copy = LinkedHashMap<String, String>(headers.size)
         for ((name, value) in headers) {
-            val lower = name.lowercase()
-            val secret = lower in CREDENTIAL_HEADERS || lower.contains("token") || lower.contains("secret")
-            copy[name] = if (secret) "***" else value
+            copy[name] = if (io.github.nanomuse.net.ProviderCredentials.isSensitiveHeader(name)) "***" else value
         }
         return copy
     }

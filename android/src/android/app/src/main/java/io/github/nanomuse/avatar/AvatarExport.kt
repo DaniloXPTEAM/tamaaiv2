@@ -27,7 +27,7 @@ import java.util.Locale
  */
 object AvatarExport {
     private const val TAG = "AvatarExport"
-    const val ALBUM = "nanoMuse/avatar"
+    const val ALBUM = "TAMA-AI/avatar"
 
     /** One file to copy: where it is, what to call it in the gallery, and whether it is a clip. */
     data class Item(val file: File, val name: String, val video: Boolean)

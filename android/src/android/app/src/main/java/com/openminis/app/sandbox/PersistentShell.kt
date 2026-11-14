@@ -6,12 +6,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import io.github.nanomuse.sandbox.ShellMarkerDecoder // nanoMuse: fragmented process output.
 import java.io.BufferedWriter
 import java.io.File
+import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 
 /**
@@ -50,8 +53,8 @@ class PersistentShell(
     private val isStarting = AtomicBoolean(false)
 
     /** Pending command callback — only one command at a time. */
-    @Volatile
-    private var pendingCallback: CommandCallback? = null
+    // nanoMuse: completion and cancellation must not clear a newer command's callback.
+    private val pendingCallback = AtomicReference<CommandCallback?>(null)
 
     val isAlive: Boolean
         get() = process?.isAlive == true
@@ -61,10 +64,24 @@ class PersistentShell(
 
     private class CommandCallback(
         val marker: String,
-        val output: StringBuilder = StringBuilder(),
         val lineCallback: ((String) -> Unit)?,
         var onComplete: ((String, Int) -> Unit)? = null,
-    )
+    ) {
+        // nanoMuse: a process read can end anywhere, including inside the completion marker.
+        private val decoder = ShellMarkerDecoder(marker)
+        private val output = StringBuilder()
+
+        fun accept(text: String): ShellMarkerDecoder.Frame = synchronized(this) {
+            decoder.feed(text).also { output.append(it.text) }
+        }
+
+        fun finish(): String = synchronized(this) {
+            output.append(decoder.finish())
+            output.toString()
+        }
+
+        fun snapshot(): String = synchronized(this) { output.toString() }
+    }
 
     /**
      * Ensure the persistent shell process is running.
@@ -360,40 +377,26 @@ class PersistentShell(
 
     private fun readLoop(p: Process) {
         try {
-            val buffer = ByteArray(4096)
-            val stream = p.inputStream
+            // nanoMuse: InputStreamReader keeps UTF-8 characters intact across byte reads.
+            val buffer = CharArray(4096)
+            val stream = InputStreamReader(p.inputStream, StandardCharsets.UTF_8)
             while (true) {
                 val n = stream.read(buffer)
                 if (n < 0) break
-                val text = String(buffer, 0, n, StandardCharsets.UTF_8)
+                val text = String(buffer, 0, n)
                 appendTail(text)
 
-                val cb = pendingCallback
+                val cb = pendingCallback.get()
                 if (cb != null) {
-                    // Check if this chunk contains the end marker
-                    val markerExitPattern = "__MINIS_DONE_${cb.marker}_EXIT_"
-                    val markerIdx = text.indexOf(markerExitPattern)
-
-                    if (markerIdx >= 0) {
-                        // Extract output before marker
-                        val beforeMarker = text.substring(0, markerIdx)
-                        cb.output.append(beforeMarker)
-                        if (cb.lineCallback != null) {
-                            feedLines(beforeMarker, cb.lineCallback)
-                        }
-
-                        // Extract exit code from marker line
-                        val afterMarker = text.substring(markerIdx)
-                        val exitCode = parseExitCode(afterMarker, cb.marker)
-
-                        // Signal completion
-                        cb.onComplete?.invoke(cb.output.toString(), exitCode)
-                        pendingCallback = null
-                    } else {
-                        cb.output.append(text)
-                        if (cb.lineCallback != null) {
-                            feedLines(text, cb.lineCallback)
-                        }
+                    // nanoMuse: retain partial markers/statuses until the next read.
+                    val frame = cb.accept(text)
+                    if (frame.text.isNotEmpty() && cb.lineCallback != null) {
+                        feedLines(frame.text, cb.lineCallback)
+                    }
+                    val exit = frame.exitCode
+                    if (exit != null && pendingCallback.compareAndSet(cb, null)) {
+                        // Clear the old callback before resuming; a following command may start now.
+                        cb.onComplete?.invoke(cb.snapshot(), exit)
                     }
                 }
                 // If no pending callback, discard (shell prompt noise etc.)
@@ -402,12 +405,8 @@ class PersistentShell(
             Log.d(TAG, "Reader loop ended: ${e.message}")
         }
 
-        // Process exited
-        val cb = pendingCallback
-        if (cb != null) {
-            cb.onComplete?.invoke(cb.output.toString(), -1)
-            pendingCallback = null
-        }
+        // Process exited. Preserve any partial marker as output, but report failure.
+        pendingCallback.getAndSet(null)?.let { finishCallback(it, -1) }
 
         // [T-android-shell-death-diagnosability] Name the cause in the FILE
         // log. exitValue distinguishes death classes (signal deaths are
@@ -442,11 +441,9 @@ class PersistentShell(
         }
     }
 
-    private fun parseExitCode(text: String, marker: String): Int {
-        // Pattern: __MINIS_DONE_{marker}_EXIT_{code}__
-        val regex = Regex("__MINIS_DONE_${Regex.escape(marker)}_EXIT_(\\d+)__")
-        val match = regex.find(text)
-        return match?.groupValues?.get(1)?.toIntOrNull() ?: -1
+    // nanoMuse: report any buffered partial marker if the process stops before completion.
+    private fun finishCallback(cb: CommandCallback, exitCode: Int) {
+        cb.onComplete?.invoke(cb.finish(), exitCode)
     }
 
     /**
@@ -497,18 +494,18 @@ class PersistentShell(
                             cont.resume(Pair(output, exitCode))
                         }
                     }
-                    pendingCallback = cb
+                    pendingCallback.set(cb)
 
                     cont.invokeOnCancellation {
-                        pendingCallback = null
+                        // nanoMuse: a timed-out command cannot clear a newer command's callback.
+                        pendingCallback.compareAndSet(cb, null)
                     }
 
                     try {
                         writer.write(wrappedCommand)
                         writer.flush()
                     } catch (e: Exception) {
-                        pendingCallback = null
-                        if (cont.isActive) {
+                        if (pendingCallback.compareAndSet(cb, null) && cont.isActive) {
                             cont.resume(Pair("[Write error: ${e.message}]", -1))
                         }
                     }
@@ -516,8 +513,7 @@ class PersistentShell(
             }
 
             if (result == null) {
-                // Timeout — cancel pending, but don't kill the shell
-                pendingCallback = null
+                // Timeout cancels its own callback above, but does not kill the shell.
                 Pair("[Command timed out after ${timeout / 1000}s]", 124)
             } else {
                 result
@@ -570,10 +566,8 @@ class PersistentShell(
         stdinWriter = null
         process?.destroyForcibly()
         process = null
-        pendingCallback?.let {
-            it.onComplete?.invoke(it.output.toString(), -1)
-        }
-        pendingCallback = null
+        // nanoMuse: process exit and Stop race to complete at most the same callback once.
+        pendingCallback.getAndSet(null)?.let { finishCallback(it, -1) }
         Log.i(TAG, "Persistent shell stopped")
     }
 }
