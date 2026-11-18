@@ -7,6 +7,8 @@ import kotlinx.coroutines.withTimeout
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -99,6 +101,23 @@ class OwnProviderProxyTest {
             // Before #336 the socket stayed open until the 10 s read timeout.
             assertTrue("the proxy connection stayed open after the cancel", server.closedByClient.await(1, TimeUnit.SECONDS))
             job.join()
+        }
+    }
+
+    @Test fun `a probe without credentials treats ordinary client refusals as reached`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            val cfg = OwnProviderProxy.Config(enabled = true, host = "127.0.0.1", port = server.port)
+            for (status in listOf(401, 403, 429)) {
+                server.enqueue(MockResponse().setResponseCode(status).setBody("forbidden"))
+                val result = OwnProviderProxy.probe(cfg, "http://provider.invalid/")
+                assertTrue("HTTP $status still reached the host", result.ok)
+                assertEquals(status, result.status)
+            }
+            server.enqueue(MockResponse().setResponseCode(403).setBody("<!DOCTYPE html><html>blocked</html>"))
+            val intercepted = OwnProviderProxy.probe(cfg, "http://provider.invalid/")
+            assertFalse(intercepted.ok)
+            assertEquals(ProviderReach.Kind.UNREACHABLE, intercepted.failure!!.kind)
         }
     }
 

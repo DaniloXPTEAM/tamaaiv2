@@ -5,6 +5,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** `stop {call}` and `stop {conversation}` find the asker's own run here and nothing else. */
 class HubTasksTest {
@@ -67,6 +71,125 @@ class HubTasksTest {
         assertNull(t.find("desk", "old", null))
         assertNull(t.find("desk", "missing", "from-desk"))
         assertEquals("new-session", t.find("desk", null, null))
+    }
+
+    @Test fun `a persistent stop must not mark another call sharing its session`() {
+        val tasks = HubTasks()
+        val own = Any()
+        val other = Any()
+        assertTrue(tasks.tryStart("own", "desk", "notes", "shared", own))
+        assertTrue(tasks.tryStart("other", "laptop", "notes", "shared", other))
+        assertTrue(tasks.stopExact("desk", "own", own) { session -> session == "shared" })
+        assertFalse(tasks.stopExact("desk", "own", own) { error("a stop was already requested") })
+        assertTrue(tasks.finishedExact("own", own))
+        assertFalse("a different caller was never stopped", tasks.finishedExact("other", other))
+    }
+
+    @Test fun `verified stop requires the selected live call and successful cancellation`() {
+        val tasks = HubTasks()
+        val own = Any()
+        assertTrue(tasks.tryStart("own", "desk", "notes", "shared", own))
+        var attempts = 0
+        val cancel: (String) -> Boolean = { attempts++; false }
+        assertFalse(tasks.stopExact("desk", "", own, cancel))
+        assertFalse(tasks.stopExact("desk", null, own, cancel))
+        assertFalse(tasks.stopExact("desk", "missing", own, cancel))
+        assertFalse(tasks.stopExact("laptop", "own", own, cancel))
+        assertFalse(tasks.stopExact("desk", "own", Any(), cancel))
+        assertEquals(0, attempts)
+        assertFalse(tasks.stopExact("desk", "own", own, cancel))
+        assertEquals(1, attempts)
+        assertFalse(tasks.finishedExact("own", own))
+        assertFalse(tasks.stopExact("desk", "own", own) { error("finished call must not be cancelled") })
+    }
+
+    @Test fun `a verified stop racing finish can only mark the selected live call`() {
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            repeat(100) {
+                val tasks = HubTasks()
+                val own = Any()
+                val other = Any()
+                assertTrue(tasks.tryStart("own", "desk", "notes", "shared", own))
+                assertTrue(tasks.tryStart("other", "laptop", "notes", "shared", other))
+                val gate = CountDownLatch(1)
+                val cancels = AtomicInteger(0)
+                val stop = workers.submit<Boolean> {
+                    gate.await()
+                    tasks.stopExact("desk", "own", own) { cancels.incrementAndGet(); true }
+                }
+                val finish = workers.submit<Boolean> { gate.await(); tasks.finishedExact("own", own) }
+                gate.countDown()
+                val stopped = stop.get(5, TimeUnit.SECONDS)
+                assertEquals(stopped, finish.get(5, TimeUnit.SECONDS))
+                assertEquals(if (stopped) 1 else 0, cancels.get())
+                assertFalse(tasks.finishedExact("other", other))
+            }
+        } finally {
+            workers.shutdownNow()
+        }
+    }
+
+    @Test fun `a duplicate live id is refused without stealing the old registration`() {
+        val tasks = HubTasks()
+        val old = Any()
+        val next = Any()
+        assertFalse(tasks.tryStart(" ", "desk", "old", "old-session", old))
+        assertTrue(tasks.tryStart("reused", "desk", "old", "old-session", old))
+        assertFalse(tasks.tryStart("reused", "laptop", "new", "new-session", next))
+        assertEquals("old-session", tasks.find("desk", "reused", null))
+        assertNull(tasks.find("laptop", "reused", null))
+        assertFalse(tasks.finishedExact("reused", next))
+        assertEquals("old-session", tasks.find("desk", "reused", null))
+        assertFalse(tasks.finishedExact("reused", old))
+    }
+
+    @Test fun `delayed stop and cleanup cannot affect a replacement with the same id`() {
+        val tasks = HubTasks()
+        val old = Any()
+        val next = Any()
+        assertTrue(tasks.tryStart("reused", "desk", "old", "old-session", old))
+        assertFalse(tasks.finishedExact("reused", old))
+        assertTrue(tasks.tryStart("reused", "desk", "new", "new-session", next))
+        assertFalse(tasks.finishedExact("reused", old))
+        assertFalse(tasks.stopExact("desk", "reused", old) { error("an old stop must not cancel the replacement") })
+        assertEquals("new-session", tasks.find("desk", "reused", null))
+        assertTrue(tasks.stopExact("desk", "reused", next) { it == "new-session" })
+        assertTrue(tasks.finishedExact("reused", next))
+    }
+
+    @Test fun `parallel reservations racing for the same id admit only one`() {
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            repeat(100) {
+                val tasks = HubTasks()
+                val gate = CountDownLatch(1)
+                val owners = listOf(Any(), Any())
+                val starts = owners.mapIndexed { index, owner -> workers.submit<Boolean> {
+                    gate.await()
+                    tasks.tryStart("same", "desk$index", "conversation", "session$index", owner)
+                } }
+                gate.countDown()
+                val results = starts.map { it.get(5, TimeUnit.SECONDS) }
+                assertEquals(1, results.count { it })
+                val winner = results.indexOf(true)
+                assertEquals("session$winner", tasks.find("desk$winner", "same", null))
+                assertFalse(tasks.finishedExact("same", owners[1 - winner]))
+                assertEquals("session$winner", tasks.find("desk$winner", "same", null))
+                assertFalse(tasks.finishedExact("same", owners[winner]))
+            }
+        } finally {
+            workers.shutdownNow()
+        }
+    }
+
+    @Test fun `legacy stop continues to mark every run in the stopped session`() {
+        val tasks = HubTasks()
+        tasks.started("own", "desk", "notes", "shared")
+        tasks.started("other", "laptop", "notes", "shared")
+        assertTrue(tasks.stop("desk", "own", null) { true })
+        assertTrue(tasks.finished("own"))
+        assertTrue(tasks.finished("other")) // compatibility control, not a safety guarantee
     }
 
     @Test fun `conversation lookup selects only the requesting device's run`() {

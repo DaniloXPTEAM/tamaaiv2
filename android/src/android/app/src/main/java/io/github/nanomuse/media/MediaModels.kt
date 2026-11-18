@@ -1,5 +1,7 @@
 package io.github.nanomuse.media
 
+import ai.tama.media.*
+
 import android.content.Context
 import android.content.SharedPreferences
 import com.openminis.app.MinisApp
@@ -51,6 +53,13 @@ object MediaModels {
     private const val KEY_VIDEO_INSTANCE = "media.video.provider_id"
     private const val KEY_VIDEO_MODEL = "media.video.model"
     private const val KEY_ANIMATE = "media.animate_avatar"
+    // nanoMuse: a video choice changed away and back must not revive an in-flight attempt.
+    private var videoChoiceRevision = 0L
+    @Synchronized internal fun videoChoiceRevision(): Long = videoChoiceRevision
+    private fun advanceVideoChoice() {
+        check(videoChoiceRevision < Long.MAX_VALUE) { "video choice version exhausted" }
+        videoChoiceRevision++
+    }
     const val DEFAULT_VIDEO_MODEL = "wan2.2-i2v-flash"
     const val DEEP_LINK = "minis://settings/media"
 
@@ -60,6 +69,13 @@ object MediaModels {
 
     /** The image model when it is usable: a provider with a key *and* a model name (the catalogue may not know one). */
     fun imageEndpoint(context: Context): ImageGen.Endpoint? = ImageGen.endpoint(context)?.takeIf { it.model.isNotBlank() }
+
+    /** Agent image requests in automatic mode need their own exact-model consent. */
+    internal fun agentImageEndpoint(context: Context): ImageGen.Endpoint? {
+        if (!ai.tama.router.AutoModelStore.enabled(context)) return imageEndpoint(context)
+        val selected = AutoImageSelection.choose(context) ?: return null
+        return AutoImageSelection.endpointIfStillAllowed(context, selected)
+    }
 
     // ── video ─────────────────────────────────────────────────────────────
 
@@ -138,7 +154,9 @@ object MediaModels {
     }
 
     /** [instanceId] null switches the video model off; it is remembered, unlike "never chosen". */
+    @Synchronized // nanoMuse: serialize revision changes with video choice writes.
     fun saveVideo(context: Context, instanceId: String?, model: String) {
+        advanceVideoChoice() // nanoMuse: invalidate active attempts even if a later write fails.
         prefs(context).edit()
             .putString(KEY_VIDEO_INSTANCE, instanceId ?: VIDEO_OFF)
             .putString(KEY_VIDEO_MODEL, model.trim())
@@ -149,7 +167,9 @@ object MediaModels {
     fun videoChosen(context: Context): Boolean = prefs(context).getString(KEY_VIDEO_INSTANCE, null) != null
 
     /** Forgets the choice (a model, or Off): the slot follows the automatic order again. Nothing else moves. */
+    @Synchronized // nanoMuse: serialize revision changes with video choice writes.
     fun clearVideo(context: Context) {
+        advanceVideoChoice() // nanoMuse: an earlier selection cannot inherit this reset.
         prefs(context).edit().remove(KEY_VIDEO_INSTANCE).remove(KEY_VIDEO_MODEL).apply()
     }
 
@@ -181,9 +201,9 @@ object MediaModels {
 
     /**
      * The video models of [inst] that answered the last check, recommended first; null when it
-     * has never been checked (the page then runs [checkVideoModels]). Model Studio does not list
-     * video models on `/models`, so this is what "which models does this key have" means for
-     * video: the known candidates, each probed once and remembered for a day.
+     * has never been checked. Model Studio does not list video models on `/models`, so checking
+     * sends one probe per candidate and remembers the result for a day. The parallel test app
+     * does not start this check automatically, because probes may create billable tasks.
      */
     fun availableVideoModels(context: Context, inst: ProviderInstance): List<String>? {
         val raw = prefs(context).getString(KEY_VIDEO_AVAILABLE + inst.id, null) ?: return null
@@ -220,18 +240,18 @@ object MediaModels {
      * Returns the models found, or null when the host could not be reached at all.
      */
     suspend fun checkVideoModels(context: Context, inst: ProviderInstance): List<String>? = withContext(Dispatchers.IO) {
+        // nanoMuse: a discovery probe can create a task. Refuse before reading a key,
+        // and stop without saving a partial list if permission is withdrawn mid-batch.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         val app = context.applicationContext as? MinisApp ?: return@withContext null
         val repo = app.providerRepositoryOrNull ?: return@withContext null
         val key = repo.usableApiKey(inst) ?: return@withContext null
         val host = VideoGen.Endpoint(inst, key, "").host
         val candidates = videoCandidates(context, inst)
-        var reached = false
-        val found = candidates.filter { model ->
-            val ok = VideoGen.probe(host, key, model)
-            if (ok != null) reached = true
-            ok == true
-        }
-        if (!reached) return@withContext null
+        val found = VideoProbeBatch.collect(candidates,
+            requireAllowed = { ai.tama.pricing.ModelCostGuard.requireAllowed() },
+            probe = { model -> VideoGen.probe(host, key, model) },
+        ) ?: return@withContext null
         prefs(context).edit()
             .putString(KEY_VIDEO_AVAILABLE + inst.id, JSONArray(found).toString())
             .putString(KEY_VIDEO_CANDIDATES + inst.id, JSONArray(candidates).toString())
@@ -259,28 +279,20 @@ object MediaModels {
      * The system-prompt paragraph. English on purpose (the prompt is), short, and honest about
      * what is missing so the agent explains and links the setting instead of inventing a picture.
      */
+    // nanoMuse: share the exact paragraph with a synthetic host measurement.
     fun promptParagraph(context: Context): String {
-        val image = imageEndpoint(context)
+        val automatic = ai.tama.router.AutoModelStore.enabled(context)
+        val image = agentImageEndpoint(context)
         val video = videoEndpoint(context)
-        return buildString {
-            append("Media models. Unlike Muse, whose image and video models are built in, nanoMuse runs on three models the user configures: ")
-            append("the chat model (you), an image model (avatar changes, pictures the user asks for) and a video model (the animated avatar, short clips). ")
-            append("Image model: ").append(image?.let { "${it.model} via ${it.label}" } ?: "NOT SET").append(". ")
-            append("Video model: ").append(video?.let { "${it.model} via ${it.label}" } ?: "NOT SET").append(".\n")
-            append("- To make a picture the user asks for, run `nanomuse-media image --prompt \"...\" [--from <image path>]`; ")
-            append("for a short clip, `nanomuse-media video --prompt \"...\" [--from <image path>] [--seconds 4-15]` (takes 1-5 minutes; say so first). ")
-            append("Both print JSON with a `markdown` field — put that line in your reply so the file shows inline. `nanomuse-media status` prints what is configured.\n")
-            append("- Avatar changes are handled by the app itself when the user writes \"change your avatar to ...\"; you only need to explain when it cannot work.\n")
-            if (image == null) {
-                append("- No image model is set: if the user asks to change your avatar or for a picture, say plainly that pictures need a provider with image models ")
-                append("(Alibaba Cloud Bailian, OpenAI with an API key, Gemini or OpenRouter; a ChatGPT plan signed in through Codex, DeepSeek, Claude, Kimi and Groq have none), and give the link [Image & video models](")
-                append(DEEP_LINK).append(") — it opens the setting. Never pretend to have drawn something.\n")
+        val imageStatus = image?.let {
+            if (!automatic) "${it.model} via ${it.label}" else {
+                val secrets = listOf(it.apiKey)
+                val model = io.github.nanomuse.net.ProviderReach.redactedText(it.model, secrets, 128)
+                val provider = io.github.nanomuse.net.ProviderReach.redactedText(it.label, secrets, 128)
+                "$model via $provider"
             }
-            if (video == null) {
-                append("- No video model is set: the avatar stays as still pictures, and clips cannot be made. If asked, explain that clips need a provider with video models ")
-                append("(Alibaba Cloud Bailian: a Wan video model such as wan2.2-i2v-flash, picked in the setting) and give the link [Image & video models](").append(DEEP_LINK).append(").")
-            }
-        }.trimEnd()
+        }
+        return MediaPrompt.build(imageStatus, video?.let { "${it.model} via ${it.label}" }, DEEP_LINK, automatic)
     }
 
     /** The one-turn addendum when an avatar change was asked for but cannot be drawn. */
@@ -288,6 +300,6 @@ object MediaModels {
         "The user just asked you to change your avatar, but no image model is configured, so the app could not start the change. " +
             "Answer in the user's language: say that changing your look needs a provider with image models " +
             "(Alibaba Cloud Bailian, OpenAI with an API key, Gemini or OpenRouter — not a ChatGPT plan signed in through Codex, nor DeepSeek, Claude, Kimi or Groq), " +
-            "that nanoMuse ships no image model of its own, so this is something they set up themselves, and give the link [Image & video models]($DEEP_LINK) to open the setting. " +
+            "that TAMA AI ships no image model of its own, so this is something they set up themselves, and give the link [Image & video models]($DEEP_LINK) to open the setting. " +
             "Keep it to a few sentences and do not describe or invent a new look."
 }

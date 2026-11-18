@@ -4,6 +4,9 @@ import android.content.Context
 import android.util.Log
 import com.openminis.app.data.repository.EnvVarRepository
 import io.github.nanomuse.sandbox.FeedSandboxScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -27,6 +30,8 @@ import java.util.concurrent.ConcurrentHashMap
 object ExecutionCoordinator {
 
     private const val TAG = "ExecutionCoordinator"
+    // nanoMuse: shell commands and paths can contain private input or credentials.
+    private val nmParallel: Boolean get() = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
 
     data class CommandResult(
         val output: String,
@@ -39,6 +44,19 @@ object ExecutionCoordinator {
 
     /** Thread-safe per-session shell registry. */
     private val shells = ConcurrentHashMap<String, PersistentShell>()
+
+    // nanoMuse: a command queued before Stop must not create a new shell after it.
+    private class ShellEpoch(var current: Boolean = true)
+    private val shellRegistryLock = Any()
+    private val shellEpochs = mutableMapOf<String, ShellEpoch>()
+
+    private fun requireCurrentEpoch(sessionId: String, epoch: ShellEpoch?, job: Job?) {
+        if (epoch == null) return // normal package keeps the legacy path
+        synchronized(shellRegistryLock) {
+            if (!epoch.current || shellEpochs[sessionId] !== epoch || job?.isActive == false)
+                throw CancellationException("Shell command stopped")
+        }
+    }
 
     /** Thread-safe per-session mutex registry. */
     private val mutexes = ConcurrentHashMap<String, Mutex>()
@@ -65,6 +83,12 @@ object ExecutionCoordinator {
     // observe a shell's lifetime without reflection (the old single mountedSessionId is gone).
     internal fun hasShell(sessionId: String): Boolean = shells.containsKey(sessionId)
 
+    // nanoMuse: bounded diagnostics for isolated instrumentation; does not change shell state.
+    internal fun testShellDiagnostics(sessionId: String): String = shells[sessionId]?.let {
+        "alive=${it.isAlive}; exit=${it.lastExitCode}; output=" +
+            ai.tama.net.SandboxLogPrivacy.captured(nmParallel, it.deathTail().take(400)) // nanoMuse: no prior output in diagnostics.
+    } ?: "no shell"
+
     /**
      * Execute a command in the session's persistent shell.
      *
@@ -80,15 +104,23 @@ object ExecutionCoordinator {
         timeout: Long = 600_000L,
         lineCallback: ((String) -> Unit)? = null
     ): CommandResult {
+        // nanoMuse: capture before waiting for a session slot; Stop invalidates
+        // this exact object even when a later command opens the same session.
+        val job = currentCoroutineContext()[Job]
+        val epoch = if (nmParallel) synchronized(shellRegistryLock) {
+            if (job?.isActive == false) throw CancellationException("Shell command stopped")
+            shellEpochs.getOrPut(sessionId) { ShellEpoch() }
+        } else null
         // ConcurrentHashMap.getOrPut is not atomic, use putIfAbsent pattern
         val mutex = mutexes.getOrPut(sessionId) { Mutex() }
 
         return mutex.withLock {
+            requireCurrentEpoch(sessionId, epoch, job)
             val startTime = System.currentTimeMillis()
 
             // Auto-boot PRoot if not already booted
             if (!PRootKernel.isBooted) {
-                Log.i(TAG, "[$sessionId] Auto-booting PRootKernel")
+                Log.i(TAG, if (nmParallel) "Auto-booting PRootKernel" else "[$sessionId] Auto-booting PRootKernel") // nanoMuse: omit session id.
                 PRootKernel.boot(appContext)
             }
 
@@ -98,22 +130,29 @@ object ExecutionCoordinator {
 
             // [diag] trace the sessionId that shell_execute is dispatched with —
             // suspected source of the Chinese-emoji filename vanishing bug
-            Log.w(TAG, "[diag] execute sessionId=$sessionId cmd=${command.take(120).replace('\n', ' ')}")
+            // nanoMuse: never put commands or session ids in parallel-package logcat.
+            Log.w(TAG, ai.tama.net.SandboxLogPrivacy.dispatch(nmParallel, sessionId, command))
 
             // Get or create shell — protected by globalLock to avoid duplicate creation
-            val shell = getOrCreateShell(sessionId)
+            val shell = getOrCreateShell(sessionId, epoch, job)
+            requireCurrentEpoch(sessionId, epoch, job) // nanoMuse: Stop may have won during startup.
 
             // Inject user-defined environment variables as a *full snapshot*
             // (T124a). Pass the previously-injected key set so applyEnvironment
             // can `unset` anything the user has since removed from settings;
             // otherwise the long-lived shell would keep stale values.
-            val envVars = envVarRepository?.allAsDict() ?: emptyMap()
+            val configuredEnv = envVarRepository?.allAsDict() ?: emptyMap()
+            // nanoMuse: restore this shell's session before each command, even if a
+            // stored environment variable or a prior command changed it. A guest can
+            // still override its own env for a particular exec; this is not authentication.
+            val envVars = if (nmParallel) configuredEnv + ("MINIS_CHAT_SESSION_ID" to sessionId) else configuredEnv
             val previousKeys = lastInjectedKeys[sessionId] ?: emptySet()
             if (envVars.isNotEmpty() || previousKeys.isNotEmpty()) {
                 shell.applyEnvironment(envVars, previousKeys = previousKeys)
                 lastInjectedKeys[sessionId] = envVars.keys.toSet()
             }
 
+            requireCurrentEpoch(sessionId, epoch, job) // nanoMuse: do not dispatch a queued, stopped command.
             val (rawOutput, exitCode) = shell.executeCommand(
                 command = command,
                 timeout = timeout,
@@ -138,35 +177,54 @@ object ExecutionCoordinator {
      * Uses globalLock to prevent two coroutines from simultaneously creating
      * a shell for the same session (e.g. if the old shell just died).
      */
-    private suspend fun getOrCreateShell(sessionId: String): PersistentShell {
+    private suspend fun getOrCreateShell(sessionId: String, epoch: ShellEpoch?, job: Job?): PersistentShell {
+        requireCurrentEpoch(sessionId, epoch, job)
         // Fast path: existing alive shell
         val existing = shells[sessionId]
         if (existing != null && existing.isAlive) {
-            Log.w(TAG, "[diag] reuse existing shell for sessionId=$sessionId attachmentsMount=${existing.debugBindMount("/var/minis/attachments")}")
+            Log.w(TAG, if (nmParallel) "reuse existing shell" else
+                "[diag] reuse existing shell for sessionId=$sessionId attachmentsMount=${existing.debugBindMount("/var/minis/attachments")}") // nanoMuse: omit session and host path.
             return existing
         }
 
         // Slow path: need to create (or recreate after crash)
         return globalLock.withLock {
+            requireCurrentEpoch(sessionId, epoch, job) // nanoMuse: Stop may have won while waiting.
             // Double-check after acquiring lock
             val recheck = shells[sessionId]
             if (recheck != null && recheck.isAlive) {
-                Log.w(TAG, "[diag] reuse existing shell (post-lock) for sessionId=$sessionId attachmentsMount=${recheck.debugBindMount("/var/minis/attachments")}")
+                Log.w(TAG, if (nmParallel) "reuse existing shell" else
+                    "[diag] reuse existing shell (post-lock) for sessionId=$sessionId attachmentsMount=${recheck.debugBindMount("/var/minis/attachments")}") // nanoMuse: omit session and host path.
                 return@withLock recheck
             }
 
             // Shell is dead or missing — clean up and create fresh
             if (recheck != null) {
-                Log.w(TAG, "[$sessionId] Shell died unexpectedly, recreating")
+                Log.w(TAG, if (nmParallel) "Shell died unexpectedly, recreating" else "[$sessionId] Shell died unexpectedly, recreating") // nanoMuse: omit session id.
                 recheck.stop()
             }
 
             val bindMounts = buildSessionBindMounts(sessionId)
             val shell = PersistentShell(appContext, sessionId, bindMounts)
-            shells[sessionId] = shell
-            shell.ensureStarted()
-            Log.i(TAG, "[$sessionId] Shell created with ${bindMounts.size} bind mounts")
-            Log.w(TAG, "[diag] new shell created sessionId=$sessionId attachmentsMount=${bindMounts["/var/minis/attachments"]}")
+            // nanoMuse: publish and validate under the same lock as Stop. Once
+            // published, PersistentShell.stop() also closes a racing startup.
+            synchronized(shellRegistryLock) {
+                requireCurrentEpoch(sessionId, epoch, job)
+                shells[sessionId] = shell
+            }
+            try {
+                shell.ensureStarted()
+            } catch (t: Throwable) {
+                if (nmParallel) {
+                    synchronized(shellRegistryLock) { shells.remove(sessionId, shell) }
+                    shell.stop()
+                }
+                throw t
+            }
+            requireCurrentEpoch(sessionId, epoch, job)
+            Log.i(TAG, if (nmParallel) "Shell created" else "[$sessionId] Shell created with ${bindMounts.size} bind mounts") // nanoMuse: omit session id.
+            Log.w(TAG, if (nmParallel) "new shell created" else
+                "[diag] new shell created sessionId=$sessionId attachmentsMount=${bindMounts["/var/minis/attachments"]}") // nanoMuse: omit session and host path.
             shell
         }
     }
@@ -194,8 +252,9 @@ object ExecutionCoordinator {
             PRootKernel.addBindMount(linuxPath, hostDir.absolutePath)
         }
 
-        Log.w(TAG, "[diag] buildSessionBindMounts sessionId=$sessionId " +
-            "attachments: prev=$prevAttachments new=${mounts["/var/minis/attachments"]}")
+        Log.w(TAG, if (nmParallel) "session bind mounts prepared" else
+            "[diag] buildSessionBindMounts sessionId=$sessionId " +
+                "attachments: prev=$prevAttachments new=${mounts["/var/minis/attachments"]}") // nanoMuse: omit session and host paths.
 
         // Global shared directories.
         // [T-android-mcp-bind-mount] mcp-servers MUST be here, not only in
@@ -240,7 +299,10 @@ object ExecutionCoordinator {
      * Called when a session is closed. Stops and removes the shell.
      */
     fun sessionDidTerminate(sessionId: String) {
-        val shell = shells.remove(sessionId)
+        val shell = synchronized(shellRegistryLock) {
+            if (nmParallel) shellEpochs.remove(sessionId)?.current = false
+            shells.remove(sessionId)
+        }
         mutexes.remove(sessionId)
         // nanoMuse: this cache contains only the session's disposable, read-only Feed mirror.
         FeedSandboxScope.clear(appContext, sessionId)
@@ -249,7 +311,7 @@ object ExecutionCoordinator {
         // shouldn't try to `unset` keys that don't exist in the new shell.
         lastInjectedKeys.remove(sessionId)
         shell?.stop()
-        if (shell != null) Log.i(TAG, "[$sessionId] Shell terminated")
+        if (shell != null) Log.i(TAG, if (nmParallel) "Shell terminated" else "[$sessionId] Shell terminated") // nanoMuse: omit session id.
     }
 
     /**
@@ -258,15 +320,24 @@ object ExecutionCoordinator {
      */
     fun stopCurrentCommand(sessionId: String? = null) {
         if (sessionId != null) {
-            val shell = shells.remove(sessionId)
+            val shell = synchronized(shellRegistryLock) {
+                if (nmParallel) shellEpochs.remove(sessionId)?.current = false
+                shells.remove(sessionId)
+            }
             // T124a: snapshot belongs to the now-dead shell.
             lastInjectedKeys.remove(sessionId)
             shell?.stop()
-            Log.i(TAG, "[$sessionId] Shell stopped by user")
+            Log.i(TAG, if (nmParallel) "Shell stopped by user" else "[$sessionId] Shell stopped by user") // nanoMuse: omit session id.
         } else {
             // Stop all sessions (legacy/fallback)
-            shells.values.forEach { it.stop() }
-            shells.clear()
+            val oldShells = synchronized(shellRegistryLock) {
+                if (nmParallel) {
+                    shellEpochs.values.forEach { it.current = false }
+                    shellEpochs.clear()
+                }
+                shells.values.toList().also { shells.clear() }
+            }
+            oldShells.forEach { it.stop() }
             lastInjectedKeys.clear()
             ShellExecutor.destroyCurrent()
         }

@@ -38,37 +38,83 @@ object OpenRouterModelsApi {
             cache.load(context, cacheKey)?.let { return@withContext it }
         }
 
-        val request = Request.Builder()
-            .url("https://openrouter.ai/api/v1/models")
-            .header("Authorization", "Bearer $apiKey")
-            .header("HTTP-Referer", "https://github.com/OpenMinis/OpenMinis")
-            .header("X-Title", "nanoMuse App")
-            // [T-android-default-ua] brand outbound /api/v1/models request.
-            .applyUserAgentOverride(null)
-            .build()
+        val request = catalogueRequest(apiKey) // nanoMuse: same host for both catalogue paths
 
-        val response = client.newCall(request).execute()
-        val body = response.body?.string() ?: return@withContext emptyList()
+        // nanoMuse: reuse this existing fetch in the parallel app to retain only
+        // short-lived catalogue price evidence in memory. It is not a dispatch
+        // authorization and the ordinary 7-day model cache is not price evidence.
+        val priceTicket = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            ai.tama.pricing.OpenRouterCatalogueCapture.memory.begin(System.currentTimeMillis()) else null
+        var priceCaptured = false
+        try {
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: return@withContext emptyList()
 
-        if (!response.isSuccessful) {
-            if (context != null && (response.code == 401 || response.code == 403)) {
-                cache.invalidate(context, cacheKey)
+            if (!response.isSuccessful) {
+                if (context != null && (response.code == 401 || response.code == 403)) {
+                    cache.invalidate(context, cacheKey)
+                }
+                return@withContext emptyList()
             }
-            return@withContext emptyList()
-        }
 
-        val models = try {
-            val json = JSONObject(body)
-            val data = json.optJSONArray("data") ?: return@withContext emptyList()
-            parseModels(data)
-        } catch (_: Exception) {
-            return@withContext emptyList()
-        }
+            val (models, priceData) = try {
+                val json = JSONObject(body)
+                val data = json.optJSONArray("data") ?: return@withContext emptyList()
+                parseModels(data) to data
+            } catch (_: Exception) {
+                return@withContext emptyList()
+            }
 
-        val enriched = ModelsDevApi.enrichModels(models)
-        if (context != null) cache.save(context, cacheKey, enriched)
-        enriched
+            val enriched = ModelsDevApi.enrichModels(models)
+            if (context != null) cache.save(context, cacheKey, enriched)
+            if (priceTicket != null) {
+                ai.tama.pricing.OpenRouterCatalogueCapture.memory.finish(priceTicket, priceData)
+                priceCaptured = true
+            }
+            enriched
+        } finally {
+            // A failed or cancelled refresh must not resurrect an older quote.
+            if (priceTicket != null && !priceCaptured)
+                ai.tama.pricing.OpenRouterCatalogueCapture.memory.finish(priceTicket, null)
+        }
     }
+
+    // nanoMuse: the ordinary seven-day model cache contains no price evidence.
+    // Free-only import therefore uses a fresh response and keeps its models and
+    // quotes together, never the process-global snapshot from another request.
+    internal data class FreeCatalogue(
+        val models: List<LLMModel>,
+        val prices: ai.tama.pricing.OpenRouterPricing.Catalogue,
+    )
+
+    internal suspend fun fetchFreeCatalogue(apiKey: String): FreeCatalogue? =
+        fetchFreeCatalogue(catalogueRequest(apiKey), client)
+
+    // nanoMuse: injectable transport for local, credential-free wire tests. The
+    // production entry point above always builds the fixed OpenRouter request.
+    internal suspend fun fetchFreeCatalogue(request: Request, httpClient: OkHttpClient): FreeCatalogue? = withContext(Dispatchers.IO) {
+        val startedAt = System.currentTimeMillis()
+        try {
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body?.string() ?: return@withContext null
+                val data = JSONObject(body).optJSONArray("data") ?: return@withContext null
+                FreeCatalogue(parseModels(data), ai.tama.pricing.OpenRouterPricing.parse(data, startedAt))
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    internal fun catalogueRequest(apiKey: String): Request = Request.Builder() // nanoMuse: also verified by wire tests
+        .url("https://openrouter.ai/api/v1/models")
+        .header("Authorization", "Bearer $apiKey")
+        .header("HTTP-Referer", "https://github.com/OpenMinis/OpenMinis")
+        .header("X-Title", "TAMA AI App")
+        .applyUserAgentOverride(null)
+        .build()
 
     private fun parseModels(data: JSONArray): List<LLMModel> {
         val models = mutableListOf<LLMModel>()

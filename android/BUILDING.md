@@ -143,13 +143,18 @@ xcodebuild -project src/ios/Minis.xcodeproj -scheme Minis \
 
 ## Android
 
+> **TAMA checkout:** the active Android workflow uploads an APK. Do not run it in its current
+> form. The separate no-upload template has not been executed and must be reviewed before use.
+> Agree on private delivery before sharing or installing a test APK. No current Android build is
+> established by the host-only JVM tests.
+
 ### Requirements
 
 | Tool | Version / notes |
 |---|---|
-| JDK | **17** (`sourceCompatibility`/`targetCompatibility` are 17) |
+| JDK | The current Android workflow uses **21**; the app's Java and Kotlin targets are 17 |
 | Android SDK | **compileSdk 36**, targetSdk 35, **minSdk 26** |
-| Android NDK | **r28+** — set `$ANDROID_NDK_HOME`, or install via Android Studio |
+| Android NDK | **27.2.12479018**, pinned by the app and current workflow; set `$ANDROID_NDK_HOME` accordingly |
 | CMake | 3.22.1 (install through the SDK Manager) |
 | Shell tools | `curl`, `tar`, `make`, `awk`, `sed` |
 

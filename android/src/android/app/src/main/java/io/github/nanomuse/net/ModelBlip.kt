@@ -19,7 +19,8 @@ object ModelBlip {
     val DELAYS_MS = longArrayOf(1_000L, 2_000L)
 
     /** The errors the chat retries on the same model: the transport, a transient, a 5xx. */
-    fun isBlip(e: Throwable): Boolean = when (e) {
+    // nanoMuse: a local cost refusal is never a transport blip, even when wrapped.
+    fun isBlip(e: Throwable): Boolean = if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) false else when (e) {
         is LLMError.NetworkError, is LLMError.TransientError -> true
         is LLMError.ProviderError -> FIVE_HUNDRED.containsMatchIn(e.detail)
         is LLMError -> false

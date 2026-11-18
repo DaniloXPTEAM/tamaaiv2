@@ -6,6 +6,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 
 class ProviderReachTest {
     @Test fun `the maintainer's socket text becomes an unreachable chatgpt dot com`() {
@@ -37,6 +38,27 @@ class ProviderReachTest {
         assertNull(ProviderReach.classify(""))
     }
 
+    @Test fun `generic diagnostics are opt in and do not invent an HTTP status for a stream event`() {
+        val body = """{"error":{"message":"Invalid parameter: fixture-secret"}}"""
+        assertNull(ProviderReach.fromHttp(400, body, "api.example", false))
+        val http = ProviderReach.withRequestModel(
+            ProviderReach.fromHttp(400, body, "api.example", false,
+                credentials = listOf("fixture-secret"), includeOtherFailures = true)!!,
+            "wire-model",
+        )
+        assertEquals(ProviderReach.Kind.PROVIDER_ERROR, http.kind)
+        assertEquals(400, http.httpStatus)
+        assertEquals("Invalid parameter: [redacted]", http.originalMessage)
+        assertEquals(http, ProviderReach.classify(ProviderReach.canonical(http)))
+        val stream = ProviderReach.fromHttp(0, body, "api.example", false,
+            credentials = listOf("fixture-secret"), includeOtherFailures = true)!!
+        assertEquals(ProviderReach.Kind.PROVIDER_ERROR, stream.kind)
+        assertNull(stream.httpStatus)
+        assertEquals("Invalid parameter: [redacted]", stream.originalMessage)
+        assertEquals(stream, ProviderReach.classify(ProviderReach.canonical(stream)))
+        assertNull(ProviderReach.fromHttp(200, body, "api.example", false, includeOtherFailures = true))
+    }
+
     @Test fun `the vendor's codes win over the network words`() {
         val region = ProviderReach.classify("""[403] {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported"}}""", "chatgpt.com")!!
         assertEquals(ProviderReach.Kind.REGION_BLOCKED, region.kind)
@@ -46,34 +68,26 @@ class ProviderReachTest {
         assertEquals("api.openai.com", quota.host)
     }
 
-    @Test fun `the side channel keeps what mapHttpError drops`() {
-        ReachSignal.clear()
-        assertNull(ReachSignal.takeFresh())
-        // an API-key 401 is upstream's business
-        ReachSignal.noteHttpError(401, "{\"error\":{\"message\":\"bad key\"}}", "api.openai.com", oauth = false)
-        assertNull(ReachSignal.takeFresh())
-        // the plan's 401 is "sign in again"
-        ReachSignal.noteHttpError(401, "", "chatgpt.com", oauth = true)
-        val out = ReachSignal.takeFresh()!!
-        assertEquals(ProviderReach.Kind.SIGNED_OUT, out.kind)
-        assertNull(ReachSignal.takeFresh()) // consumed
-        // the region page as OpenAI serves it
-        ReachSignal.noteHttpError(403, """{"error":{"code":"unsupported_country_region_territory","message":"not here"}}""", "chatgpt.com", oauth = true)
-        assertEquals(ProviderReach.Kind.REGION_BLOCKED, ReachSignal.takeFresh()!!.kind)
-        // an interception page where JSON was due
-        ReachSignal.noteHttpError(403, "<!DOCTYPE html><html><body>blocked</body></html>", "chatgpt.com", oauth = true)
-        assertEquals(ProviderReach.Kind.UNREACHABLE, ReachSignal.takeFresh()!!.kind)
-        // the plan with nothing left, and OpenAI's own words kept
-        ReachSignal.noteHttpError(429, """{"error":{"code":"usage_limit_reached","message":"Resets in 3 hours."}}""", "chatgpt.com", oauth = true, retryAfter = "7200")
-        val quota = ReachSignal.takeFresh()!!
+    @Test fun `HTTP diagnostics keep the reason from the actual response`() {
+        val auth = ProviderReach.fromHttp(401, "{\"error\":{\"message\":\"bad key\"}}", "api.openai.com", oauth = false)!!
+        assertEquals(ProviderReach.Kind.AUTH_REJECTED, auth.kind)
+        assertEquals("bad key", auth.detail)
+        assertEquals(ProviderReach.Kind.SIGNED_OUT, ProviderReach.fromHttp(401, "", "chatgpt.com", oauth = true)!!.kind)
+        val region = ProviderReach.fromHttp(403, """{"error":{"code":"unsupported_country_region_territory","message":"not here"}}""", "chatgpt.com", oauth = true)!!
+        assertEquals(ProviderReach.Kind.REGION_BLOCKED, region.kind)
+        val interception = ProviderReach.fromHttp(403, "<!DOCTYPE html><html><body>blocked</body></html>", "chatgpt.com", oauth = true)!!
+        assertEquals(ProviderReach.Kind.UNREACHABLE, interception.kind)
+        val quota = ProviderReach.fromHttp(429, """{"error":{"code":"usage_limit_reached","message":"Resets in 3 hours."}}""", "chatgpt.com", oauth = true, retryAfterS = 7200)!!
         assertEquals(ProviderReach.Kind.QUOTA, quota.kind)
-        assertEquals("Resets in 3 hours.", quota.detail)
+        assertEquals("HTTP 429: Resets in 3 hours.", quota.detail)
         assertEquals(7200, quota.retryAfterS)
-        // a burst 429 on the plan is a wait, on an own key it is upstream's "Rate limited"
-        ReachSignal.noteHttpError(429, "{}", "chatgpt.com", oauth = true)
-        assertEquals(ProviderReach.Kind.RATE_LIMITED, ReachSignal.takeFresh()!!.kind)
-        ReachSignal.noteHttpError(429, "{}", "api.deepseek.com", oauth = false)
-        assertNull(ReachSignal.takeFresh())
+        assertEquals(ProviderReach.Kind.RATE_LIMITED, ProviderReach.fromHttp(429, "{}", "chatgpt.com", oauth = true)!!.kind)
+        assertEquals(ProviderReach.Kind.RATE_LIMITED, ProviderReach.fromHttp(429, "{}", "api.deepseek.com", oauth = false)!!.kind)
+        // An echoed prompt or metadata cannot turn a transient rate limit into a spent quota.
+        val echo = """{"error":{"message":"Try again later","metadata":{"prompt":"insufficient_quota"}}}"""
+        assertEquals(ProviderReach.Kind.RATE_LIMITED, ProviderReach.fromHttp(429, echo, "api.deepseek.com", false)!!.kind)
+        val regionEcho = """{"error":{"message":"Access denied","metadata":{"prompt":"unsupported_country_region_territory"}}}"""
+        assertEquals(ProviderReach.Kind.ACCESS_DENIED, ProviderReach.fromHttp(403, regionEcho, "api.example", false)!!.kind)
     }
 
     @Test fun `the canonical line survives a round trip`() {
@@ -99,5 +113,194 @@ class ProviderReachTest {
         assertFalse(ProviderReach.isPlanHost("api.openai.com"))
         assertTrue(ProviderReach.looksLikeHtml("  <!doctype HTML><html>"))
         assertFalse(ProviderReach.looksLikeHtml("{\"a\":1}"))
+    }
+
+    @Test fun `credit limits require a credit response, not an arbitrary forbidden status`() {
+        val credit = """{"error":{"message":"Insufficient credits. Add more credits to continue.","code":402}}"""
+        val r = ProviderReach.fromHttp(402, credit, "openrouter.ai", oauth = false)!!
+        assertEquals(ProviderReach.Kind.NO_CREDIT, r.kind)
+        assertEquals("openrouter.ai", r.host)
+        assertEquals("HTTP 402: Insufficient credits. Add more credits to continue.", r.detail)
+        assertEquals(ProviderReach.Kind.NO_CREDIT, ProviderReach.fromHttp(402, "", "openrouter.ai", oauth = false)!!.kind)
+        assertNull(ProviderReach.fromHttp(402, "", "other.example", oauth = false))
+        assertEquals(ProviderReach.Kind.NO_CREDIT, ProviderReach.fromHttp(403, credit, "openrouter.ai", oauth = false)!!.kind)
+
+        // An unrelated 403 may be a moderation or permission refusal, with no credit diagnosis.
+        val forbidden = """{"error":{"message":"Request blocked by policy","code":403}}"""
+        val denied = ProviderReach.fromHttp(403, forbidden, "openrouter.ai", oauth = false)!!
+        assertEquals(ProviderReach.Kind.ACCESS_DENIED, denied.kind)
+        assertEquals("Request blocked by policy", denied.detail)
+        assertEquals(ProviderReach.Kind.ACCESS_DENIED, ProviderReach.fromHttp(403, "", "openrouter.ai", oauth = false)!!.kind)
+        // A credit phrase in opaque metadata is not the provider's explanation for a policy refusal.
+        val echoedMetadata = """{"error":{"message":"Request blocked by policy","metadata":{"prompt":"insufficient credits"}}}"""
+        assertEquals(ProviderReach.Kind.ACCESS_DENIED, ProviderReach.fromHttp(403, echoedMetadata, "openrouter.ai", oauth = false)!!.kind)
+        assertEquals("forbidden", ProviderReach.fromHttp(403, "forbidden", "openrouter.ai", oauth = false)!!.detail)
+        assertEquals(ProviderReach.Kind.AUTH_REJECTED, ProviderReach.fromHttp(401, "unauthorized", "openrouter.ai", oauth = false)!!.kind)
+        assertEquals(ProviderReach.Kind.SIGNED_OUT, ProviderReach.fromHttp(401, "", "chatgpt.com", oauth = true)!!.kind)
+    }
+
+    @Test fun `stream event codes classify without claiming an HTTP status`() {
+        val quotaBody = """{"error":{"message":"Exceeded your current quota"}}"""
+        val quota = ProviderReach.fromHttp(429, quotaBody, "host", oauth = false, hasHttpStatus = false)!!
+        assertEquals(ProviderReach.Kind.QUOTA, quota.kind)
+        assertNull(quota.httpStatus)
+        assertEquals("Exceeded your current quota", quota.detail)
+        assertEquals(quota, ProviderReach.classify(ProviderReach.canonical(quota)))
+        val httpQuota = ProviderReach.fromHttp(429, quotaBody, "host", oauth = false)!!
+        assertEquals(429, httpQuota.httpStatus)
+        assertEquals("HTTP 429: Exceeded your current quota", httpQuota.detail)
+        val credit = ProviderReach.fromHttp(402, "", "openrouter.ai", oauth = false, hasHttpStatus = false)!!
+        assertEquals(ProviderReach.Kind.NO_CREDIT, credit.kind)
+        assertNull(credit.httpStatus)
+        assertEquals("", credit.detail)
+    }
+
+    @Test fun `new diagnostics survive a reload`() {
+        for (reach in listOf(
+            ProviderReach.fromHttp(402, "", "openrouter.ai", oauth = false)!!,
+            ProviderReach.fromHttp(403, """{"error":{"message":"blocked"}}""", "openrouter.ai", oauth = false)!!,
+            ProviderReach.fromHttp(401, """{"error":{"message":"unauthorized"}}""", "openrouter.ai", oauth = false)!!,
+        )) assertEquals(reach, ProviderReach.classify(ProviderReach.canonical(reach)))
+    }
+
+    @Test fun `redaction removes the actual credential and known key forms before truncation`() {
+        val credential = "fixture-credential-123456"
+        val knownForm = "sk-" + "or-v1-" + "f".repeat(20)
+        val body = """{"error":{"message":"$credential $knownForm"}}"""
+        val safe = ProviderReach.redactBody(body, credential)
+        assertFalse(safe.contains(credential))
+        assertFalse(safe.contains(knownForm))
+        val detail = ProviderReach.fromHttp(401, safe, "openrouter.ai", oauth = false)!!.detail
+        assertTrue(detail.contains("[redacted]"))
+        assertFalse(ProviderReach.canonical(ProviderReach.fromHttp(401, safe, "openrouter.ai", oauth = false)!!).contains(credential))
+    }
+
+    @Test fun `unparsed JSON metadata is not displayed`() {
+        val r = ProviderReach.fromHttp(403, """{"error":{"metadata":{"private":"do not show"}}}""", "openrouter.ai", oauth = false)!!
+        assertEquals("", r.detail)
+        assertEquals("", r.originalMessage)
+    }
+
+    @Test fun `extended detail retains the failing request model and redacted message across reload`() {
+        // The secret is JSON-escaped on the wire, so redaction must also run after decoding.
+        val credential = "fixture-secret"
+        val longMessage = "Request too large, " + "z".repeat(500) + "\\u0066ixture-secret\\nend"
+        val wire = """{"error":{"message":"$longMessage","metadata":{"private":"not a message"}}}"""
+        val reach = ProviderReach.withRequestModel(
+            ProviderReach.fromHttp(413, wire, "API.example", false, credential = credential)!!,
+            "model: α | 你好", credential,
+        )
+        assertEquals("api.example", reach.host)
+        assertEquals("model: α | 你好", reach.modelId)
+        assertTrue(reach.detail.length <= 300)
+        assertTrue(reach.originalMessage.length > 500)
+        assertTrue(reach.originalMessage.contains("[redacted]\nend"))
+        assertFalse(reach.originalMessage.contains(credential))
+        assertFalse(reach.originalMessage.contains("not a message"))
+        val line = ProviderReach.canonical(reach)
+        assertTrue(line.startsWith("nm_reach3:"))
+        assertEquals(reach, ProviderReach.classify(line))
+        assertFalse(ProviderReach.diagnosticMessage(wire, credential).contains(credential))
+        assertEquals("", ProviderReach.diagnosticMessage("""{"error":{"metadata":"private"}}""", credential))
+    }
+
+    @Test fun `extended fields are bounded without splitting unicode and old diagnostics remain readable`() {
+        val huge = "x".repeat(16_383) + "🙂" + "extra"
+        val reach = ProviderReach.withRequestModel(
+            ProviderReach.fromHttp(413, huge, "host", false)!!,
+            "m".repeat(255) + "🙂" + "extra",
+        )
+        assertEquals(16_383, reach.originalMessage.length)
+        assertEquals(255, reach.modelId.length)
+        assertEquals(reach, ProviderReach.classify(ProviderReach.canonical(reach)))
+        val old = ProviderReach.Reach(ProviderReach.Kind.RESPONSE_LIMIT, "[fd00::1]", "old", 2, 128, 400)
+        val oldLine = ProviderReach.canonical(old)
+        assertTrue(oldLine.startsWith("nm_reach2:"))
+        assertEquals(old, ProviderReach.classify(oldLine))
+        assertNull(ProviderReach.classify("nm_reach3:response_limit:2:128:400:1:YQ:Yg:!!!:eA"))
+        assertNull(ProviderReach.classify("nm_reach3:response_limit:2:128:400:1:YQ:Yg:"
+            + "Y".repeat(1025) + ":eA"))
+    }
+
+    @Test fun `oversized requests are distinct from output and quota errors`() {
+        val body = """{"error":{"message":"Request too large for model. Limit 8000, requested 12000."}}"""
+        val r = ProviderReach.fromHttp(413, body, "API.GROQ.COM", oauth = false)!!
+        assertEquals(ProviderReach.Kind.REQUEST_TOO_LARGE, r.kind)
+        assertEquals("api.groq.com", r.host)
+        assertEquals(413, r.httpStatus)
+        assertNull(r.outputLimit)
+        assertEquals(r, ProviderReach.classify(ProviderReach.canonical(r)))
+        assertEquals(ProviderReach.Kind.REQUEST_TOO_LARGE,
+            ProviderReach.fromHttp(400, "Reduce the length of the messages", "host", false)!!.kind)
+        assertEquals(ProviderReach.Kind.REQUEST_TOO_LARGE,
+            ProviderReach.fromHttp(400, "maximum context length exceeded with max_tokens", "host", false)!!.kind)
+        // An unrelated JSON metadata field is never interpreted as the provider explanation.
+        assertNull(ProviderReach.fromHttp(400,
+            """{"error":{"message":"Bad request","metadata":{"prompt":"request too large"}}}""", "host", false))
+    }
+
+    @Test fun `output ceiling uses an explicit upper bound not the first number`() {
+        val examples = listOf(
+            "max_completion_tokens 32768 must be less than or equal to 16384" to 16384,
+            "max_tokens 32768 exceeds the maximum allowed of 16,384" to 16384,
+            "max_completion_tokens cannot be greater than 4096" to 4096,
+            "max_output_tokens 8192 exceeds 2048" to 2048,
+        )
+        for ((message, limit) in examples) {
+            val r = ProviderReach.fromHttp(400, message, "model.example", oauth = false)!!
+            assertEquals(message, ProviderReach.Kind.RESPONSE_LIMIT, r.kind)
+            assertEquals(message, limit, r.outputLimit)
+            assertEquals(r, ProviderReach.classify(ProviderReach.canonical(r)))
+        }
+        val vague = ProviderReach.fromHttp(400, "max_tokens is too large", "model.example", false)!!
+        assertEquals(ProviderReach.Kind.RESPONSE_LIMIT, vague.kind)
+        assertNull(vague.outputLimit)
+        val ambiguous = ProviderReach.fromHttp(400,
+            "max_tokens must be at most 4096 and maximum 8192", "model.example", false)!!
+        assertNull(ambiguous.outputLimit)
+        val malformed = ProviderReach.fromHttp(400, "max_tokens maximum is 16,38", "model.example", false)!!
+        assertNull(malformed.outputLimit)
+        assertNull(ProviderReach.fromHttp(400, "Unsupported parameter: max_tokens", "model.example", false))
+        assertNull(ProviderReach.fromHttp(400, "Unsupported parameter: max_tokens, maximum is 4096", "model.example", false))
+        assertNull(ProviderReach.fromHttp(400, "max_tokens is not supported, maximum is 4096", "model.example", false))
+        assertNull(ProviderReach.fromHttp(400, "max_tokens must be greater than 1", "model.example", false))
+    }
+
+    @Test fun `retry after accepts seconds and HTTP date without overflow`() {
+        val now = Instant.parse("2026-01-01T00:00:00.500Z")
+        assertEquals(2, ProviderReach.retryAfterSeconds("1.1", now))
+        assertEquals(0, ProviderReach.retryAfterSeconds("0", now))
+        assertEquals(60, ProviderReach.retryAfterSeconds("Thu, 1 Jan 2026 00:01:00 GMT", now))
+        assertEquals(0, ProviderReach.retryAfterSeconds("Thu, 1 Jan 2026 00:00:00 GMT", now))
+        assertNull(ProviderReach.retryAfterSeconds("-1", now))
+        assertNull(ProviderReach.retryAfterSeconds("NaN", now))
+        assertNull(ProviderReach.retryAfterSeconds("9999999999999999999999", now))
+        assertNull(ProviderReach.retryAfterSeconds("not a date", now))
+        val invalidHeader = ProviderReach.fromHttp(429, "rate limit", "host", false,
+            retryAfterS = null, retryAfterPresent = true)!!
+        assertTrue(invalidHeader.retryAfterPresent)
+        assertNull(invalidHeader.retryAfterS)
+        assertEquals(invalidHeader, ProviderReach.classify(ProviderReach.canonical(invalidHeader)))
+    }
+
+    @Test fun `server failures and HTML interceptions are separate`() {
+        val server = ProviderReach.fromHttp(503, "Temporary failure", "service.example", oauth = false, retryAfterS = 7)!!
+        assertEquals(ProviderReach.Kind.SERVER_ERROR, server.kind)
+        assertEquals(503, server.httpStatus)
+        assertEquals(7, server.retryAfterS)
+        assertEquals(server, ProviderReach.classify(ProviderReach.canonical(server)))
+        assertEquals(ProviderReach.Kind.UNREACHABLE,
+            ProviderReach.fromHttp(503, "<html>blocked</html>", "service.example", false)!!.kind)
+    }
+
+    @Test fun `new canonical format preserves ipv6 unicode and separators and rejects corruption`() {
+        val r = ProviderReach.Reach(ProviderReach.Kind.RESPONSE_LIMIT, "[fd00::1]", "Limite: 4096 | tente depois", 30, 4096, 400)
+        val line = ProviderReach.canonical(r)
+        assertTrue(line.startsWith("nm_reach2:"))
+        assertEquals(r, ProviderReach.classify(line))
+        val blank = ProviderReach.fromHttp(413, "", "", false)!!
+        assertEquals(blank, ProviderReach.classify(ProviderReach.canonical(blank)))
+        assertNull(ProviderReach.classify("nm_reach2:response_limit:garbage::::"))
+        assertNull(ProviderReach.classify("nm_reach2:response_limit:0:0:400::"))
     }
 }

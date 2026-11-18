@@ -95,7 +95,7 @@ object PromptDiet {
             "a `passthrough` envelope (OpenAI-compatible providers only). For image_output models pass `prompt`, " +
             "`n`, `size`, `quality`, or Gemini's `generation_config`. The result may carry `warnings` and " +
             "`applied_extras`. `--help` has the full usage.",
-        "- minis-config" to "- minis-config: read or change nanoMuse settings. `minis-config --help` lists the " +
+        "- minis-config" to "- minis-config: read or change TAMA AI settings. `minis-config --help` lists the " +
             "subcommands, `topic-help <topic>` explains one area; for array fields (`models`, `groups`, " +
             "`envvars`, `defaults.agentLoopEntries`) `get` takes `--filter <keywords>` and " +
             "`--page <N> --page-size <N>` (default 20, max 100), so read a subset rather than the whole list. " +

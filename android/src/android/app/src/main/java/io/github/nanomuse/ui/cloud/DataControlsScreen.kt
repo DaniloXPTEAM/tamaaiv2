@@ -148,7 +148,7 @@ fun DataControlsScreen(
             Text(
                 text = stringResource(R.string.nm_data_privacy),
                 style = MaterialTheme.typography.bodySmall,
-                color = MuseTones.action,
+                color = MuseTones.accent,
                 modifier = Modifier
                     .padding(horizontal = 32.dp)
                     .clickable { openExternalUrl(context, privacy) }

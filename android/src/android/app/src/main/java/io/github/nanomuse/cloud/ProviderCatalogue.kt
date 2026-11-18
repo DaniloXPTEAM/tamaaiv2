@@ -14,6 +14,17 @@ import java.util.Locale
  * `vision` (the hands' screen), `image` (pictures), `video` (clips). Facts, not opinions: the
  * app says what each covers and recommends none.
  */
+data class CatalogueLimits(
+    val freeTpm: Int? = null,
+    val maxOutput: Int? = null,
+    val context: Int? = null,
+)
+
+data class CatalogueModel(
+    val capabilities: Set<String> = emptySet(),
+    val limits: CatalogueLimits = CatalogueLimits(),
+)
+
 data class CatalogueProvider(
     val id: String,
     val name: String,
@@ -44,6 +55,10 @@ data class CatalogueProvider(
      * `x-opencode-session`); [io.github.nanomuse.net.OpenCodeSession] sends it. Null for the rest.
      */
     val sessionHeader: String? = null,
+    /** Optional, observed limits, not a guarantee for every account or plan. */
+    val limits: CatalogueLimits = CatalogueLimits(),
+    /** Exact model IDs only; an unknown model never inherits another model's capabilities. */
+    val models: Map<String, CatalogueModel> = emptyMap(),
 ) {
     fun displayName(chinese: Boolean): String = if (chinese && nameZh.isNotBlank()) nameZh else name
     fun note(chinese: Boolean): String = if (chinese && noteZh.isNotBlank()) noteZh else note
@@ -155,7 +170,26 @@ object ProviderCatalogue {
             noteZh = o.optString("note_zh"),
             verified = o.optString("verified"),
             sessionHeader = o.optString("session_header").takeIf { it.isNotBlank() },
+            limits = limits(o.optJSONObject("limits")),
+            models = o.optJSONObject("models")?.let { models ->
+                models.keys().asSequence().mapNotNull { id ->
+                    val model = models.optJSONObject(id) ?: return@mapNotNull null
+                    id to CatalogueModel(
+                        capabilities = strings(model.optJSONArray("capabilities")).toSet(),
+                        limits = limits(model.optJSONObject("limits") ?: model),
+                    )
+                }.toMap()
+            } ?: emptyMap(),
         )
+    }
+
+    private fun limits(o: JSONObject?): CatalogueLimits {
+        fun positive(key: String): Int? {
+            val number = o?.opt(key) as? Number ?: return null
+            val value = number.toLong()
+            return value.takeIf { it in 1L..Int.MAX_VALUE.toLong() && number.toDouble() == it.toDouble() }?.toInt()
+        }
+        return CatalogueLimits(positive("free_tpm"), positive("max_output"), positive("context"))
     }
 
     private fun strings(arr: JSONArray?): List<String> =

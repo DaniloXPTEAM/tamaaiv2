@@ -7,6 +7,7 @@ import androidx.browser.customtabs.CustomTabsIntent
 import com.openminis.app.BuildConfig
 import com.openminis.app.data.repository.ProviderRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive // nanoMuse
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -89,8 +90,10 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
          */
         suspend fun login(context: Context, instanceId: String, providerRepository: ProviderRepository): String {
             val manager = ClaudeOAuthManager(context, instanceId)
-            val token = manager.performLogin(context)
-            providerRepository.saveApiKey(instanceId, token)
+            // nanoMuse: the parallel login commits bundle and key together, not after returning.
+            val ticket = manager.nmBeginLogin()
+            val token = manager.nmPerformLogin(context, ticket, providerRepository)
+            if (ticket == null) providerRepository.saveApiKey(instanceId, token)
             return token
         }
     }
@@ -119,34 +122,75 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
     override val redirectPath = "/callback"
     override val scopes = "org:create_api_key user:profile user:inference"
 
+    // nanoMuse: keep PKCE/state per parallel attempt instead of sharing the
+    // instance's preference keys between two open browser flows.
+    private class NmAuthorization(val url: String, val verifier: String, val state: String)
+
+    private fun nmAuthorization(): NmAuthorization {
+        val (verifier, challenge) = generatePKCE(byteLength = 96)
+        val state = generateState()
+        val url = "$authURL?" + listOf(
+            "client_id=$clientId",
+            "redirect_uri=${Uri.encode(redirectUri)}",
+            "response_type=code",
+            "scope=${Uri.encode(scopes)}",
+            "state=$state",
+            "code_challenge=$challenge",
+            "code_challenge_method=S256",
+        ).joinToString("&")
+        return NmAuthorization(url, verifier, state)
+    }
+
     /**
      * Perform the full OAuth login flow (mirrors OpenRouterOAuthManager.login pattern).
      * Returns the access token. Throws on failure.
      */
-    suspend fun performLogin(context: Context): String {
+    suspend fun performLogin(context: Context): String = nmPerformLogin(context, nmBeginLogin(), null)
+
+    // nanoMuse: keep this attempt's identity through the browser and token exchange.
+    private suspend fun nmPerformLogin(
+        context: Context,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket?,
+        repository: ProviderRepository?,
+    ): String {
         Log.i(TAG, "=== Anthropic OAuth login started (instance: $instanceId) ===")
 
-        callbackServer?.stop()
-        callbackServer = null
+        if (ticket == null) {
+            callbackServer?.stop()
+            callbackServer = null
+        }
+        // nanoMuse: parallel attempts own their server; never stop a newer one
+        // through the legacy companion-object field.
+        var attemptServer: OAuthCallbackServer? = null
 
-        // Generate PKCE and state (saved for later token exchange)
-        val authUrl = buildAuthorizationUrl()
+        // nanoMuse: the parallel flow holds its own verifier and state in memory.
+        val authorization = if (ticket != null) nmAuthorization() else null
+        val authUrl = authorization?.url ?: buildAuthorizationUrl()
+        nmRequireLoginCurrent(ticket)
 
         val accessToken = withContext(Dispatchers.IO) {
             // Step 1: Wait for callback code
             val (code, state) = suspendCancellableCoroutine<Pair<String, String?>> { cont ->
-                val server = OAuthCallbackServer(callbackPort) { receivedCode, receivedState ->
+                val server = OAuthCallbackServer(callbackPort,
+                    expectedPath = if (ticket != null) redirectPath else null,
+                    expectedState = authorization?.state,
+                    startOrder = ticket?.order,
+                    mayStart = { ticket == null || (cont.isActive && ai.tama.router.OAuthLoginAttempts.isCurrent(ticket)) },
+                ) { receivedCode, receivedState ->
                     if (cont.isActive) {
                         cont.resume(receivedCode to receivedState)
                     }
                 }
-                callbackServer = server
+                if (ticket != null) {
+                    server.onExternalCancel = { cont.cancel(kotlinx.coroutines.CancellationException("OAuth callback cancelled")) }
+                    attemptServer = server
+                } else callbackServer = server
                 server.start()
                 Log.i(TAG, "Callback server started on port $callbackPort")
 
                 cont.invokeOnCancellation {
                     server.stop()
-                    callbackServer = null
+                    if (ticket == null && callbackServer === server) callbackServer = null
                 }
 
                 // Open auth URL in Chrome Custom Tab (in-app browser). Do NOT set
@@ -160,18 +204,23 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
                 Log.i(TAG, "Opened Custom Tab for Anthropic authorization")
             }
 
-            callbackServer?.stop()
-            callbackServer = null
+            if (ticket != null) attemptServer?.stop() else {
+                callbackServer?.stop()
+                callbackServer = null
+            }
             Log.i(TAG, "Callback received — code length: ${code.length}")
 
-            // Step 2: Validate state (CSRF protection)
-            val savedState = loadOAuthString("state")
-            if (state != null && state != savedState) {
+            // nanoMuse: require this attempt's state in the parallel callback.
+            val savedState = authorization?.state ?: loadOAuthString("state")
+            if ((ticket != null && (state == null || state != savedState)) ||
+                (ticket == null && state != null && state != savedState)) {
                 throw Exception("OAuth state mismatch — possible CSRF attack")
             }
 
+            // nanoMuse: refuse an already superseded attempt before the exchange.
+            nmRequireLoginCurrent(ticket)
             // Step 3: Exchange code for tokens (JSON body, NOT form-urlencoded)
-            exchangeCodeJson(code)
+            exchangeCodeJson(code, ticket, repository, authorization)
         }
 
         Log.i(TAG, "=== Anthropic OAuth login complete (instance: $instanceId) ===")
@@ -182,14 +231,20 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
      * Exchange authorization code for tokens using JSON body.
      * Anthropic requires application/json, NOT form-urlencoded.
      */
-    private fun exchangeCodeJson(code: String): String {
+    // nanoMuse: the completion must still belong to the account that opened the browser.
+    private suspend fun exchangeCodeJson(
+        code: String,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket?,
+        repository: ProviderRepository?,
+        authorization: NmAuthorization?,
+    ): String {
         val body = JSONObject().apply {
             put("grant_type", "authorization_code")
             put("client_id", clientId)
             put("code", code)
             put("redirect_uri", redirectUri)
-            put("code_verifier", loadOAuthString("verifier") ?: "")
-            put("state", loadOAuthString("state") ?: "")
+            put("code_verifier", authorization?.verifier ?: loadOAuthString("verifier") ?: "")
+            put("state", authorization?.state ?: loadOAuthString("state") ?: "")
         }
 
         Log.d(TAG, "Token exchange: POST $tokenURL")
@@ -205,7 +260,8 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
 
         if (responseCode !in 200..299) {
             Log.e(TAG, "Token exchange failed: $responseCode ${OAuthManager.sanitizeBody(responseBody)}")
-            throw Exception("Token exchange failed ($responseCode): $responseBody")
+            // nanoMuse: an untrusted OAuth body can echo secrets to the UI or logcat.
+            throw Exception(if (nmParallelAuth) "Token exchange failed ($responseCode)" else "Token exchange failed ($responseCode): $responseBody")
         }
 
         val json = JSONObject(responseBody)
@@ -219,7 +275,9 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
         if (expiresIn > 0) {
             json.put("expire_at", System.currentTimeMillis() + expiresIn * 1000)
         }
-        saveOAuthString("tokens", json.toString())
+        // nanoMuse: reject stale/cancelled completions and mirror the key in the same transaction.
+        if (ticket != null) nmCommitLogin(ticket, repository, json)
+        else nmChangeOAuthAccount { saveOAuthString("tokens", json.toString()) }
 
         Log.i(TAG, "Token exchange successful. Expires in ${expiresIn}s, has refresh: ${json.has("refresh_token")}")
         return accessToken
@@ -251,10 +309,20 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
      * stored token was updated in the meantime. This matches iOS's actor-
      * serialized refresh path.
      */
-    suspend fun refreshTokenClassified(): RefreshOutcome = withContext(Dispatchers.IO) {
+    suspend fun refreshTokenClassified(): RefreshOutcome = nmRefreshTokenClassified(null)
+
+    // nanoMuse: a caller waiting for the mutex may already belong to an old account.
+    private suspend fun nmRefreshTokenClassified(expected: NmOAuthSnapshot?): RefreshOutcome = withContext(Dispatchers.IO) {
         val mutex = mutexFor(instanceId)
         mutex.withLock {
-            val stored = loadStoredTokens() ?: return@withLock RefreshOutcome.NO_TOKEN
+            if (nmParallelAuth && expected != null && !nmIfOAuthCurrent(expected) {}) {
+                // nanoMuse: another refresh of the same account can satisfy this waiter.
+                return@withLock if (nmRefreshWasCoalesced(expected)) RefreshOutcome.SUCCESS else RefreshOutcome.TRANSIENT
+            }
+            // Reuse the caller's snapshot, never pick up a replacement account after waiting.
+            val nmSnapshot = if (nmParallelAuth) expected ?: nmOAuthSnapshot() else null
+            val stored = (if (nmSnapshot != null) nmSnapshot.storedTokens() else loadStoredTokens())
+                ?: return@withLock RefreshOutcome.NO_TOKEN
             val refreshTokenValue = stored.optString("refresh_token", "")
                 .ifEmpty { return@withLock RefreshOutcome.NO_TOKEN }
 
@@ -266,6 +334,9 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
             val priorExpireAt = stored.optLong("expire_at", 0)
             val freshCheck = loadStoredTokens()?.optLong("expire_at", 0) ?: 0
             if (freshCheck > priorExpireAt && freshCheck > System.currentTimeMillis()) {
+                // nanoMuse: another account's token must not count as our refresh.
+                if (nmSnapshot != null && !nmIfOAuthCurrent(nmSnapshot, compareTokens = false) {})
+                    return@withLock RefreshOutcome.TRANSIENT
                 Log.d(TAG, "Refresh skipped — fresher token already present (concurrent refresh coalesced)")
                 return@withLock RefreshOutcome.SUCCESS
             }
@@ -296,7 +367,12 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
                     if (expiresIn > 0) {
                         json.put("expire_at", System.currentTimeMillis() + expiresIn * 1000)
                     }
-                    saveOAuthString("tokens", json.toString())
+                    // nanoMuse: reject a late result after another login, logout or refresh.
+                    if (nmSnapshot != null) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (!nmIfOAuthCurrent(nmSnapshot) { saveOAuthString("tokens", json.toString()) })
+                            return@withLock RefreshOutcome.TRANSIENT
+                    } else saveOAuthString("tokens", json.toString())
                     Log.i(TAG, "Token refresh successful. Expires in ${expiresIn}s")
                     return@withLock RefreshOutcome.SUCCESS
                 }
@@ -307,16 +383,22 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
                     bodyLower.contains("invalid_grant") ||
                     bodyLower.contains("refresh_token")
                 if (isInvalidGrant) {
+                    // nanoMuse: invalid_grant from an old request cannot log out a newer account.
+                    if (nmSnapshot != null) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (!nmLogoutIfCurrent(nmSnapshot)) return@withLock RefreshOutcome.TRANSIENT
+                    } else logout()
                     Log.e(TAG, "Refresh token invalid ($responseCode): ${OAuthManager.sanitizeBody(responseBody)} — clearing credentials")
-                    logout()
                     return@withLock RefreshOutcome.INVALID_GRANT
                 }
                 // 5xx or unexpected code — keep credentials, let caller retry.
                 Log.w(TAG, "Token refresh transient failure ($responseCode): ${OAuthManager.sanitizeBody(responseBody)} — keeping token")
                 return@withLock RefreshOutcome.TRANSIENT
             } catch (e: Exception) {
-                // Network failure (IOException / SocketTimeout / etc). Keep credentials.
-                Log.w(TAG, "Token refresh transient error — keeping token", e)
+                // nanoMuse: preserve cancellation and don't log untrusted exception text.
+                if (nmParallelAuth && e is kotlinx.coroutines.CancellationException) throw e
+                if (nmParallelAuth) Log.w(TAG, "Token refresh transient error — keeping token")
+                else Log.w(TAG, "Token refresh transient error — keeping token", e)
                 return@withLock RefreshOutcome.TRANSIENT
             }
         }
@@ -332,25 +414,28 @@ class ClaudeOAuthManager(context: Context, instanceId: String) : OAuthManager(co
      * caring about the refresh outcome details.
      */
     override suspend fun validAccessToken(): String? = withContext(Dispatchers.IO) {
-        val stored = loadStoredTokens() ?: return@withContext null
+        // nanoMuse: don't return the old account's token after a suspended refresh.
+        val nmSnapshot = if (nmParallelAuth) nmOAuthSnapshot() else null
+        // A manual bearer is a different account and must take precedence in the parallel app.
+        nmSnapshot?.bearer?.takeIf { it.isNotEmpty() }?.let {
+            return@withContext if (nmIfOAuthCurrent(nmSnapshot) {}) it else null
+        }
+        val stored = (if (nmSnapshot != null) nmSnapshot.storedTokens() else loadStoredTokens())
+            ?: return@withContext null
         val token = stored.optString("access_token", "").ifEmpty { return@withContext null }
         val expireAt = stored.optLong("expire_at", 0)
         val now = System.currentTimeMillis()
 
         val needsRefresh = expireAt > 0 && (expireAt - now) <= REFRESH_BUFFER_MS
-        if (!needsRefresh) return@withContext token
+        if (!needsRefresh) return@withContext if (nmSnapshot == null || nmIfOAuthCurrent(nmSnapshot) {}) token else null
 
-        when (refreshTokenClassified()) {
-            RefreshOutcome.SUCCESS ->
-                loadStoredTokens()?.optString("access_token", "")?.ifEmpty { null }
-            RefreshOutcome.INVALID_GRANT -> {
-                // logout() already ran inside refreshTokenClassified.
-                null
-            }
+        when (if (nmSnapshot != null) nmRefreshTokenClassified(nmSnapshot) else refreshTokenClassified()) {
+            RefreshOutcome.SUCCESS -> if (nmSnapshot != null) nmRefreshedAccessToken(nmSnapshot)
+                else loadStoredTokens()?.optString("access_token", "")?.ifEmpty { null }
+            RefreshOutcome.INVALID_GRANT -> null
             RefreshOutcome.TRANSIENT -> {
-                // Old token still usable if not actually expired. If it IS
-                // expired, surface null so the caller can bubble up auth error.
-                if (expireAt > 0 && now >= expireAt) null else token
+                if ((nmSnapshot != null && !nmIfOAuthCurrent(nmSnapshot) {}) ||
+                    (expireAt > 0 && now >= expireAt)) null else token
             }
             RefreshOutcome.NO_TOKEN -> null
         }

@@ -1,5 +1,7 @@
 package com.openminis.app.tools
 
+import ai.tama.tools.*
+
 import com.openminis.app.browser.BrowserAction
 import com.openminis.app.data.model.AgentToolDefinition
 import com.openminis.app.data.model.AgentToolParam
@@ -35,6 +37,7 @@ object AgentTools {
         if (supportsImageInput || visionGroupConfigured) {
             add(ReadImageTool.definition())
         }
+        add(ImageGenerationTool.definition())
         add(browserUseDefinition())
         if (memoryEnabled) {
             add(memoryWriteDefinition())

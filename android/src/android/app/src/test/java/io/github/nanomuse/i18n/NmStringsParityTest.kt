@@ -91,11 +91,15 @@ class NmStringsParityTest {
         }
     }
 
-    /** The house style: no em dashes in copy; a comma, colon or full stop instead. 非营利 is the word, not 非盈利. */
-    @Test fun `no em dashes and no 非盈利 in the strings`() {
+    /** House style disallows em dashes, except the verbatim PT-BR image error required by T8. */
+    @Test fun `no other em dashes and no 非盈利 in the strings`() {
         val commentRx = Regex("""<!--.*?-->""", RegexOption.DOT_MATCHES_ALL)
+        val requiredImageError = "<string name=\"nm_image_provider_missing\">" +
+            "Nenhum provedor de imagem configurado — abra Configurações → Modelos de imagem e vídeo</string>"
         for (f in localeFiles() + File(res, "values/nm_strings.xml")) {
-            val body = f.readText().replace(commentRx, "")
+            val original = f.readText().replace(commentRx, "")
+            if (f.locale == "values-pt-rBR") assertTrue("T8 requires this exact message", requiredImageError in original)
+            val body = if (f.locale == "values-pt-rBR") original.replace(requiredImageError, "") else original
             val dashed = Regex("""name="([^"]+)"[^<]*—""").findAll(body).map { it.groupValues[1] }.toList()
             assertEquals("${f.locale}: em dash in ${dashed.take(8)}", emptyList<String>(), dashed)
             assertTrue("${f.locale}: em dash in a plural or array item", '—' !in body)

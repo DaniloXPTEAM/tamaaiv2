@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import com.openminis.app.data.repository.ProviderRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive // nanoMuse
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -70,8 +71,10 @@ class KimiOAuthManager(
             onDeviceCode: (KimiDeviceFlow.DeviceAuthorization) -> Unit,
         ): String {
             val manager = KimiOAuthManager(context, instanceId)
-            val token = manager.performDeviceLogin(onDeviceCode)
-            providerRepository.saveApiKey(instanceId, token)
+            // nanoMuse: one attempt owns both the bundle and API-key mirror.
+            val ticket = manager.nmBeginLogin()
+            val token = manager.nmPerformDeviceLogin(onDeviceCode, ticket, providerRepository)
+            if (ticket == null) providerRepository.saveApiKey(instanceId, token)
             return token
         }
     }
@@ -137,8 +140,10 @@ class KimiOAuthManager(
             if (status !in 200..299) {
                 val desc = json.optString("error_description", "")
                     .ifEmpty { json.optString("error", "device authorization failed") }
-                Log.e(TAG, "device_authorization failed: $desc")
-                throw Exception("Kimi device authorization failed: $desc")
+                // nanoMuse: the server's description is untrusted and may echo a secret.
+                if (nmParallelAuth) Log.e(TAG, "device_authorization failed ($status)")
+                else Log.e(TAG, "device_authorization failed: $desc")
+                throw Exception(if (nmParallelAuth) "Kimi device authorization failed ($status)" else "Kimi device authorization failed: $desc")
             }
             KimiDeviceFlow.parseDeviceAuthorization(json)
                 ?: throw Exception("Kimi device authorization response missing required fields")
@@ -147,12 +152,20 @@ class KimiOAuthManager(
 
     /** Step 2: poll the token endpoint until approval / terminal failure. */
     suspend fun pollForToken(auth: KimiDeviceFlow.DeviceAuthorization): String =
-        withContext(Dispatchers.IO) {
+        nmPollForToken(auth, nmBeginLogin(), null)
+
+    // nanoMuse: keep the attempt captured before the device authorization request.
+    private suspend fun nmPollForToken(
+        auth: KimiDeviceFlow.DeviceAuthorization,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket?,
+        repository: ProviderRepository?,
+    ): String = withContext(Dispatchers.IO) {
             val deadline = System.currentTimeMillis() + auth.expiresInSeconds * 1000
             var interval = auth.intervalSeconds
             while (System.currentTimeMillis() < deadline) {
                 // Sleep first, then poll (RFC 8628 §3.4 + iOS parity).
                 delay(interval * 1000)
+                nmRequireLoginCurrent(ticket) // nanoMuse: do not poll for a superseded attempt.
                 val (status, json) = postForm(
                     tokenURL,
                     mapOf(
@@ -163,7 +176,7 @@ class KimiOAuthManager(
                 )
                 when (val result = KimiDeviceFlow.classifyPoll(json, status in 200..299)) {
                     is KimiDeviceFlow.PollResult.Success -> {
-                        persistLoginSuccess(result)
+                        persistLoginSuccess(result, ticket, repository) // nanoMuse: guarded against a later account.
                         Log.i(TAG, "Device login success (instance: $instanceId)")
                         return@withContext result.accessToken
                     }
@@ -172,12 +185,13 @@ class KimiOAuthManager(
                         interval = KimiDeviceFlow.bumpedInterval(interval)
                         Log.d(TAG, "slow_down — interval now ${interval}s")
                     }
+                    // nanoMuse: don't put untrusted descriptions in persistent error surfaces.
                     is KimiDeviceFlow.PollResult.Denied ->
-                        throw Exception("Kimi login denied: ${result.description}")
+                        throw Exception(if (nmParallelAuth) "Kimi login denied" else "Kimi login denied: ${result.description}")
                     is KimiDeviceFlow.PollResult.Expired ->
-                        throw Exception("Kimi login code expired: ${result.description}")
+                        throw Exception(if (nmParallelAuth) "Kimi login code expired" else "Kimi login code expired: ${result.description}")
                     is KimiDeviceFlow.PollResult.Fatal ->
-                        throw Exception("Kimi login failed: ${result.description}")
+                        throw Exception(if (nmParallelAuth) "Kimi login failed" else "Kimi login failed: ${result.description}")
                 }
             }
             throw Exception("Kimi login timed out")
@@ -186,14 +200,28 @@ class KimiOAuthManager(
     /** Steps 1+2 chained; [onDeviceCode] surfaces the code/URL to the UI. */
     suspend fun performDeviceLogin(
         onDeviceCode: (KimiDeviceFlow.DeviceAuthorization) -> Unit,
+    ): String = nmPerformDeviceLogin(onDeviceCode, nmBeginLogin(), null)
+
+    // nanoMuse: capture the attempt before either device-code request can suspend.
+    private suspend fun nmPerformDeviceLogin(
+        onDeviceCode: (KimiDeviceFlow.DeviceAuthorization) -> Unit,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket?,
+        repository: ProviderRepository?,
     ): String {
         val auth = requestDeviceAuthorization()
-        Log.i(TAG, "Device code issued — user_code=${auth.userCode} interval=${auth.intervalSeconds}s expires=${auth.expiresInSeconds}s")
+        nmRequireLoginCurrent(ticket)
+        // nanoMuse: the device code is shown to the user, never written to logs.
+        if (nmParallelAuth) Log.i(TAG, "Device code issued")
+        else Log.i(TAG, "Device code issued — user_code=${auth.userCode} interval=${auth.intervalSeconds}s expires=${auth.expiresInSeconds}s")
         withContext(Dispatchers.Main) { onDeviceCode(auth) }
-        return pollForToken(auth)
+        return nmPollForToken(auth, ticket, repository)
     }
 
-    private fun persistLoginSuccess(result: KimiDeviceFlow.PollResult.Success) {
+    private suspend fun persistLoginSuccess(
+        result: KimiDeviceFlow.PollResult.Success,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket?,
+        repository: ProviderRepository?,
+    ) {
         val json = JSONObject().apply {
             put("access_token", result.accessToken)
             result.refreshToken?.let { put("refresh_token", it) }
@@ -205,15 +233,27 @@ class KimiOAuthManager(
             put("device_id", UUID.randomUUID().toString())
             put("last_refresh", System.currentTimeMillis())
         }
-        saveOAuthString("tokens", json.toString())
+        // nanoMuse: reject a late poll result and update the mirror with the bundle.
+        if (ticket != null) nmCommitLogin(ticket, repository, json)
+        else nmChangeOAuthAccount { saveOAuthString("tokens", json.toString()) }
     }
 
     // ── Refresh (single-flight + compare-before-delete) ─────────────────
 
-    suspend fun refreshTokenClassified(): RefreshOutcome = withContext(Dispatchers.IO) {
+    suspend fun refreshTokenClassified(): RefreshOutcome = nmRefreshTokenClassified(null)
+
+    // nanoMuse: a caller waiting for the mutex may already belong to an old account.
+    private suspend fun nmRefreshTokenClassified(expected: NmOAuthSnapshot?): RefreshOutcome = withContext(Dispatchers.IO) {
         val mutex = mutexFor(instanceId)
         mutex.withLock {
-            val stored = loadStoredTokens() ?: return@withLock RefreshOutcome.NO_TOKEN
+            if (nmParallelAuth && expected != null && !nmIfOAuthCurrent(expected) {}) {
+                // nanoMuse: another refresh of the same account can satisfy this waiter.
+                return@withLock if (nmRefreshWasCoalesced(expected)) RefreshOutcome.SUCCESS else RefreshOutcome.TRANSIENT
+            }
+            // Reuse the caller's snapshot, never pick up a replacement account after waiting.
+            val nmSnapshot = if (nmParallelAuth) expected ?: nmOAuthSnapshot() else null
+            val stored = (if (nmSnapshot != null) nmSnapshot.storedTokens() else loadStoredTokens())
+                ?: return@withLock RefreshOutcome.NO_TOKEN
             val refreshTokenValue = stored.optString("refresh_token", "")
                 .ifEmpty { return@withLock RefreshOutcome.NO_TOKEN }
 
@@ -223,6 +263,9 @@ class KimiOAuthManager(
             val priorExpireAt = stored.optLong("expire_at", 0)
             val freshCheck = loadStoredTokens()?.optLong("expire_at", 0) ?: 0
             if (freshCheck > priorExpireAt && freshCheck > System.currentTimeMillis()) {
+                // nanoMuse: another account's token must not count as our refresh.
+                if (nmSnapshot != null && !nmIfOAuthCurrent(nmSnapshot, compareTokens = false) {})
+                    return@withLock RefreshOutcome.TRANSIENT
                 Log.d(TAG, "Refresh skipped — fresher token already present (coalesced)")
                 return@withLock RefreshOutcome.SUCCESS
             }
@@ -248,7 +291,12 @@ class KimiOAuthManager(
                     // Carry the device identity + stamp last_refresh.
                     json.put("device_id", stored.optString("device_id", UUID.randomUUID().toString()))
                     json.put("last_refresh", System.currentTimeMillis())
-                    saveOAuthString("tokens", json.toString())
+                    // nanoMuse: reject a late result after another login, logout or refresh.
+                    if (nmSnapshot != null) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (!nmIfOAuthCurrent(nmSnapshot) { saveOAuthString("tokens", json.toString()) })
+                            return@withLock RefreshOutcome.TRANSIENT
+                    } else saveOAuthString("tokens", json.toString())
                     Log.i(TAG, "Token refresh successful (expires in ${expiresIn}s)")
                     return@withLock RefreshOutcome.SUCCESS
                 }
@@ -266,19 +314,28 @@ class KimiOAuthManager(
                     // the one this failed request used. A concurrent winner
                     // may have rotated it — deleting then would destroy the
                     // fresh login (iOS 36d506ca).
-                    val currentStored = loadStoredTokens()?.optString("refresh_token", "")
-                    if (!KimiDeviceFlow.shouldDeleteAfterInvalidGrant(refreshTokenValue, currentStored)) {
-                        Log.w(TAG, "Stale invalid_grant ignored — refresh token was rotated concurrently; keeping new credentials")
-                        return@withLock RefreshOutcome.SUCCESS
+                    // nanoMuse: compare the complete bundle and account, not only its refresh token.
+                    if (nmSnapshot != null) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (!nmLogoutIfCurrent(nmSnapshot)) return@withLock RefreshOutcome.TRANSIENT
+                    } else {
+                        val currentStored = loadStoredTokens()?.optString("refresh_token", "")
+                        if (!KimiDeviceFlow.shouldDeleteAfterInvalidGrant(refreshTokenValue, currentStored)) {
+                            Log.w(TAG, "Stale invalid_grant ignored — refresh token was rotated concurrently; keeping new credentials")
+                            return@withLock RefreshOutcome.SUCCESS
+                        }
+                        logout()
                     }
                     Log.e(TAG, "Refresh token invalid — clearing credentials")
-                    logout()
                     return@withLock RefreshOutcome.INVALID_GRANT
                 }
                 Log.w(TAG, "Token refresh transient failure — keeping token")
                 return@withLock RefreshOutcome.TRANSIENT
             } catch (e: Exception) {
-                Log.w(TAG, "Token refresh transient error — keeping token: ${e.message}")
+                // nanoMuse: preserve cancellation and don't log untrusted exception text.
+                if (nmParallelAuth && e is kotlinx.coroutines.CancellationException) throw e
+                if (nmParallelAuth) Log.w(TAG, "Token refresh transient error — keeping token")
+                else Log.w(TAG, "Token refresh transient error — keeping token: ${e.message}")
                 return@withLock RefreshOutcome.TRANSIENT
             }
         }
@@ -286,22 +343,29 @@ class KimiOAuthManager(
 
     /** 5-minute-buffered valid token (Claude parity, overrides the 4h base). */
     override suspend fun validAccessToken(): String? = withContext(Dispatchers.IO) {
-        loadManualBearerToken()?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
-        val stored = loadStoredTokens() ?: return@withContext null
+        // nanoMuse: don't return the old account's token after a suspended refresh.
+        val nmSnapshot = if (nmParallelAuth) nmOAuthSnapshot() else null
+        val manual = if (nmSnapshot != null) nmSnapshot.bearer else loadManualBearerToken()
+        // nanoMuse: a replaced bearer must not be returned from an old snapshot.
+        manual?.takeIf { it.isNotEmpty() }?.let {
+            return@withContext if (nmSnapshot == null || nmIfOAuthCurrent(nmSnapshot) {}) it else null
+        }
+        val stored = (if (nmSnapshot != null) nmSnapshot.storedTokens() else loadStoredTokens())
+            ?: return@withContext null
         val token = stored.optString("access_token", "").ifEmpty { return@withContext null }
         val expireAt = stored.optLong("expire_at", 0)
         val now = System.currentTimeMillis()
 
         val needsRefresh = stored.optString("refresh_token", "").isNotEmpty() &&
             expireAt > 0 && (expireAt - now) <= REFRESH_BUFFER_MS
-        if (!needsRefresh) return@withContext token
+        if (!needsRefresh) return@withContext if (nmSnapshot == null || nmIfOAuthCurrent(nmSnapshot) {}) token else null
 
-        when (refreshTokenClassified()) {
-            RefreshOutcome.SUCCESS ->
-                loadStoredTokens()?.optString("access_token", "")?.ifEmpty { null }
-            RefreshOutcome.INVALID_GRANT -> null // logout() already ran
+        when (if (nmSnapshot != null) nmRefreshTokenClassified(nmSnapshot) else refreshTokenClassified()) {
+            RefreshOutcome.SUCCESS -> if (nmSnapshot != null) nmRefreshedAccessToken(nmSnapshot)
+                else loadStoredTokens()?.optString("access_token", "")?.ifEmpty { null }
+            RefreshOutcome.INVALID_GRANT -> null
             RefreshOutcome.TRANSIENT ->
-                if (expireAt in 1..now) null else token
+                if ((nmSnapshot != null && !nmIfOAuthCurrent(nmSnapshot) {}) || expireAt in 1..now) null else token
             RefreshOutcome.NO_TOKEN -> null
         }
     }

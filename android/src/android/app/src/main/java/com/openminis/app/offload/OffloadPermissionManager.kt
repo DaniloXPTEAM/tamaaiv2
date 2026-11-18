@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
@@ -25,10 +27,14 @@ object OffloadPermissionManager {
     }
 
     data class PermissionRequest(
+        /** Unique for this process; a stale dialog must not answer the next request. */
+        val requestId: Long,
         val toolName: String,
         val toolTitle: String,
         val description: String,
         val sessionId: String,
+        /** A legacy shell image call has no trustworthy person-turn provenance. */
+        val oneTimeOnly: Boolean = false,
     )
 
     enum class PermissionCategory(val displayName: String) {
@@ -57,13 +63,10 @@ object OffloadPermissionManager {
     )
 
     /**
-     * Registry of all tools and their permission categories. Defaults are
-     * BYPASS across the board to mirror iOS — the user opted into running an
-     * agent app, so background access is permitted unless they explicitly
-     * downgrade an entry to ASK_ONCE / NOT_ALLOWED. Tools omitted from this
-     * registry (e.g. the former `open_url` and `model_use` entries) fall
-     * through to BYPASS via [getLevel]'s unknown-tool branch — no separate
-     * "always permit" carve-out needed.
+     * Registry of tools and their permission categories. Most defaults mirror
+     * iOS BYPASS; paid image generation asks first, and privileged integrations
+     * default to NOT_ALLOWED. Unknown tool names still fall through to BYPASS,
+     * so new sensitive actions must be explicitly registered and gated.
      */
     val toolRegistry: List<ToolPermissionInfo> = listOf(
         // Privacy — user-configurable, visible in Settings.
@@ -72,7 +75,10 @@ object OffloadPermissionManager {
         ToolPermissionInfo("clipboard", "Clipboard", PermissionCategory.PRIVACY, PermissionLevel.BYPASS),
         ToolPermissionInfo("contacts", "Contacts", PermissionCategory.PRIVACY, PermissionLevel.BYPASS),
         ToolPermissionInfo("photos", "Photos", PermissionCategory.PRIVACY, PermissionLevel.BYPASS),
-        // Media — no personal data, hidden from Settings.
+        // Images can incur a per-picture charge and therefore need a visible,
+        // explicit permission instead of unknown-tool BYPASS.
+        ToolPermissionInfo("image_generation", "Image generation", PermissionCategory.MEDIA, PermissionLevel.ASK_ONCE),
+        // Other media tools carry no personal data and stay hidden from Settings.
         ToolPermissionInfo("speak", "Text-to-Speech", PermissionCategory.MEDIA, PermissionLevel.BYPASS, showInSettings = false),
         ToolPermissionInfo("media_player", "Media Player", PermissionCategory.MEDIA, PermissionLevel.BYPASS, showInSettings = false),
         ToolPermissionInfo("speech_recognition", "Speech Recognition", PermissionCategory.MEDIA, PermissionLevel.BYPASS, showInSettings = false),
@@ -100,12 +106,11 @@ object OffloadPermissionManager {
 
     private lateinit var prefs: SharedPreferences
 
-    /** Session-scoped grants for ASK_ONCE tools. Populated by the
-     *  "Allow in this session" dialog response. Cleared when the
-     *  hosting session ends (or process death — see
-     *  OFFLOAD_GLOBAL_SESSION_ID for offload-CLI-backed tools, which
-     *  share one process-lifetime slot). */
-    private val sessionGrants = mutableMapOf<String, MutableSet<String>>() // sessionId -> set of toolNames
+    /** Optional scope keeps a paid model's session grant bound to the route shown in its dialog. */
+    private data class SessionGrant(val toolName: String, val scope: String?)
+
+    /** Session-scoped grants for ASK_ONCE tools, kept only in process memory. */
+    private val sessionGrants = mutableMapOf<String, MutableSet<SessionGrant>>()
 
     /** T338: session-scoped denials. Populated by the "Deny in this
      *  session" dialog response. Once a tool is in here for a given
@@ -119,6 +124,18 @@ object OffloadPermissionManager {
     private val _pendingRequest = MutableStateFlow<PermissionRequest?>(null)
     val pendingRequest: StateFlow<PermissionRequest?> = _pendingRequest.asStateFlow()
 
+    // Only one dialog/continuation may be active, even if two sessions invoke
+    // different tools concurrently. A waiting request must never replace the
+    // continuation for the dialog already shown to the person.
+    private val permissionQueue = Mutex()
+    private val permissionStateLock = Any()
+    // Any settings change invalidates an answer to an older, still-open dialog.
+    private val permissionVersions = mutableMapOf<String, Long>()
+    // nanoMuse: retain an epoch only while checks or transport observations are active.
+    private data class SessionEpoch(var version: Long = 0, var checks: Int = 0)
+    private val activeSessionEpochs = mutableMapOf<String, SessionEpoch>()
+    // Incremented under permissionStateLock; never reused while this process lives.
+    private var nextPermissionRequestId = 0L
     private var pendingContinuation: kotlin.coroutines.Continuation<Response>? = null
 
     // ── Android system runtime permission request (for location etc.) ──────────
@@ -321,16 +338,25 @@ object OffloadPermissionManager {
         }
     }
 
-    fun setLevel(toolName: String, level: PermissionLevel) {
+    fun setLevel(toolName: String, level: PermissionLevel) = synchronized(permissionStateLock) {
         prefs.edit().putString("level_$toolName", level.name).apply()
+        invalidateToolGrants(toolName)
     }
 
-    fun resetAll() {
+    fun resetAll() = synchronized(permissionStateLock) {
         val editor = prefs.edit()
         for (tool in toolRegistry) {
             editor.remove("level_${tool.toolName}")
+            invalidateToolGrants(tool.toolName)
         }
         editor.apply()
+    }
+
+    /** Caller holds [permissionStateLock]. */
+    private fun invalidateToolGrants(toolName: String) {
+        permissionVersions[toolName] = (permissionVersions[toolName] ?: 0L) + 1L
+        sessionGrants.values.forEach { grants -> grants.removeAll { it.toolName == toolName } }
+        sessionDenials.values.forEach { it.remove(toolName) }
     }
 
     /**
@@ -348,67 +374,186 @@ object OffloadPermissionManager {
      */
     enum class Response { ALLOW_SESSION, ALLOW_ONCE, DENY_SESSION }
 
-    /**
-     * Check permission for a tool in the given session.
-     * For ASK_ONCE, suspends until user responds via the dialog.
-     * Returns true if allowed.
-     */
-    suspend fun checkPermission(toolName: String, toolTitle: String, sessionId: String): Boolean {
-        val level = getLevel(toolName)
-        return when (level) {
-            PermissionLevel.BYPASS -> true
-            PermissionLevel.NOT_ALLOWED -> false
-            PermissionLevel.ASK_ONCE -> {
-                // T338: a prior "Deny in this session" short-circuits
-                // before any grants check or dialog so the agent can't
-                // spam the user.
-                val denials = sessionDenials.getOrPut(sessionId) { mutableSetOf() }
-                if (toolName in denials) return false
+    // nanoMuse: a revocation observation is not an approval. It must be opened
+    // before checkPermission, used only after that check succeeds, and closed
+    // after the operation. Keeping the session epoch alive also invalidates
+    // one-time approvals when a chat is cleared after its dialog has closed.
+    internal interface PermissionObservation : AutoCloseable {
+        fun isCurrent(): Boolean
+    }
 
-                val grants = sessionGrants.getOrPut(sessionId) { mutableSetOf() }
-                if (toolName in grants) return true
+    internal fun observePermission(toolName: String, sessionId: String): PermissionObservation {
+        val (epoch, sessionVersion, toolVersion) = synchronized(permissionStateLock) {
+            val current = activeSessionEpochs.getOrPut(sessionId) { SessionEpoch() }
+            current.checks++
+            Triple(current, current.version, permissionVersions[toolName] ?: 0L)
+        }
+        return object : PermissionObservation {
+            private var closed = false
 
-                // Show dialog and wait for response.
-                val info = toolRegistry.find { it.toolName == toolName }
-                val response = suspendCancellableCoroutine<Response> { cont ->
-                    pendingContinuation = cont
-                    _pendingRequest.value = PermissionRequest(
-                        toolName = toolName,
-                        toolTitle = toolTitle,
-                        description = "Allow ${info?.displayName ?: toolName} access?",
-                        sessionId = sessionId,
-                    )
-                    cont.invokeOnCancellation {
-                        _pendingRequest.value = null
-                        pendingContinuation = null
-                    }
-                }
+            override fun isCurrent(): Boolean = synchronized(permissionStateLock) {
+                !closed && epoch.version == sessionVersion &&
+                    (permissionVersions[toolName] ?: 0L) == toolVersion &&
+                    getLevel(toolName) != PermissionLevel.NOT_ALLOWED &&
+                    toolName !in sessionDenials[sessionId].orEmpty()
+            }
 
-                when (response) {
-                    Response.ALLOW_SESSION -> {
-                        grants.add(toolName)
-                        true
-                    }
-                    Response.ALLOW_ONCE -> true  // no caching; next call re-prompts
-                    Response.DENY_SESSION -> {
-                        denials.add(toolName)
-                        false
-                    }
+            override fun close() = synchronized(permissionStateLock) {
+                if (!closed) {
+                    closed = true
+                    releaseSessionEpoch(sessionId, epoch)
                 }
             }
         }
     }
 
-    /** Called from UI when user responds to the permission dialog. */
-    fun respondToRequest(response: Response) {
-        _pendingRequest.value = null
-        pendingContinuation?.resume(response)
-        pendingContinuation = null
+    /** Caller holds [permissionStateLock]. */
+    private fun releaseSessionEpoch(sessionId: String, epoch: SessionEpoch) {
+        epoch.checks--
+        if (epoch.checks == 0 && activeSessionEpochs[sessionId] === epoch) activeSessionEpochs.remove(sessionId)
     }
 
-    /** Clear session grants AND denials (call when a session ends). */
+    /**
+     * Check permission for a tool in the given session.
+     * For ASK_ONCE, suspends until user responds via the dialog. A non-null
+     * grantScope limits a remembered approval to that exact scope; denials
+     * remain tool-wide for the session. The scope is never persisted or shown.
+     * Returns true if allowed.
+     */
+    suspend fun checkPermission(
+        toolName: String,
+        toolTitle: String,
+        sessionId: String,
+        requireFreshApproval: Boolean = false,
+        grantScope: String? = null,
+    ): Boolean {
+        val grant = SessionGrant(toolName, grantScope)
+        val (epoch, sessionVersion) = synchronized(permissionStateLock) {
+            val current = activeSessionEpochs.getOrPut(sessionId) { SessionEpoch() }
+            current.checks++
+            current to current.version
+        }
+        try {
+            when (getLevel(toolName)) {
+                PermissionLevel.BYPASS -> if (!requireFreshApproval) return true
+                PermissionLevel.NOT_ALLOWED -> return false
+                PermissionLevel.ASK_ONCE -> Unit
+            }
+            return permissionQueue.withLock {
+                // The session or setting may have changed while this request was queued.
+                val version = synchronized(permissionStateLock) {
+                    if (epoch.version != sessionVersion) return@withLock false
+                    when (getLevel(toolName)) {
+                        PermissionLevel.BYPASS -> if (!requireFreshApproval) return@withLock true
+                        PermissionLevel.NOT_ALLOWED -> return@withLock false
+                        PermissionLevel.ASK_ONCE -> Unit
+                    }
+                    if (toolName in sessionDenials[sessionId].orEmpty()) return@withLock false
+                    if (!requireFreshApproval && grant in sessionGrants[sessionId].orEmpty()) return@withLock true
+                    permissionVersions[toolName] ?: 0L
+                }
+
+                val info = toolRegistry.find { it.toolName == toolName }
+                val response = suspendCancellableCoroutine<Response> { cont ->
+                    val published = synchronized(permissionStateLock) {
+                        if (epoch.version != sessionVersion ||
+                            (permissionVersions[toolName] ?: 0L) != version) false
+                        else {
+                            pendingContinuation = cont
+                            _pendingRequest.value = PermissionRequest(
+                                requestId = nextPermissionRequestId++,
+                                toolName = toolName,
+                                toolTitle = toolTitle,
+                                description = "Allow ${info?.displayName ?: toolName} access?",
+                                sessionId = sessionId,
+                                oneTimeOnly = requireFreshApproval,
+                            )
+                            true
+                        }
+                    }
+                    if (!published) cont.resume(Response.DENY_SESSION)
+                    else cont.invokeOnCancellation {
+                        synchronized(permissionStateLock) {
+                            if (pendingContinuation === cont) {
+                                _pendingRequest.value = null
+                                pendingContinuation = null
+                            }
+                        }
+                    }
+                }
+                // A settings or session change while the dialog was open
+                // invalidates its answer, including an ABA settings change.
+                synchronized(permissionStateLock) {
+                    if (epoch.version != sessionVersion || getLevel(toolName) == PermissionLevel.NOT_ALLOWED ||
+                        (permissionVersions[toolName] ?: 0L) != version) return@withLock false
+                    when (response) {
+                        Response.ALLOW_SESSION -> {
+                            if (!requireFreshApproval) sessionGrants.getOrPut(sessionId) { mutableSetOf() }.add(grant)
+                            true
+                        }
+                        Response.ALLOW_ONCE -> true
+                        Response.DENY_SESSION -> {
+                            sessionDenials.getOrPut(sessionId) { mutableSetOf() }.add(toolName)
+                            false
+                        }
+                    }
+                }
+            }
+        } finally {
+            // nanoMuse: checks and transport observations share the same bounded epoch lifetime.
+            synchronized(permissionStateLock) { releaseSessionEpoch(sessionId, epoch) }
+        }
+    }
+
+    /** Only the dialog that was actually shown may answer its own request. */
+    fun respondToRequest(requestId: Long, response: Response) {
+        val continuation = synchronized(permissionStateLock) {
+            if (_pendingRequest.value?.requestId != requestId) return
+            pendingContinuation.also {
+                pendingContinuation = null
+                _pendingRequest.value = null
+            }
+        }
+        continuation?.resume(response)
+    }
+
+    /** Clear grants and denials and withdraw this session's outstanding requests. */
     fun clearSessionGrants(sessionId: String) {
-        sessionGrants.remove(sessionId)
-        sessionDenials.remove(sessionId)
+        val continuation = synchronized(permissionStateLock) {
+            sessionGrants.remove(sessionId)
+            sessionDenials.remove(sessionId)
+            activeSessionEpochs[sessionId]?.let { it.version++ }
+            if (_pendingRequest.value?.sessionId == sessionId) {
+                pendingContinuation.also {
+                    pendingContinuation = null
+                    _pendingRequest.value = null
+                }
+            } else null
+        }
+        // nanoMuse: stop the old managed peer while registrations are paused.
+        // Requests already sent cannot be retracted or unbilled here.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            try {
+                ai.tama.media.VideoAttemptTracker.pauseSession(sessionId)
+                try {
+                    ai.tama.media.ImageAttemptTracker.pauseSession(sessionId)
+                    // nanoMuse: direct model-use calls have their own conservative
+                    // submission marker and can also arrive late from the shell.
+                    ai.tama.net.ModelUseAttemptTracker.pauseSession(sessionId)
+                    try {
+                        // Slot owners and waiters may not have reached a native image yet.
+                        try {
+                            ai.tama.chat.ChatSessionJobs.pauseSession(sessionId)
+                        } finally {
+                            try { com.openminis.app.sandbox.ExecutionCoordinator.stopCurrentCommand(sessionId) }
+                            finally { ai.tama.chat.ChatSessionJobs.resumeSession(sessionId) }
+                        }
+                    } finally { ai.tama.net.ModelUseAttemptTracker.resumeSession(sessionId) }
+                } finally { ai.tama.media.ImageAttemptTracker.resumeSession(sessionId) }
+            } finally { ai.tama.media.VideoAttemptTracker.resumeSession(sessionId) }
+        }
+        // Resume outside the lock. The changed epoch makes this a refusal, not
+        // a new cached denial, and advances the queue for other sessions.
+        continuation?.resume(Response.DENY_SESSION)
     }
 }

@@ -9,8 +9,10 @@ import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -81,18 +83,34 @@ fun ModelsScreen(
     onPick: (Slot) -> Unit,
     onAddProvider: () -> Unit,
     onOpenMedia: () -> Unit,
+    onReviewModels: () -> Unit,
 ) {
     val context = LocalContext.current
     val repo = (context.applicationContext as? MinisApp)?.providerRepositoryOrNull
     val config = repo?.config?.collectAsState()?.value
     val changed by ModelSlots.lastChanged.collectAsState()
     var tick by remember { mutableIntStateOf(0) }
+    // nanoMuse: automatic selection is opt-in; cost risk needs a separate confirmation.
+    var autoModels by remember { mutableStateOf(ai.tama.router.AutoModelStore.enabled(context)) }
+    val parallelTest = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+    var allowUnverifiedCost by remember { mutableStateOf(parallelTest && ai.tama.router.AutoModelStore.allowUnverifiedAutomaticCost(context)) }
+    var confirmUnverifiedCost by remember { mutableStateOf(false) }
+    // nanoMuse: the broader model-cost permission lives only for this app process.
+    var allowModelCost by remember { mutableStateOf(ai.tama.pricing.ModelCostGuard.allowedForCurrentProcess()) }
+    var confirmModelCost by remember { mutableStateOf(false) }
 
     // The hands, image and video choices live in preferences, not in the config flow: re-read
     // when the picker pops back.
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
-        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) tick++ }
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) {
+            tick++
+            autoModels = ai.tama.router.AutoModelStore.enabled(context)
+            if (parallelTest) {
+                allowUnverifiedCost = ai.tama.router.AutoModelStore.allowUnverifiedAutomaticCost(context)
+                allowModelCost = ai.tama.pricing.ModelCostGuard.allowedForCurrentProcess()
+            }
+        } }
         owner.lifecycle.addObserver(obs)
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
@@ -121,7 +139,7 @@ fun ModelsScreen(
                     checked = cloudOn,
                     onCheckedChange = { refused = !NanoMuseCloud.setModelsOn(context, it) },
                     icon = Icons.Outlined.CloudQueue,
-                    iconColor = if (cloudOn) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+                    iconColor = if (cloudOn) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                     showDivider = false,
                 )
                 if (refused) {
@@ -133,6 +151,85 @@ fun ModelsScreen(
                         modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp),
                     )
                 }
+            }
+        }
+        SettingsSection(footer = stringResource(R.string.nm_auto_models_help)) {
+            SettingsSwitchRow(
+                title = stringResource(R.string.nm_auto_models_title),
+                checked = autoModels,
+                onCheckedChange = { enabled ->
+                    autoModels = enabled
+                    ai.tama.router.AutoModelStore.setEnabled(context, enabled)
+                },
+            )
+            SettingsRow(
+                title = stringResource(R.string.nm_auto_review_models),
+                onClick = onReviewModels,
+                showDivider = false,
+            )
+        }
+        if (parallelTest) {
+            SettingsSection(footer = stringResource(R.string.nm_model_cost_guard_help)) {
+                SettingsSwitchRow(
+                    title = stringResource(R.string.nm_model_allow_unverified_cost),
+                    checked = allowModelCost,
+                    onCheckedChange = { allow ->
+                        if (allow) confirmModelCost = true
+                        else {
+                            ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(false)
+                            allowModelCost = false
+                        }
+                    },
+                    showDivider = false,
+                )
+            }
+            if (confirmModelCost) {
+                AlertDialog(
+                    onDismissRequest = { confirmModelCost = false },
+                    title = { Text(stringResource(R.string.nm_auto_cost_confirm_title)) },
+                    text = { Text(stringResource(R.string.nm_model_cost_confirm_body)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(true)
+                            allowModelCost = true
+                            confirmModelCost = false
+                        }) { Text(stringResource(R.string.nm_auto_cost_confirm_action)) }
+                    },
+                    dismissButton = { TextButton(onClick = { confirmModelCost = false }) {
+                        Text(stringResource(R.string.nm_auto_cost_cancel))
+                    } },
+                )
+            }
+            SettingsSection(footer = stringResource(R.string.nm_auto_cost_guard_help)) {
+                SettingsSwitchRow(
+                    title = stringResource(R.string.nm_auto_allow_unverified_cost),
+                    checked = allowUnverifiedCost,
+                    onCheckedChange = { allow ->
+                        if (allow) confirmUnverifiedCost = true
+                        else {
+                            ai.tama.router.AutoModelStore.setAllowUnverifiedAutomaticCost(context, false)
+                            allowUnverifiedCost = false
+                        }
+                    },
+                    showDivider = false,
+                )
+            }
+            if (confirmUnverifiedCost) {
+                AlertDialog(
+                    onDismissRequest = { confirmUnverifiedCost = false },
+                    title = { Text(stringResource(R.string.nm_auto_cost_confirm_title)) },
+                    text = { Text(stringResource(R.string.nm_auto_cost_confirm_body)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            ai.tama.router.AutoModelStore.setAllowUnverifiedAutomaticCost(context, true)
+                            allowUnverifiedCost = true
+                            confirmUnverifiedCost = false
+                        }) { Text(stringResource(R.string.nm_auto_cost_confirm_action)) }
+                    },
+                    dismissButton = { TextButton(onClick = { confirmUnverifiedCost = false }) {
+                        Text(stringResource(R.string.nm_auto_cost_cancel))
+                    } },
+                )
             }
         }
         Slot.values().forEach { slot ->
@@ -153,7 +250,7 @@ fun ModelsScreen(
                         else -> Capabilities.unavailableLine(context, slot.capability)
                     },
                     icon = slotIcon(slot),
-                    iconColor = if (value != null) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+                    iconColor = if (value != null) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                     onClick = if (hasOptions || videoOff) ({ onPick(slot) }) else null,
                     showDivider = !hasOptions,
                     minHeight = 72.dp,
@@ -161,7 +258,7 @@ fun ModelsScreen(
                 if (!hasOptions) {
                     SettingsRow(
                         title = stringResource(R.string.nm_media_add_provider),
-                        titleColor = MuseTones.action,
+                        titleColor = MuseTones.accent,
                         onClick = onAddProvider,
                         showChevron = false,
                         showDivider = false,
@@ -192,7 +289,7 @@ fun RecommendedMark() {
         text = stringResource(R.string.nm_media_recommended),
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
-        color = MuseTones.action,
+        color = MuseTones.accent,
         modifier = Modifier.padding(end = 8.dp),
     )
 }

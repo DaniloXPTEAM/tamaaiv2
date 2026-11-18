@@ -269,7 +269,7 @@ object FeedFlow {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, ScheduledTaskManager.CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_nanomuse)
+            .setSmallIcon(R.drawable.ic_stat_tama)
             .setLargeIcon(NanoMuseIdentity.face(context))
             .setContentTitle("${NanoMuseIdentity.name(context)}: ${context.getString(R.string.nm_feed_session_title)}")
             .setContentText(body)
@@ -307,7 +307,7 @@ object FeedFlow {
         val digest = digest(context)
         val recent = FeedStore.posts.value.take(24).map { it.title }
         return buildString {
-            appendLine("## This conversation writes the user's feed (nanoMuse)")
+            appendLine("## This conversation writes the user's feed (TAMA AI)")
             appendLine("The Feed tab shows short posts you write for the user, like Muse's feed. The user's standing instruction for it:")
             appendLine("> " + FeedStore.preferences.value.replace("\n", "\n> "))
             appendLine()

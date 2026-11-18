@@ -35,8 +35,10 @@ class OpenAIOAuthManager(context: Context, instanceId: String) : OAuthManager(co
          */
         suspend fun login(context: Context, instanceId: String, providerRepository: com.openminis.app.data.repository.ProviderRepository): String {
             val manager = OpenAIOAuthManager(context, instanceId)
-            val token = manager.performLogin(context)
-            providerRepository.saveApiKey(instanceId, token)
+            // nanoMuse: a stale completion cannot save a key after a newer login.
+            val ticket = manager.nmBeginLogin()
+            val token = manager.nmPerformLogin(context, ticket, providerRepository)
+            if (ticket == null) providerRepository.saveApiKey(instanceId, token)
             return token
         }
     }
@@ -44,17 +46,50 @@ class OpenAIOAuthManager(context: Context, instanceId: String) : OAuthManager(co
     private var loginCallbackServer: OAuthCallbackServer? = null
     private var expectedState: String? = null
 
+    // nanoMuse: keep the parallel login's PKCE and state local to its browser attempt.
+    private class NmAuthorization(val url: String, val verifier: String, val state: String)
+    private fun nmAuthorization(): NmAuthorization {
+        val (verifier, challenge) = generatePKCE()
+        val state = generateState()
+        val url = "$authURL?" + listOf(
+            "client_id=$clientId",
+            "redirect_uri=${Uri.encode(redirectUri)}",
+            "response_type=code",
+            "scope=${Uri.encode(scopes)}",
+            "state=$state",
+            "code_challenge=$challenge",
+            "code_challenge_method=S256",
+            "codex_cli_simplified_flow=true",
+            "originator=codex_cli_rs",
+            "id_token_add_organizations=true",
+        ).joinToString("&")
+        return NmAuthorization(url, verifier, state)
+    }
+
     /**
      * Perform the full OAuth login flow.
      * Returns the access token. Throws on failure.
      */
-    suspend fun performLogin(context: Context): String {
+    suspend fun performLogin(context: Context): String = nmPerformLogin(context, nmBeginLogin(), null)
+
+    // nanoMuse: carry this attempt through the browser and exchange.
+    private suspend fun nmPerformLogin(
+        context: Context,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket?,
+        repository: com.openminis.app.data.repository.ProviderRepository?,
+    ): String {
         AppLogger.info(TAG, "=== OAuth login started (instance=$instanceId) ===")
 
-        loginCallbackServer?.stop()
-        loginCallbackServer = null
+        if (ticket == null) {
+            loginCallbackServer?.stop()
+            loginCallbackServer = null
+        }
+        // nanoMuse: an old completion must not stop a later attempt's server.
+        var attemptServer: OAuthCallbackServer? = null
 
-        val authUrl = buildAuthorizationUrl()
+        val authorization = if (ticket != null) nmAuthorization() else null // nanoMuse: attempt-local PKCE/state
+        val authUrl = authorization?.url ?: buildAuthorizationUrl()
+        nmRequireLoginCurrent(ticket)
         // Redact the code_challenge so the log doesn't expose PKCE material
         // verbatim — leave everything else so the user/diagnostician can
         // verify scope, redirect_uri, client_id, state.
@@ -65,18 +100,26 @@ class OpenAIOAuthManager(context: Context, instanceId: String) : OAuthManager(co
         val accessToken = withContext(Dispatchers.IO) {
             // Step 1: Wait for callback code
             val (code, state) = suspendCancellableCoroutine<Pair<String, String?>> { cont ->
-                val server = OAuthCallbackServer(callbackPort) { receivedCode, receivedState ->
+                val server = OAuthCallbackServer(callbackPort,
+                    expectedPath = if (ticket != null) redirectPath else null,
+                    expectedState = authorization?.state,
+                    startOrder = ticket?.order,
+                    mayStart = { ticket == null || (cont.isActive && ai.tama.router.OAuthLoginAttempts.isCurrent(ticket)) },
+                ) { receivedCode, receivedState ->
                     if (cont.isActive) {
                         cont.resume(receivedCode to receivedState)
                     }
                 }
-                loginCallbackServer = server
+                if (ticket != null) {
+                    server.onExternalCancel = { cont.cancel(kotlinx.coroutines.CancellationException("OAuth callback cancelled")) }
+                    attemptServer = server
+                } else loginCallbackServer = server
                 server.start()
                 AppLogger.info(TAG, "callback server listening on port $callbackPort path=$redirectPath")
 
                 cont.invokeOnCancellation {
                     server.stop()
-                    loginCallbackServer = null
+                    if (ticket == null && loginCallbackServer === server) loginCallbackServer = null
                 }
 
                 // Open auth URL in Chrome Custom Tab. Do NOT set FLAG_ACTIVITY_NEW_TASK:
@@ -89,19 +132,25 @@ class OpenAIOAuthManager(context: Context, instanceId: String) : OAuthManager(co
                 AppLogger.info(TAG, "Custom Tab launched")
             }
 
-            loginCallbackServer?.stop()
-            loginCallbackServer = null
-            val stateMatches = expectedState != null && state == expectedState
+            if (ticket != null) attemptServer?.stop() else {
+                loginCallbackServer?.stop()
+                loginCallbackServer = null
+            }
+            val loginState = authorization?.state ?: expectedState // nanoMuse: this attempt, not shared preferences
+            val stateMatches = loginState != null && state == loginState
             AppLogger.info(
                 TAG,
-                "callback received: codeLen=${code.length} state=$state expected=$expectedState match=$stateMatches",
+                "callback received: codeLen=${code.length} state=$state expected=$loginState match=$stateMatches",
             )
             if (!stateMatches) {
+                // nanoMuse: do not accept a callback for another sign-in in the parallel app.
+                if (ticket != null) throw IllegalStateException("OAuth state mismatch")
                 AppLogger.warning(TAG, "state mismatch — proceeding anyway to mirror prior behaviour")
             }
 
+            nmRequireLoginCurrent(ticket) // nanoMuse: reject an old callback before sending it.
             // Step 2: Exchange code for tokens (JSON body, matching iOS CodexOAuthManager)
-            exchangeCodeJson(code)
+            exchangeCodeJson(code, ticket, repository, authorization)
         }
 
         AppLogger.info(TAG, "=== OAuth login complete (instance=$instanceId tokenLen=${accessToken.length}) ===")
@@ -151,6 +200,15 @@ class OpenAIOAuthManager(context: Context, instanceId: String) : OAuthManager(co
         }
     }
 
+    override suspend fun nmOnTokensReceived(json: JSONObject, snapshot: NmOAuthSnapshot) {
+        // nanoMuse: direct/base exchanges cannot attach old claims to a newer account.
+        val claims = nmLoginClaims(json.optString("id_token", "")) ?: return
+        nmIfOAuthCurrent(snapshot, compareTokens = false) {
+            accountId = claims.optString("chatgpt_account_id", "").ifEmpty { null }
+            planType = claims.optString("chatgpt_plan_type", "").ifEmpty { null }
+        }
+    }
+
     /**
      * Exchange authorization code for tokens using JSON body.
      * OpenAI requires application/json (same as Anthropic).
@@ -165,13 +223,19 @@ class OpenAIOAuthManager(context: Context, instanceId: String) : OAuthManager(co
      * stack) but the in-app token POST resolved auth.openai.com via the
      * raw carrier resolver and got UnknownHostException.
      */
-    private fun exchangeCodeJson(code: String): String {
+    // nanoMuse: bind this completion to the browser attempt and its key mirror.
+    private suspend fun exchangeCodeJson(
+        code: String,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket?,
+        repository: com.openminis.app.data.repository.ProviderRepository?,
+        authorization: NmAuthorization?,
+    ): String {
         val jsonBody = JSONObject().apply {
             put("grant_type", "authorization_code")
             put("client_id", clientId)
             put("code", code)
             put("redirect_uri", redirectUri)
-            put("code_verifier", loadOAuthString("verifier") ?: "")
+            put("code_verifier", authorization?.verifier ?: loadOAuthString("verifier") ?: "")
         }
 
         AppLogger.info(TAG, "token exchange POST $tokenURL bodyLen=${jsonBody.toString().length}")
@@ -216,7 +280,8 @@ class OpenAIOAuthManager(context: Context, instanceId: String) : OAuthManager(co
 
         if (responseCode !in 200..299) {
             AppLogger.error(TAG, "token exchange non-2xx: $responseCode")
-            throw Exception("Token exchange failed ($responseCode): $responseBody")
+            // nanoMuse: an untrusted OAuth body can echo secrets to the UI or logcat.
+            throw Exception(if (nmParallelAuth) "Token exchange failed ($responseCode)" else "Token exchange failed ($responseCode): $responseBody")
         }
 
         val json = JSONObject(responseBody)
@@ -231,12 +296,19 @@ class OpenAIOAuthManager(context: Context, instanceId: String) : OAuthManager(co
         if (expiresIn > 0) {
             json.put("expire_at", System.currentTimeMillis() + expiresIn * 1000)
         }
-        saveOAuthString("tokens", json.toString())
-
-        // Parse id_token for account info
+        // nanoMuse: prepare display claims outside the lock, then save them with
+        // the account, not after another login may already have completed.
         val idToken = json.optString("id_token", "")
-        if (idToken.isNotEmpty()) {
-            parseIdToken(idToken)
+        if (ticket != null) {
+            val claims = nmLoginClaims(idToken)
+            val metadata = buildMap {
+                claims?.optString("chatgpt_account_id", "")?.takeIf { it.isNotEmpty() }?.let { put("account_id", it) }
+                claims?.optString("chatgpt_plan_type", "")?.takeIf { it.isNotEmpty() }?.let { put("plan_type", it) }
+            }
+            nmCommitLogin(ticket, repository, json, metadata)
+        } else {
+            nmChangeOAuthAccount { saveOAuthString("tokens", json.toString()) }
+            if (idToken.isNotEmpty()) parseIdToken(idToken)
         }
 
         AppLogger.info(

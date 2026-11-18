@@ -197,7 +197,7 @@ fun CloudAccountScreen(
                         }
                     }
                     MuseRowDivider(inset = 16.dp)
-                    MuseRow(title = stringResource(R.string.nm_cloud_sign_in), onClick = onSignIn, titleColor = MuseTones.action)
+                    MuseRow(title = stringResource(R.string.nm_cloud_sign_in), onClick = onSignIn, titleColor = MuseTones.accent)
                     val base = NanoMuseCloud.baseUrl(context)
                     if (!RelayAddress.isDefault(base)) {
                         // pointed at someone's own relay: say which, so a sign-in that fails is understood
@@ -219,7 +219,7 @@ fun CloudAccountScreen(
                                 text = (a?.hint?.firstOrNull { it.isLetterOrDigit() } ?: 'n').uppercaseChar().toString(),
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = MuseTones.action,
+                                color = MuseTones.accent,
                             )
                         }
                         Spacer(Modifier.width(14.dp))
@@ -264,7 +264,7 @@ fun CloudAccountScreen(
                         chevron = false,
                         trailing = {
                             TextButton(onClick = { changeServer = true }) {
-                                Text(stringResource(R.string.nm_cloud_server_change), color = MuseTones.action, fontSize = 13.sp)
+                                Text(stringResource(R.string.nm_cloud_server_change), color = MuseTones.accent, fontSize = 13.sp)
                             }
                         },
                         onClick = { changeServer = true },
@@ -282,7 +282,7 @@ fun CloudAccountScreen(
                     Text(
                         text = it,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MuseTones.action,
+                        color = MuseTones.accent,
                         modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
                     )
                 }
@@ -329,7 +329,7 @@ fun CloudAccountScreen(
                                     color = when {
                                         a.exhausted -> MaterialTheme.colorScheme.error
                                         a.warn || a.spendFraction >= 0.8f -> Color(0xFFD97706)
-                                        else -> MuseTones.action
+                                        else -> MuseTones.accent
                                     },
                                     trackColor = MuseTones.fill,
                                     modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
@@ -392,7 +392,7 @@ fun CloudAccountScreen(
                             Spacer(Modifier.height(8.dp))
                             LinearProgressIndicator(
                                 progress = { a.fraction },
-                                color = MuseTones.action,
+                                color = MuseTones.accent,
                                 trackColor = MuseTones.fill,
                                 modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
                             )
@@ -843,9 +843,9 @@ private fun PasswordDialog(hasPassword: Boolean, onDismiss: () -> Unit, onSaved:
     var error by remember { mutableStateOf<String?>(null) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = MuseTones.action,
-        cursorColor = MuseTones.action,
-        focusedLabelColor = MuseTones.action,
+        focusedBorderColor = MuseTones.accent,
+        cursorColor = MuseTones.accent,
+        focusedLabelColor = MuseTones.accent,
     )
     val transformation = if (show) VisualTransformation.None else PasswordVisualTransformation()
 
@@ -939,7 +939,7 @@ private fun PasswordDialog(hasPassword: Boolean, onDismiss: () -> Unit, onSaved:
         },
         confirmButton = {
             TextButton(onClick = { save(remove = false) }, enabled = !busy && next.isNotEmpty()) {
-                Text(stringResource(R.string.save), color = MuseTones.action)
+                Text(stringResource(R.string.save), color = MuseTones.accent)
             }
         },
         dismissButton = {
@@ -1072,7 +1072,7 @@ private fun InviteCard(a: NanoMuseCloud.Account) {
                     Text(stringResource(R.string.nm_cloud_invite_code), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(a.inviteCode, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, letterSpacing = 2.sp)
                 }
-                TextButton(onClick = { clipboard.setPlainText("nanoMuse", a.inviteCode); copied = true }) {
+                TextButton(onClick = { clipboard.setPlainText("TAMA AI", a.inviteCode); copied = true }) {
                     Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(stringResource(if (copied) R.string.nm_cloud_invite_copied else R.string.nm_cloud_invite_copy))
@@ -1130,7 +1130,7 @@ fun CommunityNoticeCard(inset: Dp = 16.dp) {
                 verticalAlignment = Alignment.Top,
                 modifier = Modifier.fillMaxWidth().clickable { openExternalUrl(context, NOTICE_URL) },
             ) {
-                Icon(Icons.Outlined.Code, contentDescription = null, tint = MuseTones.action, modifier = Modifier.padding(top = 2.dp).size(18.dp))
+                Icon(Icons.Outlined.Code, contentDescription = null, tint = MuseTones.accent, modifier = Modifier.padding(top = 2.dp).size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.nm_cloud_notice_title), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(6.dp))
@@ -1150,12 +1150,12 @@ fun CommunityNoticeCard(inset: Dp = 16.dp) {
             )
             Spacer(Modifier.height(6.dp))
             Row {
-                TextButton(onClick = { openExternalUrl(context, "https://github.com/nano-muse/nanoMuse") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
+                TextButton(onClick = { openExternalUrl(context, "https://github.com/DaniloXPTEAM/tamaaiv2") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
                     Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(stringResource(R.string.nm_notice_github))
                 }
-                TextButton(onClick = { openExternalUrl(context, "https://github.com/nano-muse/nanoMuse/issues/new/choose") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
+                TextButton(onClick = { openExternalUrl(context, "https://github.com/DaniloXPTEAM/tamaaiv2/issues/new/choose") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
                     Icon(Icons.Outlined.BugReport, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(stringResource(R.string.nm_notice_issue))

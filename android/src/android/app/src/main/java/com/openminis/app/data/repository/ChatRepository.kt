@@ -6,6 +6,7 @@ import com.openminis.app.data.db.ChatSessionEntity
 import com.openminis.app.data.db.FolderEntity
 import com.openminis.app.data.db.MessageEntity
 import com.openminis.app.data.model.ModelAttributionSnapshot
+import kotlinx.coroutines.ensureActive // nanoMuse: protected setup may be cancelled during insertion.
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
@@ -27,6 +28,8 @@ class ChatRepository(internal val dao: ChatDao) {
         // here; existing call sites that omit it keep the prior
         // memoryEnabled=1 behavior (legacy default).
         memoryEnabled: Boolean = true,
+        // nanoMuse: an owning setup can bind the allocated id before Room makes the row visible.
+        beforeInsert: ((String) -> Unit)? = null,
     ): ChatSessionEntity {
         val now = System.currentTimeMillis()
         val session = ChatSessionEntity(
@@ -37,7 +40,10 @@ class ChatRepository(internal val dao: ChatDao) {
             updatedAt = now,
             memoryEnabled = if (memoryEnabled) 1 else 0,
         )
+        beforeInsert?.invoke(session.id) // nanoMuse: synchronous; a refused owner must not insert the row.
+        if (beforeInsert != null) kotlin.coroutines.coroutineContext.ensureActive() // nanoMuse: cooperative check, not atomic with Room.
         dao.insertSession(session)
+        if (beforeInsert != null) kotlin.coroutines.coroutineContext.ensureActive() // nanoMuse: do not start ownership work after a stopped insert.
         io.github.nanomuse.account.AccountData.claim(session.id) // nanoMuse: the chat belongs to whoever is signed in now (contract C12)
         return session
     }
@@ -107,14 +113,63 @@ class ChatRepository(internal val dao: ChatDao) {
     }
 
     suspend fun updateSessionModel(sessionId: String, modelId: String) {
-        dao.updateSessionModel(sessionId, modelId)
+        // nanoMuse: a model-only writer can also invalidate a provisional binding.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            nmBindingWrites.submit(sessionId) { dao.updateSessionModel(sessionId, modelId) }.await()
+        else dao.updateSessionModel(sessionId, modelId)
     }
 
     suspend fun updateSessionBinding(sessionId: String, binding: String, modelId: String) {
-        dao.updateSessionBinding(sessionId, binding, modelId)
+        // nanoMuse: preserve the normal package's existing write path.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            nmEnqueueSessionBinding(sessionId, binding, modelId).await()
+        } else dao.updateSessionBinding(sessionId, binding, modelId)
     }
 
+    // nanoMuse: register before launching so a slow older fallback cannot pass a newer pick.
+    internal fun nmEnqueueSessionBinding(sessionId: String, binding: String, modelId: String) =
+        nmBindingWrites.submit(sessionId) { dao.updateSessionBinding(sessionId, binding, modelId) }
+
+    // nanoMuse: the snapshot follows prior writes without invalidating a pending restore.
+    internal suspend fun nmBindingSnapshot(sessionId: String): ai.tama.chat.SessionBindingSnapshot? =
+        nmBindingWrites.read(sessionId) {
+            dao.getSession(sessionId)?.let { ai.tama.chat.SessionBindingSnapshot(it.modelBinding, it.modelId) }
+        }.await()
+
+    // nanoMuse: compare in SQLite, including null, so a different row value is not overwritten.
+    internal suspend fun nmCompareAndSetBinding(
+        sessionId: String, expected: ai.tama.chat.SessionBindingSnapshot,
+        replacement: ai.tama.chat.SessionBindingSnapshot,
+    ): Boolean = nmBindingWrites.submit(sessionId) {
+        dao.compareAndSetSessionBinding(sessionId, replacement.binding, replacement.modelId,
+            expected.binding, expected.modelId) == 1
+    }.await()
+
+    // nanoMuse: the version guards against a later queued selection of the same
+    // value in this process. SQLite still checks the row for other writers.
+    internal suspend fun nmTryFallbackBinding(
+        sessionId: String, expected: ai.tama.chat.SessionBindingSnapshot,
+        replacement: ai.tama.chat.SessionBindingSnapshot,
+    ): Long? {
+        val write = nmBindingWrites.submitVersioned(sessionId) {
+            dao.compareAndSetSessionBinding(sessionId, replacement.binding, replacement.modelId,
+                expected.binding, expected.modelId) == 1
+        }
+        return if (write.result.await()) write.version else null
+    }
+
+    // nanoMuse: do not undo any newer queued choice, even if it picked the same row value.
+    internal suspend fun nmRestoreFallbackBinding(
+        sessionId: String, version: Long, expected: ai.tama.chat.SessionBindingSnapshot,
+        replacement: ai.tama.chat.SessionBindingSnapshot,
+    ): Boolean = nmBindingWrites.submitIfCurrent(sessionId, version) {
+        dao.compareAndSetSessionBinding(sessionId, replacement.binding, replacement.modelId,
+            expected.binding, expected.modelId) == 1
+    }?.await() ?: false
+
     suspend fun deleteSession(id: String) {
+        // A deleted chat must not retain approvals or leave a paid-action dialog open.
+        com.openminis.app.offload.OffloadPermissionManager.clearSessionGrants(id)
         // nanoMuse: deleted history must not reappear as a later Hands run note.
         io.github.nanomuse.hands.HandsRunMemory.shared.clear(id)
         dao.deleteMessages(id)
@@ -735,6 +790,15 @@ class ChatRepository(internal val dao: ChatDao) {
     }
 
     companion object {
+        // nanoMuse: all ChatRepository instances in this process share selection
+        // ordering in the parallel app. Separate processes/direct DAO writes still
+        // require the database compare-and-set and are not covered by this version.
+        private val nmBindingWrites by lazy {
+            ai.tama.chat.SessionBindingWrites(kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+            ))
+        }
+
         private fun cleanPreview(raw: String): String {
             return stripSystemReminders(raw)
                 .replace(Regex("[\r\n]+"), " ")      // newlines → space

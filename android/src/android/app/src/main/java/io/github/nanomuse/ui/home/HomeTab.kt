@@ -16,8 +16,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.openminis.app.R
 
 /**
- * The bottom bar, in Muse's order: chat, feed, ideas, goals, library. Icons are outlined at rest
- * and filled when selected, no labels — the bar reads as glyphs, the way Muse draws it.
+ * The unchanged destinations: chat, feed, ideas, goals and library.
  */
 enum class HomeTab(
     @StringRes val label: Int,

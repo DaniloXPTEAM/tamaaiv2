@@ -33,7 +33,11 @@ class RemoteDeviceTask(private val device: Device, private val text: String, pri
                 }
             }
         } catch (e: Exception) {
-            withContext(NonCancellable) { runCatching { stop(callId) } }
+            // nanoMuse: only a transport-proven admission refusal may skip cleanup; a
+            // progress handler can independently throw an error with the same code.
+            val notAdmitted = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+                e is HubException && e.notAdmitted
+            if (!notAdmitted) withContext(NonCancellable) { runCatching { stop(callId) } }
             throw e
         }
     }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive // nanoMuse
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -79,28 +80,53 @@ class GeminiOAuthManager(context: Context, instanceId: String) : OAuthManager(co
         fetchUserEmail()
     }
 
-    private suspend fun fetchUserEmail() {
+    override suspend fun nmOnTokensReceived(json: JSONObject, snapshot: NmOAuthSnapshot) {
+        fetchUserEmail(snapshot)
+    }
+
+    private suspend fun fetchUserEmail(expected: NmOAuthSnapshot? = null) {
+        // nanoMuse: metadata from an old account must not overwrite a later login.
+        val snapshot = if (nmParallelAuth) expected ?: nmOAuthSnapshot() else null
         val token = validAccessToken() ?: return
+        if (snapshot != null && !nmIfOAuthCurrent(snapshot) {}) return
         try {
             val conn = URL("https://www.googleapis.com/oauth2/v1/userinfo").openConnection() as HttpURLConnection
             conn.setRequestProperty("Authorization", "Bearer $token")
             if (conn.responseCode == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
-                email = JSONObject(body).optString("email")
+                val value = JSONObject(body).optString("email")
+                if (snapshot != null) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    nmIfOAuthCurrent(snapshot) { email = value }
+                } else email = value
             }
             conn.disconnect()
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch email", e)
+            if (nmParallelAuth && e is kotlinx.coroutines.CancellationException) throw e
+            if (nmParallelAuth) Log.w(TAG, "Failed to fetch email") else Log.w(TAG, "Failed to fetch email", e)
         }
     }
 
     suspend fun discoverProjectIfNeeded(): Boolean = withContext(Dispatchers.IO) {
-        if (!gcpProjectId.isNullOrEmpty()) return@withContext true
+        // nanoMuse: keep the account and token snapshot across project discovery.
+        val snapshot = if (nmParallelAuth) nmOAuthSnapshot() else null
+        var alreadyKnown = false
+        if (snapshot != null) {
+            if (!nmIfOAuthCurrent(snapshot) { alreadyKnown = !gcpProjectId.isNullOrEmpty() }) return@withContext false
+        } else alreadyKnown = !gcpProjectId.isNullOrEmpty()
+        if (alreadyKnown) return@withContext true
         val token = validAccessToken() ?: return@withContext false
+        if (snapshot != null && !nmIfOAuthCurrent(snapshot) {}) return@withContext false
 
-        // Try loadCodeAssist first
-        val projectId = loadCodeAssist(token) ?: onboardUser(token)
+        // Try loadCodeAssist first. A replaced account cannot start onboarding.
+        val loaded = loadCodeAssist(token)
+        if (snapshot != null && !nmIfOAuthCurrent(snapshot) {}) return@withContext false
+        val projectId = loaded ?: onboardUser(token, snapshot)
         if (projectId != null) {
+            if (snapshot != null) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                return@withContext nmIfOAuthCurrent(snapshot) { gcpProjectId = projectId }
+            }
             gcpProjectId = projectId
             return@withContext true
         }
@@ -120,13 +146,14 @@ class GeminiOAuthManager(context: Context, instanceId: String) : OAuthManager(co
             conn.disconnect()
             response?.let { JSONObject(it).optString("gcpProjectId").ifEmpty { null } }
         } catch (e: Exception) {
-            Log.d(TAG, "loadCodeAssist failed: ${e.message}")
+            if (nmParallelAuth) Log.d(TAG, "loadCodeAssist failed") else Log.d(TAG, "loadCodeAssist failed: ${e.message}")
             null
         }
     }
 
-    private suspend fun onboardUser(token: String): String? {
+    private suspend fun onboardUser(token: String, snapshot: NmOAuthSnapshot?): String? {
         return try {
+            if (snapshot != null && !nmIfOAuthCurrent(snapshot) {}) return null
             val conn = URL("https://cloudcode-pa.googleapis.com/v1internal:onboardUser").openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Authorization", "Bearer $token")
@@ -142,20 +169,23 @@ class GeminiOAuthManager(context: Context, instanceId: String) : OAuthManager(co
                 val json = JSONObject(body)
                 val opName = json.optString("name")
                 if (opName.isNotEmpty()) {
-                    pollOperation(token, opName)
+                    pollOperation(token, opName, snapshot)
                 } else {
                     json.optString("gcpProjectId").ifEmpty { null }
                 }
             } else null
         } catch (e: Exception) {
-            Log.w(TAG, "onboardUser failed", e)
+            if (nmParallelAuth && e is kotlinx.coroutines.CancellationException) throw e
+            if (nmParallelAuth) Log.w(TAG, "onboardUser failed") else Log.w(TAG, "onboardUser failed", e)
             null
         }
     }
 
-    private suspend fun pollOperation(token: String, operationName: String): String? {
+    private suspend fun pollOperation(token: String, operationName: String, snapshot: NmOAuthSnapshot?): String? {
         for (i in 0 until 24) {
             delay(5000)
+            // nanoMuse: do not poll with a token from a replaced account.
+            if (snapshot != null && !nmIfOAuthCurrent(snapshot) {}) return null
             try {
                 val conn = URL("https://cloudcode-pa.googleapis.com/v1internal/$operationName").openConnection() as HttpURLConnection
                 conn.setRequestProperty("Authorization", "Bearer $token")
@@ -193,10 +223,20 @@ class GeminiOAuthManager(context: Context, instanceId: String) : OAuthManager(co
      *  - `NO_TOKEN` — no stored refresh token (not logged in).
      *  - `SUCCESS` — new access token persisted.
      */
-    suspend fun refreshTokenClassified(): RefreshOutcome = withContext(Dispatchers.IO) {
+    suspend fun refreshTokenClassified(): RefreshOutcome = nmRefreshTokenClassified(null)
+
+    // nanoMuse: a caller waiting for the mutex may already belong to an old account.
+    private suspend fun nmRefreshTokenClassified(expected: NmOAuthSnapshot?): RefreshOutcome = withContext(Dispatchers.IO) {
         val mutex = mutexFor(instanceId)
         mutex.withLock {
-            val stored = loadStoredTokens() ?: return@withLock RefreshOutcome.NO_TOKEN
+            if (nmParallelAuth && expected != null && !nmIfOAuthCurrent(expected) {}) {
+                // nanoMuse: another refresh of the same account can satisfy this waiter.
+                return@withLock if (nmRefreshWasCoalesced(expected)) RefreshOutcome.SUCCESS else RefreshOutcome.TRANSIENT
+            }
+            // Reuse the caller's snapshot, never pick up a replacement account after waiting.
+            val nmSnapshot = if (nmParallelAuth) expected ?: nmOAuthSnapshot() else null
+            val stored = (if (nmSnapshot != null) nmSnapshot.storedTokens() else loadStoredTokens())
+                ?: return@withLock RefreshOutcome.NO_TOKEN
             val refreshTokenValue = stored.optString("refresh_token", "")
                 .ifEmpty { return@withLock RefreshOutcome.NO_TOKEN }
 
@@ -205,6 +245,9 @@ class GeminiOAuthManager(context: Context, instanceId: String) : OAuthManager(co
             val priorExpireAt = stored.optLong("expire_at", 0)
             val freshCheck = loadStoredTokens()?.optLong("expire_at", 0) ?: 0
             if (freshCheck > priorExpireAt && freshCheck > System.currentTimeMillis()) {
+                // nanoMuse: another account's token must not count as our refresh.
+                if (nmSnapshot != null && !nmIfOAuthCurrent(nmSnapshot, compareTokens = false) {})
+                    return@withLock RefreshOutcome.TRANSIENT
                 Log.d(TAG, "Refresh skipped — fresher token already present (concurrent refresh coalesced)")
                 return@withLock RefreshOutcome.SUCCESS
             }
@@ -237,7 +280,12 @@ class GeminiOAuthManager(context: Context, instanceId: String) : OAuthManager(co
                     if (expiresIn > 0) {
                         json.put("expire_at", System.currentTimeMillis() + expiresIn * 1000)
                     }
-                    saveOAuthString("tokens", json.toString())
+                    // nanoMuse: reject a late result after another login, logout or refresh.
+                    if (nmSnapshot != null) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (!nmIfOAuthCurrent(nmSnapshot) { saveOAuthString("tokens", json.toString()) })
+                            return@withLock RefreshOutcome.TRANSIENT
+                    } else saveOAuthString("tokens", json.toString())
                     Log.i(TAG, "Gemini token refresh successful. Expires in ${expiresIn}s")
                     return@withLock RefreshOutcome.SUCCESS
                 }
@@ -251,14 +299,21 @@ class GeminiOAuthManager(context: Context, instanceId: String) : OAuthManager(co
                     bodyLower.contains("invalid_grant") ||
                     bodyLower.contains("invalid_token")
                 if (isInvalidGrant) {
+                    // nanoMuse: invalid_grant from an old request cannot log out a newer account.
+                    if (nmSnapshot != null) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (!nmLogoutIfCurrent(nmSnapshot)) return@withLock RefreshOutcome.TRANSIENT
+                    } else logout()
                     Log.e(TAG, "Refresh token invalid ($responseCode): ${OAuthManager.sanitizeBody(responseBody)} — clearing credentials")
-                    logout()
                     return@withLock RefreshOutcome.INVALID_GRANT
                 }
                 Log.w(TAG, "Gemini token refresh transient failure ($responseCode): ${OAuthManager.sanitizeBody(responseBody)} — keeping token")
                 return@withLock RefreshOutcome.TRANSIENT
             } catch (e: Exception) {
-                Log.w(TAG, "Gemini token refresh transient error — keeping token", e)
+                // nanoMuse: preserve cancellation and don't log untrusted exception text.
+                if (nmParallelAuth && e is kotlinx.coroutines.CancellationException) throw e
+                if (nmParallelAuth) Log.w(TAG, "Gemini token refresh transient error — keeping token")
+                else Log.w(TAG, "Gemini token refresh transient error — keeping token", e)
                 return@withLock RefreshOutcome.TRANSIENT
             }
         }
@@ -271,20 +326,28 @@ class GeminiOAuthManager(context: Context, instanceId: String) : OAuthManager(co
      * pre-refresh window — iOS Gemini refreshes only on hard expiry).
      */
     override suspend fun validAccessToken(): String? = withContext(Dispatchers.IO) {
-        val stored = loadStoredTokens() ?: return@withContext null
+        // nanoMuse: don't return the old account's token after a suspended refresh.
+        val nmSnapshot = if (nmParallelAuth) nmOAuthSnapshot() else null
+        // A manual bearer is a different account and must take precedence in the parallel app.
+        nmSnapshot?.bearer?.takeIf { it.isNotEmpty() }?.let {
+            return@withContext if (nmIfOAuthCurrent(nmSnapshot) {}) it else null
+        }
+        val stored = (if (nmSnapshot != null) nmSnapshot.storedTokens() else loadStoredTokens())
+            ?: return@withContext null
         val token = stored.optString("access_token", "").ifEmpty { return@withContext null }
         val expireAt = stored.optLong("expire_at", 0)
         val now = System.currentTimeMillis()
 
         val needsRefresh = expireAt > 0 && (expireAt - now) <= REFRESH_BUFFER_MS
-        if (!needsRefresh) return@withContext token
+        if (!needsRefresh) return@withContext if (nmSnapshot == null || nmIfOAuthCurrent(nmSnapshot) {}) token else null
 
-        when (refreshTokenClassified()) {
-            RefreshOutcome.SUCCESS ->
-                loadStoredTokens()?.optString("access_token", "")?.ifEmpty { null }
+        when (if (nmSnapshot != null) nmRefreshTokenClassified(nmSnapshot) else refreshTokenClassified()) {
+            RefreshOutcome.SUCCESS -> if (nmSnapshot != null) nmRefreshedAccessToken(nmSnapshot)
+                else loadStoredTokens()?.optString("access_token", "")?.ifEmpty { null }
             RefreshOutcome.INVALID_GRANT -> null
             RefreshOutcome.TRANSIENT ->
-                if (expireAt > 0 && now >= expireAt) null else token
+                if ((nmSnapshot != null && !nmIfOAuthCurrent(nmSnapshot) {}) ||
+                    (expireAt > 0 && now >= expireAt)) null else token
             RefreshOutcome.NO_TOKEN -> null
         }
     }

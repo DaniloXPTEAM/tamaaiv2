@@ -441,7 +441,32 @@ internal suspend fun performTest(
     providerRepository: ProviderRepository,
     context: android.content.Context,
 ): QuickTestState = withContext(Dispatchers.IO) {
-    fun failure(msg: String) = QuickTestState.Failure(msg)
+    // nanoMuse: provider errors can echo prompts or credentials. Keep only known
+    // local messages in the parallel app; an image failure may still be billable.
+    fun failure(msg: String): QuickTestState.Failure {
+        if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+            return QuickTestState.Failure(msg)
+        val allowed = listOf(
+            context.getString(R.string.quicktest_voice_unsupported),
+            context.getString(R.string.quicktest_no_audio),
+            context.getString(R.string.quicktest_clip_failed),
+            context.getString(R.string.quicktest_image_unsupported),
+            context.getString(R.string.quicktest_speech_unavailable),
+            context.getString(R.string.nm_model_cost_blocked), // nanoMuse: locally authored refusal
+        )
+        val generic = context.getString(if (kind == QuickTestKind.IMAGE_GEN) R.string.nm_image_request_failed
+            else R.string.nm_error_private_generic)
+        return QuickTestState.Failure(ai.tama.net.ProviderErrorPrivacy.localOrGeneric(msg, allowed, generic))
+    }
+    // nanoMuse: a test is a real model request, not evidence of a free plan.
+    fun requestFailure(error: Throwable, fallback: String): QuickTestState.Failure {
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+            error is kotlinx.coroutines.CancellationException) throw error
+        return failure(if (ai.tama.pricing.ModelCostGuard.causedByBlock(error))
+            context.getString(R.string.nm_model_cost_blocked) else error.message ?: fallback)
+    }
+    if (!ai.tama.pricing.ModelCostGuard.permits())
+        return@withContext failure(context.getString(R.string.nm_model_cost_blocked))
 
     val instance = providerRepository.instance(entry.providerInstanceId)
         ?: return@withContext failure("Provider instance not found.")
@@ -478,9 +503,11 @@ internal suspend fun performTest(
                         // (template voices carry the voice id as the model id) —
                         // iOS 0a52bdbf: pass entry.model.id for both so the test
                         // speaks in THAT voice, not the vendor default.
+                        // nanoMuse: the cost guard can change during setup.
+                        ai.tama.pricing.ModelCostGuard.requireAllowed()
                         val data = voice.synthesize(
                             com.openminis.app.provider.voice.VoiceOutputRequest(
-                                input = "Hi! This is nanoMuse testing text to speech.",
+                                input = "Hi! This is TAMA AI testing text to speech.",
                                 model = entry.model.id,
                                 voice = entry.model.id,
                                 // nanoMuse: use the native format for fixed-format speech APIs.
@@ -492,17 +519,19 @@ internal suspend fun performTest(
                         } else {
                             QuickTestState.AudioReply(data)
                         }
-                    }.getOrElse { failure(it.message ?: "Speech request failed.") }
+                    }.getOrElse { requestFailure(it, "Speech request failed.") }
                 }
             }
             else -> { // TRANSCRIPTION
                 if (!voice.supportsVoiceInput) {
                     failure(context.getString(R.string.quicktest_voice_unsupported))
                 } else {
-                    val spoken = "Hello from nanoMuse, testing speech to text."
+                    val spoken = "Hello from TAMA AI, testing speech to text."
                     val clip = synthesizeTestClip(context, spoken)
                         ?: return@withContext failure(context.getString(R.string.quicktest_clip_failed))
                     runCatching {
+                        // nanoMuse: recheck after synthesizing the local test clip.
+                        ai.tama.pricing.ModelCostGuard.requireAllowed()
                         val resp = voice.transcribe(
                             com.openminis.app.provider.voice.VoiceInputRequest(
                                 audioData = clip,
@@ -515,7 +544,7 @@ internal suspend fun performTest(
                         QuickTestState.TextReply(
                             context.getString(R.string.quicktest_transcript_result, spoken, heard),
                         )
-                    }.getOrElse { failure(it.message ?: "Transcription request failed.") }
+                    }.getOrElse { requestFailure(it, "Transcription request failed.") }
                 }
             }
         }
@@ -532,7 +561,7 @@ internal suspend fun performTest(
                     messages = listOf(
                         LLMMessage(
                             role = LLMMessage.Role.USER,
-                            content = "Hi! I'm setting you up in nanoMuse. Say hello back in one short, friendly sentence.",
+                            content = "Hi! I'm setting you up in TAMA AI. Say hello back in one short, friendly sentence.",
                         ),
                     ),
                     systemPrompt = null,
@@ -543,7 +572,7 @@ internal suspend fun performTest(
                 QuickTestState.TextReply(
                     text.ifEmpty { context.getString(R.string.quicktest_empty_reply) },
                 )
-            }.getOrElse { failure(it.message ?: "Request failed.") }
+            }.getOrElse { requestFailure(it, "Request failed.") }
         }
 
         QuickTestKind.IMAGE_GEN -> {
@@ -551,7 +580,7 @@ internal suspend fun performTest(
                 ?: return@withContext failure(context.getString(R.string.quicktest_image_unsupported))
             runCatching {
                 val resp = openAI.generateImage(
-                    prompt = "A friendly cute mascot logo for an app called nanoMuse, minimalist, centered, soft colors",
+                    prompt = "A friendly cute mascot logo for an app called TAMA AI, minimalist, centered, soft colors",
                     n = 1,
                     size = "1024x1024",
                     quality = null,
@@ -560,7 +589,7 @@ internal suspend fun performTest(
                     it.type == LLMMediaAttachment.MediaType.IMAGE
                 } ?: return@runCatching failure(context.getString(R.string.quicktest_no_image))
                 QuickTestState.ImageReply(img.data)
-            }.getOrElse { failure(it.message ?: "Image request failed.") }
+            }.getOrElse { requestFailure(it, "Image request failed.") }
         }
 
         // Handled above.

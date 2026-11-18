@@ -47,7 +47,18 @@ import org.json.JSONObject
  */
 object NanoMuseCloud {
     const val DEFAULT_BASE = "https://cloud.nanomuse.cn"
-    const val LABEL = "nanoMuse Cloud"
+    const val LABEL = "TAMA AI Cloud"
+
+    /**
+     * The group name this app used before the rebrand. A group the person already has under it is
+     * still *ours*: [LABEL] renamed the name, not the group, and matching only the new string
+     * would hand a signed-in account a second, duplicate group. Kept as a list so a further
+     * rename stays one edit.
+     */
+    val LEGACY_LABELS = listOf("nanoMuse Cloud")
+
+    /** Whether [name] is ours under any of the names this app has given the group. */
+    fun ownsGroup(name: String): Boolean = name == LABEL || name in LEGACY_LABELS
 
     private const val PREFS = "nanomuse"
     private const val KEY_BASE = "cloud.base"
@@ -480,7 +491,7 @@ object NanoMuseCloud {
     fun hasBlob(context: Context, sha256: String): Boolean {
         val key = apiKey(context) ?: throw CloudException("bad_key", "Not signed in")
         val req = Request.Builder().url(baseUrl(context) + "/v1/blobs/$sha256").head()
-            .header("Authorization", "Bearer $key").header("User-Agent", "nanoMuse-Android/${BuildConfig.VERSION_NAME}").build()
+            .header("Authorization", "Bearer $key").header("User-Agent", "TAMA-AI-Android/${BuildConfig.VERSION_NAME}").build()
         val r = try { http.newCall(req).execute() } catch (e: IOException) { throw CloudException("unreachable", e.message ?: "unreachable") }
         r.use { if (it.code == 404) return false; if (it.isSuccessful) return true; read(it) }
         return false
@@ -491,7 +502,7 @@ object NanoMuseCloud {
         val key = apiKey(context) ?: throw CloudException("bad_key", "Not signed in")
         val req = Request.Builder().url(baseUrl(context) + "/v1/blobs/$sha256")
             .put(data.toRequestBody(mime.toMediaType()))
-            .header("Authorization", "Bearer $key").header("User-Agent", "nanoMuse-Android/${BuildConfig.VERSION_NAME}").build()
+            .header("Authorization", "Bearer $key").header("User-Agent", "TAMA-AI-Android/${BuildConfig.VERSION_NAME}").build()
         val r = try { http.newCall(req).execute() } catch (e: IOException) { throw CloudException("unreachable", e.message ?: "unreachable") }
         return read(r)
     }
@@ -500,7 +511,7 @@ object NanoMuseCloud {
     fun getBlob(context: Context, sha256: String): Pair<String, ByteArray>? {
         val key = apiKey(context) ?: throw CloudException("bad_key", "Not signed in")
         val req = Request.Builder().url(baseUrl(context) + "/v1/blobs/$sha256").get()
-            .header("Authorization", "Bearer $key").header("User-Agent", "nanoMuse-Android/${BuildConfig.VERSION_NAME}").build()
+            .header("Authorization", "Bearer $key").header("User-Agent", "TAMA-AI-Android/${BuildConfig.VERSION_NAME}").build()
         val r = try { http.newCall(req).execute() } catch (e: IOException) { throw CloudException("unreachable", e.message ?: "unreachable") }
         r.use {
             if (it.code == 404) return null
@@ -916,11 +927,11 @@ object NanoMuseCloud {
             // Ours already, with the recommended model or with the person's own choice
             // (a member who swapped the recommended model for another must not get a
             // second "nanoMuse Cloud" group with the old one back on signing in again).
-            val already = config.modelGroups.any { chatEntry.id in it.memberEntryIds || (it.name == LABEL && it.memberEntryIds.isNotEmpty()) }
+            val already = config.modelGroups.any { chatEntry.id in it.memberEntryIds || (ownsGroup(it.name) && it.memberEntryIds.isNotEmpty()) }
             if (!already) {
                 // A group of ours left empty by an earlier sign-out is reused rather
                 // than doubled; otherwise a new one.
-                val empty = config.modelGroups.firstOrNull { it.name == LABEL && it.memberEntryIds.isEmpty() }
+                val empty = config.modelGroups.firstOrNull { ownsGroup(it.name) && it.memberEntryIds.isEmpty() }
                 if (empty != null) {
                     repo.updateGroup(empty.copy(memberEntryIds = (empty.memberEntryIds + chatEntry.id).toMutableList()))
                     if (repo.defaultPrimaryGroupId == null) repo.defaultPrimaryGroupId = empty.id
@@ -1259,7 +1270,7 @@ object NanoMuseCloud {
     private fun request(context: Context, method: String, path: String, body: JSONObject?, token: String?): Request {
         val builder = Request.Builder().url(baseUrl(context) + path)
         if (token != null) builder.header("Authorization", "Bearer $token")
-        builder.header("User-Agent", "nanoMuse-Android/${BuildConfig.VERSION_NAME}")
+        builder.header("User-Agent", "TAMA-AI-Android/${BuildConfig.VERSION_NAME}")
         when (method) {
             "GET" -> builder.get()
             else -> builder.method(method, (body?.toString() ?: "{}").toRequestBody(json))

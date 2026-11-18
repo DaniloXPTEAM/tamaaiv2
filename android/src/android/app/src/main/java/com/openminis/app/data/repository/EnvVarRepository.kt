@@ -38,6 +38,8 @@ class EnvVarRepository(private val context: Context) {
         val createdAt: Long = System.currentTimeMillis(),
     )
 
+    // nanoMuse: environment variable names and errors can also reveal private details.
+    private val nmParallel: Boolean get() = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
     private val _entries = MutableStateFlow<List<EnvVarEntry>>(emptyList())
     val entries: StateFlow<List<EnvVarEntry>> = _entries.asStateFlow()
 
@@ -79,7 +81,8 @@ class EnvVarRepository(private val context: Context) {
         _entries.value = _entries.value + entry
         encryptedPrefs.edit().putString(normalizedKey, sanitizeValue(value)).apply()
         saveMetadata()
-        Log.i(TAG, "Added env var: $normalizedKey")
+        // nanoMuse: keep variable names out of the parallel app's log.
+        Log.i(TAG, ai.tama.net.ChatLogPrivacy.message(nmParallel, "Environment variable added") { "Added env var: $normalizedKey" })
         return true
     }
 
@@ -105,7 +108,8 @@ class EnvVarRepository(private val context: Context) {
         // Save new value
         encryptedPrefs.edit().putString(normalizedKey, sanitizeValue(newValue)).apply()
         saveMetadata()
-        Log.i(TAG, "Updated env var: ${current.key} → $normalizedKey")
+        // nanoMuse: keep both old and new names out of the parallel app's log.
+        Log.i(TAG, ai.tama.net.ChatLogPrivacy.message(nmParallel, "Environment variable updated") { "Updated env var: ${current.key} → $normalizedKey" })
         return true
     }
 
@@ -114,7 +118,8 @@ class EnvVarRepository(private val context: Context) {
         encryptedPrefs.edit().remove(entry.key).apply()
         _entries.value = _entries.value.filter { it.id != id }
         saveMetadata()
-        Log.i(TAG, "Deleted env var: ${entry.key}")
+        // nanoMuse: keep variable names out of the parallel app's log.
+        Log.i(TAG, ai.tama.net.ChatLogPrivacy.message(nmParallel, "Environment variable deleted") { "Deleted env var: ${entry.key}" })
     }
 
     fun getValue(key: String): String? = encryptedPrefs.getString(key, null)
@@ -149,7 +154,8 @@ class EnvVarRepository(private val context: Context) {
             }
             metadataFile.writeText(array.toString())
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to save metadata: ${e.message}")
+            // nanoMuse: exception messages can include private paths or metadata.
+            Log.e(TAG, ai.tama.net.ChatLogPrivacy.message(nmParallel, "Failed to save metadata") { "Failed to save metadata: ${e.message}" })
         }
     }
 
@@ -175,7 +181,8 @@ class EnvVarRepository(private val context: Context) {
             }
             _entries.value = entries
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load metadata: ${e.message}")
+            // nanoMuse: exception messages can include private paths or metadata.
+            Log.e(TAG, ai.tama.net.ChatLogPrivacy.message(nmParallel, "Failed to load metadata") { "Failed to load metadata: ${e.message}" })
         }
     }
 }

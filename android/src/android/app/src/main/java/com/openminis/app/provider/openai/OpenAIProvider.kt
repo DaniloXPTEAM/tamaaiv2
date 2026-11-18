@@ -17,6 +17,8 @@ import com.openminis.app.provider.thinking.ThinkingRuleResolver
 import com.openminis.app.provider.LLMProvider
 import com.openminis.app.provider.applyUserAgentOverride
 import com.openminis.app.provider.safeOptString
+import ai.tama.net.singleUseImageBody
+import ai.tama.net.singleUseImageClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -93,6 +95,12 @@ class OpenAIProvider private constructor(
     private val azureBase: String? = null,
 ) : LLMProvider {
     override val name = "OpenAI"
+
+    // nanoMuse: set only on a fresh direct ModelUse provider. This narrows the
+    // replay/redirect window and rechecks its mode just before dispatch; it is
+    // not a spending limit and cannot undo a request that has already left.
+    internal var singleUseDirectRequest: Boolean = false
+    internal var beforeDirectRequest: (() -> Unit)? = null
 
     /**
      * [T-android-thinking-rules-phase2] Owning provider-instance id, set by
@@ -348,6 +356,12 @@ class OpenAIProvider private constructor(
         if (token.isEmpty()) this
         else if (isAzure) header("api-key", token)
         else header("Authorization", "Bearer $token")
+
+    // nanoMuse: request headers can override the configured key or send several credentials.
+    private fun requestCredentials(request: Request): List<String> =
+        ai.tama.net.ProviderCredentials.fromHeaders(
+            request.headers.names().associateWith { request.headers.values(it) }, apiKey,
+        )
 
     /**
      * Build the request URL for Azure OpenAI, mirroring the official AzureOpenAI
@@ -648,6 +662,8 @@ class OpenAIProvider private constructor(
         tools: List<AgentToolDefinition>,
         thinkingLevel: ThinkingLevel,
     ): Flow<LLMStreamChunk> = callbackFlow {
+        // nanoMuse: neither a selected model nor user-supplied request fields prove zero cost.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         val body = if (isCodexImageModel) {
             // [T-gpt-image2-codex-backend-route-android] gpt-image-2 on an
             // OpenAI OAuth (Codex) instance is driven through the Codex backend
@@ -707,7 +723,15 @@ class OpenAIProvider private constructor(
             )
         }
         // nanoMuse: OpenCode Go wants one stable id per conversation (io.github.nanomuse.net.OpenCodeSession); the relay's record takes the same id and, with it, where the call sits (io.github.nanomuse.cloud.CloudHeaders)
-        val request = buildRequest(bodyStr, if (io.github.nanomuse.net.OpenCodeSession.wants(basePath) || io.github.nanomuse.cloud.CloudHeaders.isCloud(extraHeaders)) derivePromptCacheKey(messages) else null, messages)
+        val builtRequest = buildRequest(bodyStr, if (io.github.nanomuse.net.OpenCodeSession.wants(basePath) || io.github.nanomuse.cloud.CloudHeaders.isCloud(extraHeaders)) derivePromptCacheKey(messages) else null, messages)
+        // nanoMuse: a direct request can produce images even if metadata says text.
+        val request = if (singleUseDirectRequest && builtRequest.body != null)
+            builtRequest.newBuilder().method(builtRequest.method, builtRequest.body!!.singleUseImageBody()).build()
+        else builtRequest
+        // nanoMuse: a provider may echo any request credential, even JSON-escaped.
+        val responseCredentials = requestCredentials(request)
+        // nanoMuse: this is the actual wire model, not whatever the picker says after a fallback.
+        val requestModelId = (body.opt("model") as? String)?.takeIf { it.isNotBlank() }
         val headerMap = mutableMapOf<String, String>()
         for (name in request.headers.names()) {
             headerMap[name] = request.headers[name] ?: ""
@@ -746,7 +770,9 @@ class OpenAIProvider private constructor(
         // watchdog below can (a) start the TTFB clock only after upload and
         // (b) evict THIS ONE connection on timeout.
         val watchState = CallWatchState()
-        val call = client.newCall(request.newBuilder().tag(CallWatchState::class.java, watchState).build())
+        // nanoMuse: disable client-level retries and redirects for direct test calls.
+        val streamClient = if (singleUseDirectRequest) client.singleUseImageClient() else client
+        val call = streamClient.newCall(request.newBuilder().tag(CallWatchState::class.java, watchState).build())
         // [T-android-stale-conn-retry-hang] Time-to-first-byte watchdog. A
         // request written into a dead pooled h2 tunnel (local proxy socket
         // survives a network flap) produces NO further events — no headers,
@@ -803,6 +829,9 @@ class OpenAIProvider private constructor(
             }
         }
         val response = try {
+            // nanoMuse: recheck after preparing the request and before the network call.
+            beforeDirectRequest?.invoke()
+            ai.tama.pricing.ModelCostGuard.requireAllowed()
             call.execute()
         } catch (e: IOException) {
             if (ttfbTimedOut.get()) {
@@ -829,12 +858,13 @@ class OpenAIProvider private constructor(
         }
         io.github.nanomuse.cloud.CloudHeaders.noteResponse(response) // nanoMuse: the id the relay gave the turn, for the events about it
         if (!response.isSuccessful) {
+            // nanoMuse: keep the raw body only in this call for JSON decoding and classification.
+            // A provider can echo a prompt or JSON-escaped credentials, so never log it.
             val errorBody = response.body?.string() ?: ""
-            // T321: full error body — debug-only, but kept unconditional here
-            // since non-2xx is rare and the body is critical for diagnosis.
+            // nanoMuse: the redacted message, rather than opaque metadata, is available in chat.
             com.openminis.app.logging.AppLogger.error(
                 "OpenAIProvider",
-                "[T321] ← HTTP ${response.code} error body: $errorBody"
+                "[T321] ← HTTP ${response.code} provider error"
             )
             response.close()
             // T302: skip the LLMRequestLog write entirely on release builds —
@@ -849,11 +879,13 @@ class OpenAIProvider private constructor(
                         requestBody = bodyStr,
                         durationMs = System.currentTimeMillis() - startTime,
                         responseStatusCode = response.code,
-                        responseBody = errorBody.take(2000),
+                        // nanoMuse: exclude opaque JSON metadata and re-redact after decoding.
+                        responseBody = io.github.nanomuse.net.ProviderReach.diagnosticMessage(errorBody, maxChars = 2000, credentials = responseCredentials),
                     )
                 )
             }
-            throw mapHttpError(response.code, errorBody)
+            // nanoMuse: retain the wait hint and wire model; redact after decoding JSON.
+            throw mapHttpError(response.code, errorBody, response.header("Retry-After"), requestModelId, responseCredentials)
         }
         if (com.openminis.app.BuildConfig.DEBUG) {
             com.openminis.app.debug.LLMRequestLog.add(
@@ -878,7 +910,8 @@ class OpenAIProvider private constructor(
         // chunk, and finishes — bypassing the chat/tool SSE state machine below.
         if (isCodexImageModel) {
             try {
-                handleCodexImageStream(reader) { chunk -> trySend(chunk) }
+                // nanoMuse: redact echoed request credentials in structured image failures.
+                handleCodexImageStream(reader, responseCredentials) { chunk -> trySend(chunk) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -985,14 +1018,15 @@ class OpenAIProvider private constructor(
                     break
                 }
 
-                val event = try { JSONObject(payload) } catch (e: Exception) {
+                val event = try { JSONObject(payload) } catch (_: Exception) {
+                    // nanoMuse: malformed payloads and parser exceptions may contain private
+                    // text or escaped credentials. Keep only the length, not their contents.
                     com.openminis.app.logging.AppLogger.warning(
-                        "OpenAIProvider",
-                        "[T321] SSE JSON parse failed: ${e.message} payload=${payload.take(300)}"
+                        "OpenAIProvider", "[T321] SSE JSON parse failed: payloadChars=${payload.length}"
                     )
                     continue
                 }
-                android.util.Log.d("ToolChain[Provider]", "RAW SSE: $payload")
+                // nanoMuse: do not log raw SSE, which may contain a prompt or escaped credentials.
                 sseEventCount++
 
                 // T321: per-event delta-field summary. Only counts/lengths,
@@ -1080,7 +1114,9 @@ class OpenAIProvider private constructor(
                                 if (itemId.isNotEmpty() && callId.isNotEmpty() && name.isNotEmpty()) {
                                     responsesToolCalls[itemId] = ResponsesToolCallAccumulator(callId = callId, name = name)
                                     val combined = combineResponsesAPIIds(callId, itemId)
-                                    android.util.Log.d("ToolChain[Provider]", "→ ToolUseStart (Responses) id=$combined name=$name")
+                                    // nanoMuse: untrusted tool fields can contain private text.
+                                    if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                                        android.util.Log.d("ToolChain[Provider]", "→ ToolUseStart (Responses) id=$combined name=$name")
                                     send(LLMStreamChunk.ToolUseStart(combined, name))
                                     responsesToolCalls[itemId]?.started = true
                                 }
@@ -1119,7 +1155,9 @@ class OpenAIProvider private constructor(
                                 val argsStr = item.optString("arguments", acc.args.toString())
                                 val args = try { JSONObject(argsStr) } catch (_: Exception) { JSONObject() }
                                 val combined = combineResponsesAPIIds(acc.callId, itemId)
-                                android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete (Responses) id=$combined name=${acc.name} args=${args.toString().take(300)}")
+                                // nanoMuse: tool arguments can contain prompts or credentials.
+                                if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                                    android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete (Responses) id=$combined name=${acc.name} args=${args.toString().take(300)}")
                                 send(LLMStreamChunk.ToolCallComplete(combined, acc.name, args))
                             }
                         }
@@ -1133,19 +1171,27 @@ class OpenAIProvider private constructor(
                             // response.error = {code, message}. Mirrors iOS 637cd890.
                             val resp = event.optJSONObject("response")
                             val err = resp?.optJSONObject("error")
-                            val code = err?.optString("code")?.takeIf { it.isNotEmpty() } ?: "unknown"
-                            val message = err?.optString("message")?.takeIf { it.isNotEmpty() }
-                                ?: "response.failed with no error detail"
+                            val code = (err?.opt("code") as? String)?.takeIf { it.isNotEmpty() } ?: "unknown"
+                            // nanoMuse: attach this stream's model and decoded, redacted message.
+                            // There is no HTTP status in this event; do not invent one. Relay and
+                            // content-check refusals keep their existing special classification.
+                            val diagnosticBody = JSONObject().put("error", err ?: JSONObject()).toString()
+                            val mapped = mapHttpError(0, diagnosticBody, requestModelId = requestModelId, requestCredentials = responseCredentials, hasHttpStatus = false)
+                            val safeCode = io.github.nanomuse.net.ProviderReach.redactedText(code, responseCredentials, 128)
+                            val message = io.github.nanomuse.net.ProviderReach.diagnosticMessage(diagnosticBody, credentials = responseCredentials)
+                                .ifBlank { "response.failed with no error detail" }
                             com.openminis.app.logging.AppLogger.error(
-                                "OpenAIProvider",
-                                "Responses API response.failed — code=$code message=$message"
+                                "OpenAIProvider", "Responses API response.failed"
                             )
-                            if (code == "server_error" || code == "rate_limit_exceeded") {
-                                // Transient family: retry on the same model
-                                // rather than falling back through the group.
-                                throw LLMError.TransientError("[$code] $message")
+                            // Preserve the existing retry family independently of the diagnostic card.
+                            val failure = if (code == "server_error" || code == "rate_limit_exceeded") {
+                                LLMError.TransientError("[$safeCode] $message")
+                            } else {
+                                LLMError.ProviderError("[$safeCode] $message")
                             }
-                            throw LLMError.ProviderError("[$code] $message")
+                            failure.nmProviderReach = mapped.nmProviderReach
+                            failure.nmRelayError = mapped.nmRelayError
+                            throw failure
                         }
                         type == "response.incomplete" -> {
                             // [T-responses-terminal-events] The server ended the
@@ -1278,8 +1324,9 @@ class OpenAIProvider private constructor(
                     val inlineError = event.optJSONObject("error")
                     if (inlineError != null) {
                         val code = inlineError.optInt("code", 0)
-                        val msg = inlineError.optString("message", "Unknown SSE error")
-                        val err = mapHttpError(code, event.toString())
+                        // nanoMuse: the event's code can guide retry but is not the HTTP status
+                        // of the successful streaming response. Keep that distinction in details.
+                        val err = mapHttpError(code, event.toString(), requestModelId = requestModelId, requestCredentials = responseCredentials, hasHttpStatus = false)
                         throw err
                     }
                     event.optJSONObject("nanomuse")?.let { io.github.nanomuse.cloud.NmStreamStatus.note(it) } // nanoMuse: the relay's "queued, N ahead" before the model speaks (docs/cloud.md)
@@ -1349,12 +1396,16 @@ class OpenAIProvider private constructor(
                                 // Emit start exactly once per tool call
                                 if (!acc.started && acc.id.isNotEmpty() && acc.name.isNotEmpty()) {
                                     acc.started = true
-                                    android.util.Log.d("ToolChain[Provider]", "→ ToolUseStart id=${acc.id} name=${acc.name}")
+                                    // nanoMuse: do not log provider-supplied tool identifiers in parallel.
+                                    if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                                        android.util.Log.d("ToolChain[Provider]", "→ ToolUseStart id=${acc.id} name=${acc.name}")
                                     send(LLMStreamChunk.ToolUseStart(acc.id, acc.name))
                                 }
                                 // Emit input delta
                                 if (acc.id.isNotEmpty() && acc.args.isNotEmpty()) {
-                                    android.util.Log.d("ToolChain[Provider]", "→ ToolInputDelta id=${acc.id} accumulated=${acc.args.length}chars")
+                                    // nanoMuse: even a tool id is an untrusted provider value.
+                                    if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                                        android.util.Log.d("ToolChain[Provider]", "→ ToolInputDelta id=${acc.id} accumulated=${acc.args.length}chars")
                                     send(LLMStreamChunk.ToolInputDelta(acc.id, acc.args.toString()))
                                 }
                             }
@@ -1401,7 +1452,9 @@ class OpenAIProvider private constructor(
             for ((_, acc) in toolCallAccumulators) {
                 if (acc.id.isNotEmpty() && acc.name.isNotEmpty()) {
                     val args = try { JSONObject(acc.args.toString()) } catch (_: Exception) { JSONObject() }
-                    android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete id=${acc.id} name=${acc.name} args=${args.toString().take(300)}")
+                    // nanoMuse: do not put tool arguments in parallel logcat or crash reports.
+                    if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                        android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete id=${acc.id} name=${acc.name} args=${args.toString().take(300)}")
                     send(LLMStreamChunk.ToolCallComplete(acc.id, acc.name, args))
                 }
             }
@@ -1486,11 +1539,11 @@ class OpenAIProvider private constructor(
                 )
             }
         } catch (e: Exception) {
-            // T321: never silently swallow — log message + top-3 stack frames.
+            // nanoMuse: exception messages may include raw or escaped response content.
             val frames = e.stackTrace.take(3).joinToString(" | ") { "${it.className}.${it.methodName}:${it.lineNumber}" }
             com.openminis.app.logging.AppLogger.error(
                 "OpenAIProvider",
-                "[T321] stream parse exception: ${e.javaClass.simpleName}: ${e.message} @ $frames " +
+                "[T321] stream parse exception: ${e.javaClass.simpleName} @ $frames " +
                     "(events=$sseEventCount contentLen=$contentLen reasoningLen=$reasoningLen)"
             )
             cancel("Stream error", mapError(e))
@@ -1542,6 +1595,8 @@ class OpenAIProvider private constructor(
         headers: Map<String, String>,
         bodyObject: JSONObject?,
     ): RawPassthroughResult = withContext(Dispatchers.IO) {
+        // nanoMuse: raw endpoint, body and header overrides cannot establish a free request.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         val url: String = when {
             endpoint != null && endpoint.startsWith("/") ->
                 hostRootURL(endpoint)
@@ -1560,7 +1615,8 @@ class OpenAIProvider private constructor(
                 override fun contentLength() = bodyBytes.size.toLong()
                 override fun writeTo(sink: okio.BufferedSink) { sink.write(bodyBytes) }
             }
-            builder.method(verb, requestBody)
+            // nanoMuse: passthrough may target a billable image or video endpoint.
+            builder.method(verb, if (singleUseDirectRequest) requestBody.singleUseImageBody() else requestBody)
         } else {
             builder.method(verb, null)
         }
@@ -1578,7 +1634,11 @@ class OpenAIProvider private constructor(
                 "headerOverrides=[${headers.keys.sorted().joinToString(",")}]",
         )
 
-        val response = client.newCall(builder.build()).execute()
+        // nanoMuse: revalidate after custom headers and token resolution.
+        beforeDirectRequest?.invoke()
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+        val rawClient = if (singleUseDirectRequest) client.singleUseImageClient() else client
+        val response = rawClient.newCall(builder.build()).execute()
         response.use { resp ->
             RawPassthroughResult(
                 data = resp.body?.bytes() ?: ByteArray(0),
@@ -1611,7 +1671,11 @@ class OpenAIProvider private constructor(
         n: Int = 1,
         size: String? = null,
         quality: String? = null,
+        allowFormatRetry: Boolean = true,
     ): LLMResponse = withContext(Dispatchers.IO) {
+        // nanoMuse: image capability and approval do not verify image pricing.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+        val retryAllowed = allowFormatRetry && !singleUseDirectRequest
         val token = getToken()
         // [T-android-model-use-image-passthrough GH#62] Honor an explicit
         // endpoint-path override (non-standard providers); default otherwise.
@@ -1647,6 +1711,8 @@ class OpenAIProvider private constructor(
             // override can't misroute the request.
             for ((k, v) in imageExtraBody) body.put(k, v ?: JSONObject.NULL)
             body.put("model", model.id)
+            // nanoMuse: snapshot the model that is actually serialized for this request.
+            val requestModelId = body.optString("model", "")
 
             val bodyStr = body.toString()
             val jsonMediaType = "application/json".toMediaType()
@@ -1658,7 +1724,7 @@ class OpenAIProvider private constructor(
             }
             val builder = Request.Builder()
                 .url(url)
-                .post(requestBody)
+                .post(if (retryAllowed) requestBody else requestBody.singleUseImageBody())
                 .applyKeyAuth(token)
                 .header("Content-Type", "application/json")
             for ((key, value) in extraHeaders) {
@@ -1672,19 +1738,26 @@ class OpenAIProvider private constructor(
             builder.applyUserAgentOverride(customUserAgent)
             val request = builder.build()
 
+            // Do not log the URL: a custom base may contain credentials or private query parameters.
             com.openminis.app.logging.AppLogger.info(
                 "OpenAIProvider",
-                "[ModelUseRoute] → images/generations url=$url model=${model.id} n=$n " +
-                    "size=$size quality=$quality respFormat=${if (triedWithoutFormat) "<none>" else "b64_json"}",
+                "[ModelUseRoute] images/generations model=" +
+                    io.github.nanomuse.net.ProviderReach.redactedText(requestModelId, requestCredentials(request), 128) +
+                    " n=$n size=$size quality=$quality respFormat=${if (triedWithoutFormat) "<none>" else "b64_json"}",
             )
 
-            val response = client.newCall(request).execute()
+            val imageClient = if (retryAllowed) client else client.singleUseImageClient()
+            // nanoMuse: revalidate before every image POST, including a format retry.
+            beforeDirectRequest?.invoke()
+            ai.tama.pricing.ModelCostGuard.requireAllowed()
+            val response = imageClient.newCall(request).execute()
             val statusCode = response.code
             val responseBody = response.body?.string() ?: ""
             response.close()
 
-            // Some providers (xAI) don't support b64_json — retry without it once.
-            if (!triedWithoutFormat && statusCode == 400 &&
+            // Some providers (xAI) don't support b64_json. Automatic media calls
+            // decline even this same-model retry, since a failed request may be billed.
+            if (retryAllowed && !triedWithoutFormat && statusCode == 400 &&
                 (responseBody.lowercase().contains("response_format") || responseBody.contains("b64_json"))
             ) {
                 com.openminis.app.logging.AppLogger.info(
@@ -1696,11 +1769,13 @@ class OpenAIProvider private constructor(
             }
 
             if (statusCode !in 200..299) {
+                // nanoMuse: headers can add or override credentials on this request.
+                val credentials = requestCredentials(request)
                 com.openminis.app.logging.AppLogger.warning(
                     "OpenAIProvider",
-                    "[ModelUseRoute] images/generations HTTP $statusCode body=${responseBody.take(300)}",
+                    "[ModelUseRoute] images/generations HTTP $statusCode",
                 )
-                throw mapHttpError(statusCode, responseBody)
+                throw mapHttpError(statusCode, responseBody, response.header("Retry-After"), requestModelId, credentials)
             }
 
             val json = try {
@@ -1738,7 +1813,12 @@ class OpenAIProvider private constructor(
         n: Int = 1,
         size: String? = null,
         quality: String? = null,
+        // nanoMuse: callers may prohibit replay of a potentially billable edit.
+        allowFormatRetry: Boolean = true,
     ): LLMResponse = withContext(Dispatchers.IO) {
+        // nanoMuse: image edits are separate requests with independently unknown cost.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+        val retryAllowed = allowFormatRetry && !singleUseDirectRequest
         if (images.isEmpty()) {
             throw LLMError.ProviderError("images/edits requires at least one input image")
         }
@@ -1758,8 +1838,9 @@ class OpenAIProvider private constructor(
         val userSetResponseFormat = imageExtraBody.containsKey("response_format")
         var triedWithoutFormat = userSetResponseFormat
         while (true) {
+            val requestModelId = model.id // nanoMuse: this exact value goes on the wire.
             val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
-            multipart.addFormDataPart("model", model.id)
+            multipart.addFormDataPart("model", requestModelId)
             multipart.addFormDataPart("prompt", prompt)
             multipart.addFormDataPart("n", n.toString())
             if (size != null) multipart.addFormDataPart("size", size)
@@ -1783,9 +1864,11 @@ class OpenAIProvider private constructor(
                 )
             }
 
+            // nanoMuse: one-shot multipart bodies cannot be replayed after an ambiguous failure.
+            val editBody = multipart.build()
             val builder = Request.Builder()
                 .url(url)
-                .post(multipart.build())
+                .post(if (retryAllowed) editBody else editBody.singleUseImageBody())
                 .applyKeyAuth(token)
             for ((key, value) in extraHeaders) {
                 builder.header(key, value)
@@ -1803,12 +1886,16 @@ class OpenAIProvider private constructor(
                     "respFormat=${if (triedWithoutFormat) "<none>" else "b64_json"}",
             )
 
-            val response = client.newCall(request).execute()
+            // nanoMuse: revalidate before every edit and prevent transport replay when requested.
+            val imageClient = if (retryAllowed) client else client.singleUseImageClient()
+            beforeDirectRequest?.invoke()
+            ai.tama.pricing.ModelCostGuard.requireAllowed()
+            val response = imageClient.newCall(request).execute()
             val statusCode = response.code
             val responseBody = response.body?.string() ?: ""
             response.close()
 
-            if (!triedWithoutFormat && statusCode == 400 &&
+            if (retryAllowed && !triedWithoutFormat && statusCode == 400 &&
                 (responseBody.lowercase().contains("response_format") || responseBody.contains("b64_json"))
             ) {
                 com.openminis.app.logging.AppLogger.info(
@@ -1820,11 +1907,13 @@ class OpenAIProvider private constructor(
             }
 
             if (statusCode !in 200..299) {
+                // nanoMuse: headers can add or override credentials on this request.
+                val credentials = requestCredentials(request)
                 com.openminis.app.logging.AppLogger.warning(
                     "OpenAIProvider",
-                    "[ModelUseRoute] images/edits HTTP $statusCode body=${responseBody.take(300)}",
+                    "[ModelUseRoute] images/edits HTTP $statusCode",
                 )
-                throw mapHttpError(statusCode, responseBody)
+                throw mapHttpError(statusCode, responseBody, response.header("Retry-After"), requestModelId, credentials)
             }
 
             val json = try {
@@ -1880,19 +1969,39 @@ class OpenAIProvider private constructor(
                 val urlStr = item.safeOptString("url", "")
                 if (urlStr.isNotEmpty()) {
                     try {
+                        // nanoMuse: a result URL is another network request; revocation
+                        // cannot undo the image already submitted, but stops this follow-up.
+                        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                            beforeDirectRequest?.invoke()
+                            ai.tama.pricing.ModelCostGuard.requireAllowed()
+                        }
                         val dlReq = Request.Builder().url(urlStr).get().build()
-                        val dlResp = client.newCall(dlReq).execute()
-                        val dlBytes = dlResp.body?.bytes()
-                        val ctMime = dlResp.header("Content-Type")
-                        dlResp.close()
-                        if (dlBytes != null && dlBytes.isNotEmpty()) {
-                            val mime = hintMime ?: ctMime ?: detectImageMime(dlBytes)
-                            attachments.add(LLMMediaAttachment(LLMMediaAttachment.MediaType.IMAGE, mime, dlBytes))
+                        // nanoMuse: result URLs are separate requests, so do not
+                        // silently follow redirects or retry them in the parallel app.
+                        val parallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+                        val downloadClient = if (parallel) client.singleUseImageClient() else client
+                        downloadClient.newCall(dlReq).execute().use { dlResp ->
+                            if (parallel && !dlResp.isSuccessful) throw IOException("Image download failed")
+                            val dlBytes = dlResp.body?.bytes()
+                            val ctMime = dlResp.header("Content-Type")
+                            if (dlBytes != null && dlBytes.isNotEmpty()) {
+                                val mime = hintMime ?: ctMime ?: detectImageMime(dlBytes)
+                                attachments.add(LLMMediaAttachment(LLMMediaAttachment.MediaType.IMAGE, mime, dlBytes))
+                            }
                         }
                     } catch (e: Exception) {
+                        // nanoMuse: never turn a local refusal or cancellation into a successful empty image.
+                        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                            if (ai.tama.pricing.ModelCostGuard.causedByBlock(e) || e is ai.tama.net.DirectModelUseGuard.Blocked ||
+                                e is ai.tama.media.AutomaticAvatarGuard.Blocked || e is ai.tama.media.ImageDispatch.AuthorizationChanged ||
+                                e is ai.tama.media.ImageAttemptTracker.Stopped || e is kotlinx.coroutines.CancellationException) throw e
+                            // A missing result is a failure, not a successful empty
+                            // image. Do not expose URL or provider text with it.
+                            throw LLMError.ProviderError("Image download failed")
+                        }
+                        // Download URLs can contain signed query parameters; never log them.
                         com.openminis.app.logging.AppLogger.warning(
-                            "OpenAIProvider",
-                            "[ModelUseRoute] failed to download image from $urlStr: ${e.message}",
+                            "OpenAIProvider", "[ModelUseRoute] image download failed",
                         )
                     }
                 }
@@ -2023,7 +2132,10 @@ class OpenAIProvider private constructor(
         // history while Mistral forbids it, and neither advertises
         // supportsReasoning via /v1/models — opposite requirements on the same
         // generic openAI provider path. Hence a spec-driven vendor flag.
-        val forbidReasoningField = isMistral
+        // nanoMuse: the parallel TAMA test build must not echo or synthesize this field
+        // for Groq, whose assistant-message schema rejects even an empty value.
+        val tamaGroqHistory = ai.tama.net.GroqHistoryPolicy.applies(com.openminis.app.BuildConfig.APPLICATION_ID, basePath)
+        val forbidReasoningField = isMistral || tamaGroqHistory
         val includeReasoning =
             (thinkingLevel.isEnabled || modelAlwaysReasons) && modelMayReason && !forbidReasoningField
         val echoReasoning = includeReasoning
@@ -2310,6 +2422,9 @@ class OpenAIProvider private constructor(
         // shape). User keys win over our defaults, but `model` is force-kept so a
         // stray override can't misroute. Mirrors generateImage's merge + iOS.
         mergeChatExtraBody(body)
+        // nanoMuse: passthrough data may replace the generated messages; enforce the same
+        // Groq-specific rule on the final request without mutating the saved conversation.
+        if (tamaGroqHistory) ai.tama.net.GroqHistoryPolicy.removeUnsupportedReasoning(body)
 
         return body
     }
@@ -2672,10 +2787,11 @@ class OpenAIProvider private constructor(
      *
      * Streams line-by-line (no 8 MB StringBuilder + regex backtracking): only
      * the one `result` base64 string is retained, decoded once at the end.
-     * Never logs the token (the SSE body carries no Authorization).
+     * Provider error messages can echo the request's credentials and are redacted.
      */
     private suspend fun handleCodexImageStream(
         reader: BufferedReader,
+        credentials: Collection<String>, // nanoMuse: for decoded error and refusal text
         emit: (LLMStreamChunk) -> Unit,
     ) {
         var b64Result: String? = null
@@ -2740,11 +2856,12 @@ class OpenAIProvider private constructor(
                     }
                 }
                 "response.failed", "error" -> {
-                    val msg = event.optJSONObject("response")?.optJSONObject("error")?.optString("message")
-                        ?.takeIf { it.isNotEmpty() }
-                        ?: event.optJSONObject("error")?.optString("message")?.takeIf { it.isNotEmpty() }
+                    // nanoMuse: object-valued metadata is not a user-facing error message.
+                    val error = event.optJSONObject("response")?.optJSONObject("error") ?: event.optJSONObject("error")
+                    val msg = (error?.opt("message") as? String)?.takeIf { it.isNotEmpty() }
                         ?: "Codex image generation failed"
-                    throw LLMError.ProviderError(msg)
+                    // nanoMuse: the message is decoded, so escaped credentials are now visible.
+                    throw LLMError.ProviderError(io.github.nanomuse.net.ProviderReach.redactedText(msg, credentials, 500))
                 }
             }
         }
@@ -2776,7 +2893,8 @@ class OpenAIProvider private constructor(
         // Safety refusal: the image call explicitly failed and/or the model
         // returned a refusal message instead of an image.
         if (imageCallFailed || refusalText != null) {
-            val reason = refusalText?.trim()
+            // nanoMuse: a refusal can echo the request credential too.
+            val reason = refusalText?.trim()?.let { io.github.nanomuse.net.ProviderReach.redactedText(it, credentials, 500) }
             throw LLMError.ProviderError(
                 "Image generation was rejected by the safety system" +
                     (reason?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "."),
@@ -3471,40 +3589,54 @@ class OpenAIProvider private constructor(
         )
     }
 
-    private fun mapHttpError(statusCode: Int, body: String): LLMError {
-        // nanoMuse: the relay's "allowance used up" is a 429 with a structured body, and the
-        // ChatGPT plan's "region not supported" / "sign-in expired" / "nothing left" are a 403,
-        // a 401 and a 429 whose bodies the mapping below drops; keep them for the chat's cards.
-        io.github.nanomuse.cloud.AllowanceSignal.noteHttpError(statusCode, body, fromRelay = io.github.nanomuse.net.OwnProviderProxy.isRelay(basePath))
-        io.github.nanomuse.net.ReachSignal.noteHttpError(
-            statusCode, body,
+    private fun mapHttpError(
+        statusCode: Int, body: String, retryAfter: String? = null,
+        requestModelId: String? = null, requestCredentials: Collection<String> = emptyList(),
+        hasHttpStatus: Boolean = true, // nanoMuse: false for an error inside a successful SSE response
+    ): LLMError {
+        // nanoMuse: retain each provider response on its own exception. A process-wide last-error
+        // slot could show a different request's failure after a fallback or a parallel call.
+        // Parse raw JSON first: literal redaction before parsing can corrupt JSON when a key
+        // contains a quote, and does not find a JSON-escaped credential. The body itself is not retained.
+        val diagnostic = ai.tama.net.ProviderErrorDiagnostics.capture(
+            code = statusCode, body = body,
             host = if (isOAuth && !forceChatCompletions) "chatgpt.com" else io.github.nanomuse.net.OwnProviderProxy.hostOf(basePath),
-            oauth = isOAuth,
+            oauth = isOAuth, requestModel = requestModelId, credentials = requestCredentials,
+            retryAfter = retryAfter, fromRelay = io.github.nanomuse.net.OwnProviderProxy.isRelay(basePath),
+            hasHttpStatus = hasHttpStatus,
         )
-        if (statusCode == 401 || statusCode == 403) return LLMError.InvalidApiKey()
-        if (statusCode == 429) return LLMError.RateLimited()
+        fun withDiagnostics(error: LLMError): LLMError = diagnostic.attach(error)
+        if (statusCode == 401) return withDiagnostics(LLMError.InvalidApiKey())
+        if (statusCode == 429) return withDiagnostics(LLMError.RateLimited())
 
-        val message = try {
-            val json = JSONObject(body)
-            val error = json.optJSONObject("error")
-            val errorMessage = error?.safeOptString("message", "") ?: body
-            "[$statusCode] $errorMessage"
-        } catch (_: Exception) {
-            "HTTP $statusCode: ${body.take(500)}"
+        // nanoMuse: parsed provider message only. Opaque JSON metadata and HTML are not
+        // needed to explain a failure and may echo prompts or encoded credentials.
+        val errorMessage = diagnostic.message
+        val message = when {
+            errorMessage.isNotBlank() && statusCode != 0 -> "[$statusCode] $errorMessage"
+            errorMessage.isNotBlank() -> errorMessage
+            hasHttpStatus -> "HTTP $statusCode"
+            statusCode != 0 -> "Provider error [$statusCode]"
+            else -> "Provider error"
         }
 
-        // nanoMuse: a gateway's 400 that says its own upstream gave nothing ("HTTP 0") is a blip to retry (#640)
-        if (statusCode == 400 && io.github.nanomuse.net.ModelBlip.saysUpstreamGaveNothing(message)) return LLMError.TransientError(message)
+        // nanoMuse: a 403 is access denied, not proof of an invalid API key. It follows the
+        // ProviderError path below, preserving both its status and the provider's message.
+        // nanoMuse: classify the decoded sentence before masking, since a credential might
+        // collide with "HTTP 0"; opaque metadata cannot turn the request into a retry (#640).
+        if (statusCode == 400 && io.github.nanomuse.net.ProviderReach.messageSaysUpstreamGaveNothing(body)) {
+            return withDiagnostics(LLMError.TransientError(message))
+        }
 
         val transientCodes = setOf(500, 502, 503, 504, 529)
         if (statusCode in transientCodes) {
             // 503 with permanent failure indicators → ProviderError (trigger group fallback)
             if (statusCode == 503 && (body.contains("no_available_providers") || body.contains("model_not_found"))) {
-                return LLMError.ProviderError(message)
+                return withDiagnostics(LLMError.ProviderError(message))
             }
-            return LLMError.TransientError(message)
+            return withDiagnostics(LLMError.TransientError(message))
         }
-        return LLMError.ProviderError(message)
+        return withDiagnostics(LLMError.ProviderError(message))
     }
 
     private fun mapError(error: Throwable): LLMError {

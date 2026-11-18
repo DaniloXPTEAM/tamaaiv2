@@ -4,6 +4,86 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+- Split Android chat tool dispatch and stream handling out of the agent loop to reduce generated JVM method size.
+
+- In the side-by-side Android test build, serialized incoming Hub progress and terminal replies per call to prevent tested ordering and completion races. This does not fix relay misrouting.
+
+- In the side-by-side Android test build, kept selected stale Hub socket callbacks and retired call reservations from affecting a replacement connection. This does not fix relay misrouting.
+
+- Explained selected Hub calls refused before delivery in the side-by-side Android test build.
+
+- Kept current requests and, when the token budget permits, previous requests and recent tool work in view during long Python runtime turns and step-limit summaries, without changing saved history.
+
+- Refused agent browser actions and frames on blocked local pages, rejected unsafe URL schemes and non-HTTP fetch redirects, while preserving the person's own take-over view.
+
+- Kept environment-variable names and metadata exceptions out of selected logs in the side-by-side Android test build; other logs and unencrypted metadata still need privacy review.
+
+- Allowed the iSH native-build helper to use complete vendored dependency sources without requiring nested Git directories. Kept Android source directories named `sessions` from being ignored when starting a new Git repository.
+
+- In the side-by-side Android test build, pause covered requests with unverified cost by default, including some manual calls, and recheck image permission and route during dispatch. This is not a global spending limit: uncovered services and already-sent requests can still incur charges.
+
+- Restricted silent retries and redirects in covered side-by-side image and video transports, and added possible-charge warnings in covered video failure and Stop paths. An already-sent request can still be charged, and the parallel `model_use` path currently omits the `OwnTurns` turn record.
+
+- Stopped automatically replaying one-shot shell commands after an early silent signal in the side-by-side Android test build; the normal build keeps its existing seccomp fallback.
+
+- Reduced selected side-by-side chat, shell and native-offload logs that could expose tool arguments, titles, commands or exception details. Other logs and crash reports can still contain private data.
+
+- Kept overlapping sign-ins and credential restores separate in the side-by-side Android test build, and withheld automatic Vision Group requests until their route and image cost can be checked.
+
+- In the side-by-side Android test build, omit the unsupported assistant `reasoning_content` field when sending Chat Completions history to Groq's direct API; other packages and gateways keep their existing behavior.
+
+- Added an Android diagnostic preview in About and through `/diagnostico`; it copies only allowlisted build, device and classified chat-state fields after a tap, without conversations, credentials, addresses or logs.
+
+- Shortened the Android FULL agent prompt while keeping its tools and safety gates, and added a separately named debug build for side-by-side phone testing.
+
+- Kept Android image session approvals bound to the displayed model, route and account, and withdrew outstanding permission requests when a chat is cleared or deleted.
+
+- Added a tappable Android provider-error detail sheet with the failed request's model, redacted message and guarded retry. Stream error codes are not labelled as HTTP statuses.
+
+- Enlarged the Android prompt-report touch target and strengthened its isolated gesture diagnostics.
+
+- Added bounded debug-only prompt-sheet lifecycle diagnostics and a focused-composer emulator test without logging conversation content.
+
+- Made Android chat explain synchronous background-service request failures and retry the service request without repeating the person's task.
+
+- Clarified that exempting Android battery optimization can reduce restrictions but cannot guarantee uninterrupted background work.
+
+- Made the Android persistent shell decode completion markers and UTF-8 across process-read boundaries, without clearing a later command's callback.
+
+- Moved the Android prompt-size detail host outside the measured chat layout and added isolated report-sheet checks.
+
+- Added a bounded, app-tree-only process snapshot for diagnosing failed packaged-sandbox checks on the disposable Android emulator.
+
+- Added fail-closed emulator-health reporting and a narrowly scoped system-ANR diagnostic so later synthetic checks can run without treating an interrupted journey as a clean smoke.
+
+- Expanded Android screen and browser checks for common Portuguese labels, refused browser clicks or typing when the target cannot be inspected, and clarified the limits of detection, Stop and screenshot privacy.
+
+- Added bounded readback diagnostics to the isolated Android APK integrity check without bypassing a mismatch.
+
+- Kept the Android prompt-size report outside the recycled message row and dismissed the keyboard when opening it.
+
+- Distinguished Android provider size and output-limit refusals, and added bounded retries for an explicit output limit and short rate-limit waits.
+
+- Added a local Android `/prompt-size` diagnostic and isolated fixture for estimating prompt and tool sizes without sending private content to the model or general logs.
+
+- Kept Android's model-catalogue fallback from borrowing a different server's models when two endpoints share a hostname but use different ports or schemes.
+
+- Gave the Android app a warm TAMA palette across onboarding, chat, navigation and settings, and added a direct Pet shortcut beside the agent name without removing the profile route.
+
+- Prepared an isolated emulator check that installs the sealed arm64 phone APK rather than a separate x86 build, and compares the installed APK's hash with the artifact.
+
+- Extended the isolated Android checks to exercise first-run navigation, Pet care, a local model fixture, a process restart and the packaged shell, with bounded synthetic visual diagnostics and separate failure reports.
+
+- Kept action text and icons legible against dark TAMA surfaces while retaining white text on filled actions.
+
+- Prevented cancelled Android chat waits and overlapping runs from leaving or releasing the wrong concurrency slot.
+
+- Preserved the Android Pet's care history and corrected its needs, local-day streaks and chat-cycle rewards when returning to the app.
+
+- Kept queued Android chat rewards with the Pet present at submission, counted only saved goals, and distinguished unavailable Pet activities from low energy.
+
+- Distinguished Android provider authentication, access, credit and request-limit refusals, keeping the provider's message with credentials redacted instead of calling every 403 an invalid key.
+
 - Prevented failed coding runs from retrying in a new conversation after a tool had already started or returned a result.
 
 - Preserved desktop device-chat drafts edited while a send request was awaiting its response. For #815.
@@ -191,6 +271,8 @@ All notable changes to nanoMuse. The format follows [Keep a Changelog](https://k
 
 ### Android
 
+- Added six Pet stages, a shared daily XP limit, local missions and mini-games, and feeding, memorial and generation history without replacing custom avatars.
+- Kept a damaged Pet preference from interrupting completion of an Android agent task.
 - Paused automatic following as soon as a person scrolled towards older messages, and kept new reply chunks, tool cards and keyboard layout changes from resuming it. For #898.
 - Reserved output space before summarizing long conversations, so nearly full inputs were split instead of leaving the summary only a few output tokens. For #719.
 - Added progress rings to active main and side chats in the Muse drawer, using this phone's existing task tracking while preserving unread reply markers. Approval and per-chat step indicators remain separate work. For #531.

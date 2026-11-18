@@ -17,12 +17,15 @@ internal class PersistentTaskEndpoint(private val journal: PersistentTurns) {
         return result
     }
 
-    fun callId(owner: TurnOwner, turn: String): String? =
-        calls[owner to turn]?.callId?.takeIf { journal.status(owner, turn)?.optString("state") == "accepted" }
+    // nanoMuse: retain this invocation's identity for a stop that races with id reuse.
+    fun active(owner: TurnOwner, turn: String): LiveTurn? =
+        calls[owner to turn]?.takeIf { journal.status(owner, turn)?.optString("state") == "accepted" }
+
+    fun callId(owner: TurnOwner, turn: String): String? = active(owner, turn)?.callId
 
     fun run(
         owner: TurnOwner, turn: String, call: IncomingCall, create: () -> String,
-        execute: (String, (JSONObject) -> Unit) -> JSONObject,
+        execute: (String, (JSONObject) -> Unit, LiveTurn) -> JSONObject, // nanoMuse: pass the live invocation witness.
     ): JSONObject {
         val reservation = journal.accept(owner, turn, create)
         if (!reservation.accepted) return reservation.result
@@ -36,7 +39,7 @@ internal class PersistentTaskEndpoint(private val journal: PersistentTurns) {
         try {
             val result = try {
                 emit(JSONObject().put("stage", "accepted").put("turn_id", turn))
-                PersistentTurns.state("completed").put("text", execute(reservation.session, emit).optString("text"))
+                PersistentTurns.state("completed").put("text", execute(reservation.session, emit, live).optString("text")) // nanoMuse: same witness as active().
             } catch (failure: HubActions.Refused) {
                 if (failure.code == "cancelled") PersistentTurns.state("cancelled")
                 else PersistentTurns.state("failed").put("error", failure.code).put("message", failure.message)

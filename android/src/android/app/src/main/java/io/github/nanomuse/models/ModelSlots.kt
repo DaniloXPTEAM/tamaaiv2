@@ -22,7 +22,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.first // nanoMuse: wait for the already-running import
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The four model slots of Settings → Models (0.1.41 "Choice"): chat, the hands (operating the
@@ -417,12 +419,40 @@ object ModelSlots {
      */
     suspend fun applyProvider(context: Context, inst: ProviderInstance, slots: Set<Slot>): Set<Slot> {
         val repo = repo(context) ?: return emptySet()
-        if (repo.entriesFor(inst.id).none { !it.isHidden }) runCatching { repo.refreshModels(inst) }
+        // nanoMuse: a free-only setup must not quietly select a paid seed or
+        // an unimported image/video default. Wait for the form's in-flight
+        // catalogue check and select chat only from its fresh exact-id evidence.
+        val freeOnly = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" && inst.tamaImportFreeOnly
+        val eligible = if (freeOnly) {
+            if (repo.nmFreeImportStatus.value[inst.id] == ai.tama.pricing.FreeModelImportStatus.Checking) {
+                val completed = withTimeoutOrNull(30_000) {
+                    repo.nmFreeImportStatus.first { it[inst.id] != ai.tama.pricing.FreeModelImportStatus.Checking }
+                }
+                if (completed == null) return emptySet()
+            }
+            if (repo.tamaEligibleFreeModelIds(inst.id) == null) repo.refreshModels(inst)
+            repo.tamaEligibleFreeModelIds(inst.id) ?: return emptySet()
+        } else {
+            if (repo.entriesFor(inst.id).none { !it.isHidden }) {
+                try { repo.refreshModels(inst) }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { /* Keep the current choices. */ }
+            }
+            null
+        }
+        if (freeOnly) {
+            val live = repo.instance(inst.id) ?: return emptySet()
+            if (!live.isEnabled || !live.tamaImportFreeOnly ||
+                ai.tama.router.AutoModelStore.routeFingerprint(live) != ai.tama.router.AutoModelStore.routeFingerprint(inst)) return emptySet()
+        }
         val done = mutableSetOf<Slot>()
         for (slot in Slot.values()) {
-            if (slot !in slots) continue
+            if (slot !in slots || (freeOnly && slot != Slot.CHAT)) continue
             val option = when (slot) {
-                Slot.CHAT -> pickEntry(chatEntriesOf(context, inst), defaultOf(context, inst, slot))?.let { Option(inst, it.model.id, it.id) }
+                Slot.CHAT -> pickEntry(
+                    chatEntriesOf(context, inst).filter { eligible == null || it.model.id in eligible },
+                    defaultOf(context, inst, slot),
+                )?.let { Option(inst, it.model.id, it.id) }
                 Slot.HANDS -> pickEntry(handsEntriesOf(context, inst), defaultOf(context, inst, slot))?.let { Option(inst, it.model.id, it.id) }
                 Slot.IMAGE -> if (inst !in ImageGen.eligibleInstances(context)) null else {
                     SlotOrder.defaultModel(ImageGen.recommendedModel(context, inst).takeIf { it.isNotBlank() }, ImageGen.availableModels(context, inst))
@@ -433,7 +463,9 @@ object ModelSlots {
                         ?.let { Option(inst, it) }
                 }
             } ?: continue
-            choose(context, slot, option)
+            if (freeOnly && (repo.tamaEligibleFreeModelIds(inst.id)?.contains(option.modelId) != true ||
+                    option.entryId == null || !followPick(context, option.entryId))) continue
+            if (freeOnly) lastChanged.value = slot else choose(context, slot, option)
             done += slot
         }
         return done

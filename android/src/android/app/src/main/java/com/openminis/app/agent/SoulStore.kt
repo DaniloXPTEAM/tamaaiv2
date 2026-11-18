@@ -72,10 +72,10 @@ data class SoulMetadata(
 
     companion object {
         /** Locked identity emoji shown in every UI surface. */
-        const val DISPLAY_EMOJI = "🐾"
+        const val DISPLAY_EMOJI = "🐣"
 
         val DEFAULT = SoulMetadata(
-            name = "nanoMuse",
+            name = "TAMA AI",
             // Default emoji is intentionally empty — UI uses the fixed
             // [displayEmoji] sparkle and [SoulMDParser.serialize] no longer
             // writes the `emoji:` line. The field is kept on the struct only
@@ -318,7 +318,7 @@ object SoulStore {
      * `SoulStore.defaultContent` byte-for-byte (74c0daf).
      */
     val DEFAULT_CONTENT: String = """---
-name: "nanoMuse"
+name: "TAMA AI"
 style: ""
 lang: "auto"
 ---
@@ -480,11 +480,13 @@ object SystemPromptBuilder {
      * sentence alone is the safe fallback when SOUL.md is missing or
      * empty, matching pre-SOUL behavior.
      */
-    fun identitySection(context: Context): String {
-        val file = SoulStore.load(context)
+    // nanoMuse: keep disk access at the edge so a synthetic SOUL can be measured on the host.
+    fun identitySection(context: Context): String = identitySectionFromFile(SoulStore.load(context))
+
+    internal fun identitySectionFromFile(file: SoulFile?): String {
         val name = (file?.metadata?.name ?: SoulMetadata.DEFAULT.name)
             .trim()
-            .ifEmpty { "nanoMuse" }
+            .ifEmpty { "TAMA AI" }
 
         val style = (file?.metadata?.style ?: "").trim()
 

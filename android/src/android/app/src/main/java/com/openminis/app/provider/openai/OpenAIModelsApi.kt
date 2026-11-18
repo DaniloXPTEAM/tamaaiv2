@@ -140,7 +140,10 @@ object OpenAIModelsApi {
         val url = buildURL(baseURL)
         val request = Request.Builder()
             .url(url)
-            .header("Authorization", "Bearer $apiKey")
+            .apply { // nanoMuse: keyless local endpoints receive no empty auth header, like chat
+                if (apiKey.isNotEmpty() || com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                    header("Authorization", "Bearer $apiKey")
+            }
             // [T-provider-custom-user-agent] models-list UA override.
             .applyUserAgentOverride(customUserAgent)
             .build()
@@ -231,7 +234,11 @@ object OpenAIModelsApi {
     /** Check if a base URL points to official OpenAI endpoints. */
     private fun isOfficialOpenAI(baseURL: String): Boolean {
         val lower = baseURL.lowercase()
-        return lower.contains("api.openai.com") || lower.contains("chatgpt.com")
+        // nanoMuse: a host containing an official name is not necessarily the
+        // official host; never substitute GPT fallbacks for such a custom route.
+        return if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            ai.tama.providers.ProviderEndpoints.isOfficialOpenAIBase(baseURL)
+        else lower.contains("api.openai.com") || lower.contains("chatgpt.com")
     }
 
     private fun buildURL(baseURL: String?): String {

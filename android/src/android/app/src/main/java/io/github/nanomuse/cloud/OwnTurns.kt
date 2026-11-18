@@ -105,8 +105,11 @@ object OwnTurns {
             messages: List<LLMMessage>, systemPrompt: String?, maxTokens: Int, temperature: Double?,
             imageParts: List<LLMMessage.ImagePart>, tools: List<AgentToolDefinition>, thinkingLevel: ThinkingLevel,
         ): LLMResponse {
+            // nanoMuse: a locally blocked request must not create a relay record either.
+            ai.tama.pricing.ModelCostGuard.requireAllowed()
             val model = inner.model
             val g = Gathered(coroutineContext, messages)
+            var costBlocked = false
             try {
                 val response = inner.sendMessageClamped(messages, systemPrompt, maxTokens, temperature, imageParts, tools, thinkingLevel)
                 g.content.append(response.text)
@@ -115,13 +118,15 @@ object OwnTurns {
                 g.finished = true
                 return response
             } catch (e: CancellationException) {
+                costBlocked = ai.tama.pricing.ModelCostGuard.causedByBlock(e)
                 g.ended = "aborted"
                 throw e
             } catch (e: Throwable) {
+                costBlocked = ai.tama.pricing.ModelCostGuard.causedByBlock(e)
                 g.ended = "error"
                 throw e
             } finally {
-                enqueue(context, providerName, model, messages, systemPrompt, imageParts, tools, g)
+                if (!costBlocked) enqueue(context, providerName, model, messages, systemPrompt, imageParts, tools, g)
             }
         }
 
@@ -129,21 +134,26 @@ object OwnTurns {
             messages: List<LLMMessage>, systemPrompt: String?, maxTokens: Int, temperature: Double?,
             imageParts: List<LLMMessage.ImagePart>, tools: List<AgentToolDefinition>, thinkingLevel: ThinkingLevel,
         ): Flow<LLMStreamChunk> = flow {
+            // nanoMuse: recheck when the cold stream is collected, not when it is created.
+            ai.tama.pricing.ModelCostGuard.requireAllowed()
             val model = inner.model
             val g = Gathered(currentCoroutineContext(), messages)
+            var costBlocked = false
             try {
                 inner.streamMessageClamped(messages, systemPrompt, maxTokens, temperature, imageParts, tools, thinkingLevel).collect { chunk ->
                     g.take(chunk)
                     emit(chunk)
                 }
             } catch (e: CancellationException) {
+                costBlocked = ai.tama.pricing.ModelCostGuard.causedByBlock(e)
                 g.ended = "aborted"
                 throw e
             } catch (e: Throwable) {
+                costBlocked = ai.tama.pricing.ModelCostGuard.causedByBlock(e)
                 g.ended = "error"
                 throw e
             } finally {
-                enqueue(context, providerName, model, messages, systemPrompt, imageParts, tools, g)
+                if (!costBlocked) enqueue(context, providerName, model, messages, systemPrompt, imageParts, tools, g)
             }
         }
     }

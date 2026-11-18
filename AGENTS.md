@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## TAMA V2: instruções prioritárias para esta cópia
+
+Esta cópia contém trabalho em andamento do TAMA. Comece por `COMECE_AQUI_TAMA.md`, o plano em
+`docs/planos/TAMA_IA_CONTINUIDADE_CONSERTO_DO_MOTOR.md` e os registros de evidências. As instruções
+herdadas abaixo sobre manter um espelho puxável, sincronizar, distribuir releases ou publicar APKs
+não autorizam nenhuma dessas ações. Não use provedores pagos sem autorização, não desinstale ou
+limpe dados de aplicativos e não inicie Gabi V2 antes de concluir o motor. A presença de uma
+instrução de release legada não é autorização para executá-la. Preserve licenças e atribuições.
+
 nanoMuse is an open-source personal agent for every device a person owns: a phone app (Android and iOS, built on OpenMinis), a desktop app (a DeepSeek Harness plugin in an Electron shell), a Python runtime for the hands, a web console, and the relay that signs people in and lets their devices talk. Everything is GPL-3.0-or-later; read [CONTRIBUTING.md](CONTRIBUTING.md) first and [docs/architecture.md](docs/architecture.md) before touching the runtime.
 
 ## Repository layout
@@ -49,7 +58,7 @@ cd harness/desktop && npm ci && npm run typecheck && npm test
 
 # Android (android/src/android); JDK 21, NDK r27c; natives first: bash scripts/android/build-natives.sh
 cd android/src/android && ./gradlew :app:assembleDebug --console=plain --no-daemon
-./gradlew :app:testDebugUnitTest --tests 'io.github.nanomuse.*' --tests 'com.openminis.app.provider.*' --tests 'com.openminis.app.sandbox.*' --console=plain --no-daemon # our unit tests and the two upstream packages we edit; CI runs them too
+./gradlew :app:testDebugUnitTest --tests 'io.github.nanomuse.*' --tests 'ai.tama.*' --tests 'com.openminis.app.provider.*' --tests 'com.openminis.app.sandbox.*' --tests 'com.openminis.app.offload.OffloadPermissionQueueTest' --console=plain --no-daemon # same filters as CI
 
 # iOS (android/src/ios); macOS only; the device build must finish with zero warnings in NanoMuse/
 xcodebuild build -project Minis.xcodeproj -scheme Minis -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
@@ -60,7 +69,7 @@ cd website && npm ci && npm run docs:build       # also the dead-link check; `np
 
 ## Conventions
 
-- **Two trees, two sets of rules.** `android/` is an upstream subtree we must keep pullable: new code in new files (`io.github.nanomuse.*`, `NanoMuse/*.swift`); an edit inside an upstream file carries a `// nanoMuse:` comment, one change per spot; never rename the Kotlin package, the Gradle namespace or the sandbox paths. Rebranding is `scripts/rebrand.py` (plus `gen-android-icons.py`, `gen-ios-icons.py`), idempotent; fix the script, not the miss. Details in [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Two trees, two sets of rules.** `android/` is an upstream subtree we must keep pullable: TAMA V2 Android code belongs in new `ai.tama.*` files, Swift code in `NanoMuse/*.swift`; an edit inside an upstream file carries a `// nanoMuse:` comment, one change per spot. Do not rename legacy Kotlin packages, the Gradle namespace, persisted identifiers or sandbox paths. Rebranding is `scripts/rebrand.py` (plus `gen-android-icons.py`, `gen-ios-icons.py`), idempotent; fix the script, not the miss. Details in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Our Android strings** live in `res/values*/nm_strings.xml` with `nm_` keys; upstream's `strings.xml` stays theirs.
 - **Generated files are regenerated, not edited.** The connectors catalogue is `harness/dsh-nanomuse/src/connectors-catalogue.ts`; `node scripts/connectors-json.mjs` writes the phones' `connectors.json` and CI runs `--check`. The own-key provider catalogue is `nanomuse/llm/providers.json` (ids, base URLs, key pages, capabilities, defaults, verified against the vendors' docs); `node scripts/providers-json.mjs` writes the desktop's and the phones' `providers.json` and CI runs `--check`. The ideas lists `ideas.en.json`/`ideas.zh.json` under `harness/dsh-nanomuse/assets/` must be byte-identical to the Android app's copies under `app/src/main/assets/nanomuse/` and the iPhone app's under `NanoMuse/Resources/` (`tests/fences.test.mjs` checks). The web build writes `nanomuse/server/static/`; commit it with the change.
 - **Lock files resolve against the public registry only.** After any `npm install`, every `resolved` URL in the lock file must point at `https://registry.npmjs.org/`; CI greps for anything else. A private mirror's host never lands in the repository.

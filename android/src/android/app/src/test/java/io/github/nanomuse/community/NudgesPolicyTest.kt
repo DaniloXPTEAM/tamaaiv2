@@ -9,13 +9,18 @@ import org.junit.Test
 
 class NudgesPolicyTest {
 
-    /** The relay's shipped default, verbatim from the shared contract (C1). */
+    /**
+     * The relay's shipped default, verbatim from the shared contract (C1), except for the star
+     * URL: TAMA AI points it at this repository, because that is the project the prompt is asking
+     * the person to star. The rest of the contract is copied unchanged, which is what this test
+     * exists to prove.
+     */
     private val contractDefault = """
         {
           "version": 1,
           "star": {
             "enabled": true,
-            "url": "https://github.com/nano-muse/nanoMuse",
+            "url": "https://github.com/DaniloXPTEAM/tamaaiv2",
             "moments": {
               "signed_in": true,
               "tasks": [3, 10, 30],

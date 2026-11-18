@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive // nanoMuse
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -102,18 +103,31 @@ class AntigravityOAuthManager(context: Context, instanceId: String) : OAuthManag
         discoverProjectIfNeeded()
     }
 
-    private suspend fun fetchUserEmail() = withContext(Dispatchers.IO) {
+    override suspend fun nmOnTokensReceived(json: JSONObject, snapshot: NmOAuthSnapshot) {
+        fetchUserEmail(snapshot)
+        nmDiscoverProjectIfNeeded(snapshot)
+    }
+
+    private suspend fun fetchUserEmail(expected: NmOAuthSnapshot? = null) = withContext(Dispatchers.IO) {
+        // nanoMuse: old account metadata cannot overwrite a newer account.
+        val snapshot = if (nmParallelAuth) expected ?: nmOAuthSnapshot() else null
         val token = validAccessToken() ?: return@withContext
+        if (snapshot != null && !nmIfOAuthCurrent(snapshot) {}) return@withContext
         try {
             val conn = URL("https://www.googleapis.com/oauth2/v1/userinfo").openConnection() as HttpURLConnection
             conn.setRequestProperty("Authorization", "Bearer $token")
             if (conn.responseCode == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
-                email = JSONObject(body).optString("email")
+                val value = JSONObject(body).optString("email")
+                if (snapshot != null) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    nmIfOAuthCurrent(snapshot) { email = value }
+                } else email = value
             }
             conn.disconnect()
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch email", e)
+            if (nmParallelAuth && e is kotlinx.coroutines.CancellationException) throw e
+            if (nmParallelAuth) Log.w(TAG, "Failed to fetch email") else Log.w(TAG, "Failed to fetch email", e)
         }
     }
 
@@ -122,15 +136,34 @@ class AntigravityOAuthManager(context: Context, instanceId: String) : OAuthManag
      * until one returns a project ID. Persists the winning URL in
      * [activeBaseURL] so the provider avoids re-probing.
      */
-    suspend fun discoverProjectIfNeeded(): Boolean = withContext(Dispatchers.IO) {
-        if (!gcpProjectId.isNullOrEmpty() && !activeBaseURL.isNullOrEmpty()) return@withContext true
+    suspend fun discoverProjectIfNeeded(): Boolean = nmDiscoverProjectIfNeeded(null)
+
+    private suspend fun nmDiscoverProjectIfNeeded(expected: NmOAuthSnapshot?): Boolean = withContext(Dispatchers.IO) {
+        // nanoMuse: bind both metadata fields to the account used for discovery.
+        val snapshot = if (nmParallelAuth) expected ?: nmOAuthSnapshot() else null
+        var alreadyKnown = false
+        if (snapshot != null) {
+            if (!nmIfOAuthCurrent(snapshot) {
+                    alreadyKnown = !gcpProjectId.isNullOrEmpty() && !activeBaseURL.isNullOrEmpty()
+                }) return@withContext false
+        } else alreadyKnown = !gcpProjectId.isNullOrEmpty() && !activeBaseURL.isNullOrEmpty()
+        if (alreadyKnown) return@withContext true
         val token = validAccessToken() ?: return@withContext false
 
         for (baseURL in cloudCodeBaseURLs) {
+            if (snapshot != null && !nmIfOAuthCurrent(snapshot) {}) return@withContext false
             val projectId = loadCodeAssist(token, baseURL)
             if (!projectId.isNullOrEmpty()) {
-                gcpProjectId = projectId
-                activeBaseURL = baseURL
+                if (snapshot != null) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!nmIfOAuthCurrent(snapshot) {
+                            gcpProjectId = projectId
+                            activeBaseURL = baseURL
+                        }) return@withContext false
+                } else {
+                    gcpProjectId = projectId
+                    activeBaseURL = baseURL
+                }
                 Log.i(TAG, "Antigravity project discovered via $baseURL")
                 return@withContext true
             }
@@ -154,7 +187,8 @@ class AntigravityOAuthManager(context: Context, instanceId: String) : OAuthManag
             response.close()
             body?.let { JSONObject(it).optString("gcpProjectId").ifEmpty { null } }
         } catch (e: Exception) {
-            Log.d(TAG, "loadCodeAssist failed on $baseURL: ${e.message}")
+            if (nmParallelAuth) Log.d(TAG, "loadCodeAssist failed")
+            else Log.d(TAG, "loadCodeAssist failed on $baseURL: ${e.message}")
             null
         }
     }

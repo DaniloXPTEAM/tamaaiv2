@@ -204,6 +204,8 @@ open class VoiceProvider(
     }
 
     suspend fun executeRequest(request: Request): ByteArray = withContext(Dispatchers.IO) {
+        // nanoMuse: speech models also have unverified request costs.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         httpClient.newCall(request).execute().use { response ->
             val body = response.body?.bytes()
             if (!response.isSuccessful) {

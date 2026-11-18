@@ -6,12 +6,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import ai.tama.sandbox.ShellMarkerDecoder // nanoMuse: fragmented process output.
 import java.io.BufferedWriter
 import java.io.File
+import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 
 /**
@@ -47,24 +50,56 @@ class PersistentShell(
     @Volatile
     private var stdinWriter: BufferedWriter? = null
 
+    // nanoMuse: Stop can race process creation and the host-side PID handshake.
+    private val lifecycleLock = Any()
+    private var permanentlyStopped = false
+    @Volatile private var peerReady = false
+    private var peerPid: Int? = null
+    private var peerLease: ai.tama.sandbox.OffloadPeerLease? = null
+
+    private fun releasePeerLocked() {
+        val pid = peerPid
+        val lease = peerLease
+        peerPid = null
+        peerLease = null
+        peerReady = false
+        if (pid != null && lease != null) ai.tama.sandbox.OffloadPeerBindings.release(pid, lease)
+    }
+
     private val isStarting = AtomicBoolean(false)
+    // nanoMuse: process output, commands and exception text can contain private data.
+    private val nmParallel: Boolean get() = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
 
     /** Pending command callback — only one command at a time. */
-    @Volatile
-    private var pendingCallback: CommandCallback? = null
+    // nanoMuse: completion and cancellation must not clear a newer command's callback.
+    private val pendingCallback = AtomicReference<CommandCallback?>(null)
 
     val isAlive: Boolean
-        get() = process?.isAlive == true
+        get() = process?.isAlive == true && (!nmParallel || peerReady)
 
     /** [diag] Read back the mount this shell was started with (frozen at boot). */
     fun debugBindMount(linuxPath: String): String? = sessionBindMounts[linuxPath]
 
     private class CommandCallback(
         val marker: String,
-        val output: StringBuilder = StringBuilder(),
         val lineCallback: ((String) -> Unit)?,
         var onComplete: ((String, Int) -> Unit)? = null,
-    )
+    ) {
+        // nanoMuse: a process read can end anywhere, including inside the completion marker.
+        private val decoder = ShellMarkerDecoder(marker)
+        private val output = StringBuilder()
+
+        fun accept(text: String): ShellMarkerDecoder.Frame = synchronized(this) {
+            decoder.feed(text).also { output.append(it.text) }
+        }
+
+        fun finish(): String = synchronized(this) {
+            output.append(decoder.finish())
+            output.toString()
+        }
+
+        fun snapshot(): String = synchronized(this) { output.toString() }
+    }
 
     /**
      * Ensure the persistent shell process is running.
@@ -135,9 +170,10 @@ class PersistentShell(
             // running]", which is exactly the dead end the field reports keep
             // hitting. Record it and rethrow — swallowing the cause is what
             // made this class of failure undiagnosable.
+            // nanoMuse: a process exception can include a private path or argument.
             com.openminis.app.logging.AppLogger.error(
                 TAG,
-                "spawn threw: ${t.javaClass.simpleName}: ${t.message}",
+                ai.tama.net.SandboxLogPrivacy.spawnFailure(nmParallel, t.javaClass.simpleName, t.message),
             )
             throw t
         } finally {
@@ -212,7 +248,9 @@ class PersistentShell(
 
         val debugOffload = com.openminis.app.BuildConfig.DEBUG
 
-        val processBuilder = ProcessBuilder(cmd)
+        // nanoMuse: PRoot cannot start until the host has bound its real peer PID.
+        val launchCommand = if (nmParallel) ai.tama.sandbox.OffloadPeerLaunch.wrap(cmd) else cmd
+        val processBuilder = ProcessBuilder(launchCommand)
         // In debug builds we want proot's native_offload stderr logs in
         // logcat, not merged into shell stdout (which would break the
         // __MINIS_DONE__ marker detection). Release keeps the original
@@ -246,6 +284,9 @@ class PersistentShell(
         for ((key, value) in PRootKernel.customEnvironment) {
             env[key] = value
         }
+        // nanoMuse: a custom environment must not overwrite this shell's session.
+        // The guest can still change its own environment, so this is not authentication.
+        if (nmParallel) env["MINIS_CHAT_SESSION_ID"] = sessionId
 
         // [T-android-seccomp-selfheal / GH#186] Applied last so nothing above
         // can clobber it once this device is known to need it.
@@ -254,8 +295,41 @@ class PersistentShell(
         }
 
         val p = processBuilder.start()
-        process = p
-        stdinWriter = BufferedWriter(OutputStreamWriter(p.outputStream, StandardCharsets.UTF_8))
+        val writer = BufferedWriter(OutputStreamWriter(p.outputStream, StandardCharsets.UTF_8))
+        try {
+            synchronized(lifecycleLock) {
+                if (nmParallel && permanentlyStopped) throw kotlinx.coroutines.CancellationException("Shell stopped during startup")
+                if (nmParallel) releasePeerLocked()
+                process = p
+                stdinWriter = writer
+            }
+            if (nmParallel) {
+                // The fixed launcher waits for our acknowledgement before exec.
+                // A failed/late handshake never registers a guest-provided PID.
+                val pid = ai.tama.sandbox.OffloadPeerLaunch.readPid(p.inputStream)
+                synchronized(lifecycleLock) {
+                    if (permanentlyStopped || process !== p || !p.isAlive)
+                        throw kotlinx.coroutines.CancellationException("Shell stopped during startup")
+                    val lease = ai.tama.sandbox.OffloadPeerBindings.register(pid, sessionId) { p.isAlive }
+                    peerPid = pid
+                    peerLease = lease
+                    writer.write(ai.tama.sandbox.OffloadPeerLaunch.ACK)
+                    writer.flush()
+                    peerReady = true
+                }
+            }
+        } catch (t: Throwable) {
+            synchronized(lifecycleLock) {
+                if (process === p) {
+                    if (nmParallel) releasePeerLocked()
+                    process = null
+                    stdinWriter = null
+                }
+            }
+            p.destroyForcibly()
+            try { writer.close() } catch (_: Exception) {}
+            throw t
+        }
 
         // Start background reader thread
         Thread({
@@ -270,7 +344,8 @@ class PersistentShell(
             Thread({
                 val br = p.errorStream.bufferedReader(StandardCharsets.UTF_8)
                 try {
-                    for (line in br.lineSequence()) Log.d("PRootStderr", line)
+                    // nanoMuse: keep draining stderr, but do not retain its private text in logcat.
+                    for (line in br.lineSequence()) if (!nmParallel) Log.d("PRootStderr", line)
                 } catch (_: Exception) {}
             }, "PersistentShell-stderr").apply {
                 isDaemon = true
@@ -292,7 +367,9 @@ class PersistentShell(
         // that is what a user can actually send us; logcat is gone by then.
         val alive = isAlive
         val exit = runCatching { process?.exitValue() }.getOrNull()
-        val early = synchronized(outputTail) { outputHead.toString().take(300) }
+        // nanoMuse: shell output can contain a previous command's private text.
+        val early = ai.tama.net.SandboxLogPrivacy.captured(nmParallel,
+            synchronized(outputTail) { outputHead.toString().take(300) })
         com.openminis.app.logging.AppLogger.info(
             TAG,
             "spawn outcome: alive=$alive" +
@@ -360,54 +437,40 @@ class PersistentShell(
 
     private fun readLoop(p: Process) {
         try {
-            val buffer = ByteArray(4096)
-            val stream = p.inputStream
+            // nanoMuse: InputStreamReader keeps UTF-8 characters intact across byte reads.
+            val buffer = CharArray(4096)
+            val stream = InputStreamReader(p.inputStream, StandardCharsets.UTF_8)
             while (true) {
                 val n = stream.read(buffer)
                 if (n < 0) break
-                val text = String(buffer, 0, n, StandardCharsets.UTF_8)
+                val text = String(buffer, 0, n)
                 appendTail(text)
 
-                val cb = pendingCallback
+                val cb = pendingCallback.get()
                 if (cb != null) {
-                    // Check if this chunk contains the end marker
-                    val markerExitPattern = "__MINIS_DONE_${cb.marker}_EXIT_"
-                    val markerIdx = text.indexOf(markerExitPattern)
-
-                    if (markerIdx >= 0) {
-                        // Extract output before marker
-                        val beforeMarker = text.substring(0, markerIdx)
-                        cb.output.append(beforeMarker)
-                        if (cb.lineCallback != null) {
-                            feedLines(beforeMarker, cb.lineCallback)
-                        }
-
-                        // Extract exit code from marker line
-                        val afterMarker = text.substring(markerIdx)
-                        val exitCode = parseExitCode(afterMarker, cb.marker)
-
-                        // Signal completion
-                        cb.onComplete?.invoke(cb.output.toString(), exitCode)
-                        pendingCallback = null
-                    } else {
-                        cb.output.append(text)
-                        if (cb.lineCallback != null) {
-                            feedLines(text, cb.lineCallback)
-                        }
+                    // nanoMuse: retain partial markers/statuses until the next read.
+                    val frame = cb.accept(text)
+                    if (frame.text.isNotEmpty() && cb.lineCallback != null) {
+                        feedLines(frame.text, cb.lineCallback)
+                    }
+                    val exit = frame.exitCode
+                    if (exit != null && pendingCallback.compareAndSet(cb, null)) {
+                        // Clear the old callback before resuming; a following command may start now.
+                        cb.onComplete?.invoke(cb.snapshot(), exit)
                     }
                 }
                 // If no pending callback, discard (shell prompt noise etc.)
             }
         } catch (e: Exception) {
-            Log.d(TAG, "Reader loop ended: ${e.message}")
+            // nanoMuse: reader exception text may contain private data.
+            Log.d(TAG, ai.tama.net.SandboxLogPrivacy.readerFailure(nmParallel, e.message))
         }
 
-        // Process exited
-        val cb = pendingCallback
-        if (cb != null) {
-            cb.onComplete?.invoke(cb.output.toString(), -1)
-            pendingCallback = null
-        }
+        // nanoMuse: an old reader must not complete a newer process's command.
+        val pending = if (nmParallel) synchronized(lifecycleLock) {
+            if (process === p) pendingCallback.getAndSet(null) else null
+        } else pendingCallback.getAndSet(null)
+        pending?.let { finishCallback(it, -1) }
 
         // [T-android-shell-death-diagnosability] Name the cause in the FILE
         // log. exitValue distinguishes death classes (signal deaths are
@@ -417,15 +480,25 @@ class PersistentShell(
         // unactionable — precisely the shape of the crDroid report.
         val exit = runCatching { p.waitFor() }.getOrNull()
         lastExitCode = exit
-        val tail = deathTail()
+        // nanoMuse: do not persist captured command output as a death diagnostic.
+        val tail = ai.tama.net.SandboxLogPrivacy.captured(nmParallel, deathTail())
         com.openminis.app.logging.AppLogger.error(
             TAG,
             "shell process exited code=$exit" +
                 (if (tail.isNotEmpty()) " capture=${tail.take(1200)}" else " capture=(no output)"),
         )
 
-        process = null
-        stdinWriter = null
+        if (nmParallel) synchronized(lifecycleLock) {
+            // A seccomp startup retry may already have installed a new process.
+            if (process === p) {
+                releasePeerLocked()
+                process = null
+                stdinWriter = null
+            }
+        } else {
+            process = null
+            stdinWriter = null
+        }
         Log.i(TAG, "Persistent shell process exited")
     }
 
@@ -442,11 +515,9 @@ class PersistentShell(
         }
     }
 
-    private fun parseExitCode(text: String, marker: String): Int {
-        // Pattern: __MINIS_DONE_{marker}_EXIT_{code}__
-        val regex = Regex("__MINIS_DONE_${Regex.escape(marker)}_EXIT_(\\d+)__")
-        val match = regex.find(text)
-        return match?.groupValues?.get(1)?.toIntOrNull() ?: -1
+    // nanoMuse: report any buffered partial marker if the process stops before completion.
+    private fun finishCallback(cb: CommandCallback, exitCode: Int) {
+        cb.onComplete?.invoke(cb.finish(), exitCode)
     }
 
     /**
@@ -473,7 +544,8 @@ class PersistentShell(
             // self-describing report — both for the agent reading the tool
             // result and for the screenshot a user sends us.
             val exit = lastExitCode
-            val tail = deathTail()
+            // nanoMuse: do not expose a previous command's output to a later caller.
+            val tail = ai.tama.net.SandboxLogPrivacy.captured(nmParallel, deathTail())
             val detail = buildString {
                 append("[Shell not running]")
                 if (exit != null) append(" proot exit=$exit")
@@ -497,27 +569,27 @@ class PersistentShell(
                             cont.resume(Pair(output, exitCode))
                         }
                     }
-                    pendingCallback = cb
+                    pendingCallback.set(cb)
 
                     cont.invokeOnCancellation {
-                        pendingCallback = null
+                        // nanoMuse: a timed-out command cannot clear a newer command's callback.
+                        pendingCallback.compareAndSet(cb, null)
                     }
 
                     try {
                         writer.write(wrappedCommand)
                         writer.flush()
                     } catch (e: Exception) {
-                        pendingCallback = null
-                        if (cont.isActive) {
-                            cont.resume(Pair("[Write error: ${e.message}]", -1))
+                        if (pendingCallback.compareAndSet(cb, null) && cont.isActive) {
+                            // nanoMuse: write failures may embed private shell data.
+                            cont.resume(Pair(ai.tama.net.SandboxLogPrivacy.writeFailure(nmParallel, e.message), -1))
                         }
                     }
                 }
             }
 
             if (result == null) {
-                // Timeout — cancel pending, but don't kill the shell
-                pendingCallback = null
+                // Timeout cancels its own callback above, but does not kill the shell.
                 Pair("[Command timed out after ${timeout / 1000}s]", 124)
             } else {
                 result
@@ -557,7 +629,8 @@ class PersistentShell(
                 }
                 writer.flush()
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to apply env vars: ${e.message}")
+                // nanoMuse: environment exceptions may contain private values.
+                Log.w(TAG, ai.tama.net.ProviderLogPrivacy.failureMessage(nmParallel, "Failed to apply env vars", e.message))
             }
         }
     }
@@ -566,14 +639,26 @@ class PersistentShell(
      * Stop the persistent shell.
      */
     fun stop() {
-        try { stdinWriter?.close() } catch (_: Exception) {}
-        stdinWriter = null
-        process?.destroyForcibly()
-        process = null
-        pendingCallback?.let {
-            it.onComplete?.invoke(it.output.toString(), -1)
+        if (nmParallel) {
+            val (writer, child) = synchronized(lifecycleLock) {
+                permanentlyStopped = true
+                // Revoke before cancelling media attempts or letting a new shell start.
+                releasePeerLocked()
+                val old = stdinWriter to process
+                stdinWriter = null
+                process = null
+                old
+            }
+            child?.destroyForcibly()
+            try { writer?.close() } catch (_: Exception) {}
+        } else {
+            try { stdinWriter?.close() } catch (_: Exception) {}
+            stdinWriter = null
+            process?.destroyForcibly()
+            process = null
         }
-        pendingCallback = null
+        // nanoMuse: process exit and Stop race to complete at most the same callback once.
+        pendingCallback.getAndSet(null)?.let { finishCallback(it, -1) }
         Log.i(TAG, "Persistent shell stopped")
     }
 }

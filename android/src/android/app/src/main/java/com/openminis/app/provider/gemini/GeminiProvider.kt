@@ -15,6 +15,8 @@ import com.openminis.app.data.model.LLMUsage
 import com.openminis.app.data.model.ThinkingLevel
 import com.openminis.app.provider.LLMProvider
 import com.openminis.app.provider.safeOptString
+import ai.tama.net.singleUseImageBody
+import ai.tama.net.singleUseImageClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.awaitClose
@@ -40,6 +42,10 @@ class GeminiProvider(
 ) : LLMProvider {
     override val name = "Google"
 
+    // nanoMuse: set on fresh providers for protected images or direct ModelUse.
+    internal var singleUseImageRequest: Boolean = false
+    internal var beforeDirectRequest: (() -> Unit)? = null
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.MINUTES)
@@ -59,22 +65,33 @@ class GeminiProvider(
         tools: List<AgentToolDefinition>,
         thinkingLevel: ThinkingLevel,
     ): LLMResponse = withContext(Dispatchers.IO) {
+        // nanoMuse: no model or image capability by itself proves zero cost.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         val body = buildRequestBody(messages, systemPrompt, maxTokens, temperature, imageParts, tools, thinkingLevel)
-        val url = "$basePath/models/${model.id}:generateContent?key=$apiKey"
+        // nanoMuse: this URL, not a later model selection, identifies the failed request.
+        val requestModel = model.id
+        val url = "$basePath/models/$requestModel:generateContent?key=$apiKey"
+        val requestBody = body.toString().toRequestBody("application/json".toMediaType())
         val request = Request.Builder()
             .url(url)
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .post(if (singleUseImageRequest) requestBody.singleUseImageBody() else requestBody)
             // [T-android-default-ua] Brand the outbound UA so server logs
             // can trace the request back to the Minis build. Gemini has no
             // SDK-specific UA requirement, so the helper's default kicks in.
             .applyUserAgentOverride(null)
             .build()
 
-        val response = client.newCall(request).execute()
+        // nanoMuse: redact both the configured key and the one actually present in the URL.
+        val credentials = requestCredentials(request)
+        val requestClient = if (singleUseImageRequest) client.singleUseImageClient() else client
+        // nanoMuse: revalidate after request preparation and before dispatch.
+        beforeDirectRequest?.invoke()
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+        val response = requestClient.newCall(request).execute()
         val responseBody = response.body?.string() ?: ""
 
         if (!response.isSuccessful) {
-            throw mapHttpError(response.code, responseBody)
+            throw mapHttpError(response.code, responseBody, response.header("Retry-After"), requestModel, credentials)
         }
 
         val json = JSONObject(responseBody)
@@ -106,21 +123,33 @@ class GeminiProvider(
         tools: List<AgentToolDefinition>,
         thinkingLevel: ThinkingLevel,
     ): Flow<LLMStreamChunk> = callbackFlow {
+        // nanoMuse: block unknown-cost streams before building the outbound request.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         val body = buildRequestBody(messages, systemPrompt, maxTokens, temperature, imageParts, tools, thinkingLevel)
-        val url = "$basePath/models/${model.id}:streamGenerateContent?alt=sse&key=$apiKey"
+        // nanoMuse: snapshot the model in the URL before the request starts.
+        val requestModel = model.id
+        val url = "$basePath/models/$requestModel:streamGenerateContent?alt=sse&key=$apiKey"
+        // nanoMuse: a protected image/direct stream must not replay the POST.
+        val requestBody = body.toString().toRequestBody("application/json".toMediaType())
         val request = Request.Builder()
             .url(url)
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .post(if (singleUseImageRequest) requestBody.singleUseImageBody() else requestBody)
             // [T-android-default-ua] same intent as the non-streaming
             // branch above — brand outbound requests with Minis/<version>.
             .applyUserAgentOverride(null)
             .build()
 
-        val response = client.newCall(request).execute()
+        // nanoMuse: capture credentials from this call, not a later provider selection.
+        val credentials = requestCredentials(request)
+        // nanoMuse: the guards may have changed while the request was prepared.
+        beforeDirectRequest?.invoke()
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+        val requestClient = if (singleUseImageRequest) client.singleUseImageClient() else client
+        val response = requestClient.newCall(request).execute()
         if (!response.isSuccessful) {
             val errorBody = response.body?.string() ?: ""
             response.close()
-            throw mapHttpError(response.code, errorBody)
+            throw mapHttpError(response.code, errorBody, response.header("Retry-After"), requestModel, credentials)
         }
 
         val reader = BufferedReader(InputStreamReader(response.body!!.byteStream()))
@@ -134,6 +163,17 @@ class GeminiProvider(
                 val payload = l.removePrefix("data: ")
 
                 val json = try { JSONObject(payload) } catch (_: Exception) { continue }
+                // nanoMuse: do not mistake an in-band error for a successful empty completion.
+                if (json.has("error") && !json.isNull("error")) {
+                    val streamError = json.optJSONObject("error")
+                    val code = streamError?.optInt("code", 0) ?: 0
+                    val status = streamError?.opt("status") as? String
+                    throw mapHttpError(
+                        code, json.toString(), null, requestModel, credentials,
+                        hasHttpStatus = false,
+                        transientStream = status in setOf("INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED"),
+                    )
+                }
 
                 if (!started) {
                     send(LLMStreamChunk.Started)
@@ -168,7 +208,12 @@ class GeminiProvider(
                     lastFinishReason = reason
                 }
             }
-            send(LLMStreamChunk.Finished(lastFinishReason ?: "end_turn"))
+            // nanoMuse: never synthesize success for the isolated test app when
+            // Gemini's stream ended without an actual terminal reason.
+            send(LLMStreamChunk.Finished(ai.tama.net.GeminiStreamTermination.reason(
+                lastFinishReason,
+                parallelTest = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+            )))
         } catch (e: Exception) {
             cancel("Stream error", mapError(e))
         } finally {
@@ -447,7 +492,10 @@ class GeminiProvider(
             val bytes = try {
                 Base64.decode(b64, Base64.DEFAULT)
             } catch (e: Throwable) {
-                android.util.Log.d("ModelUseImage", "gemini inlineData base64 decode failed: ${e.message}")
+                // nanoMuse: decoding errors can repeat untrusted response data.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    android.util.Log.d("ModelUseImage", "Gemini image data could not be decoded")
+                else android.util.Log.d("ModelUseImage", "gemini inlineData base64 decode failed: ${e.message}")
                 continue
             }
             val type = when {
@@ -456,7 +504,9 @@ class GeminiProvider(
                 mime.startsWith("video/") -> LLMMediaAttachment.MediaType.VIDEO
                 else -> LLMMediaAttachment.MediaType.IMAGE  // iOS fallback
             }
-            android.util.Log.d("ModelUseImage", "gemini inlineData received: mime=$mime bytes=${bytes.size}")
+            // nanoMuse: the MIME string is supplied by the remote provider.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                android.util.Log.d("ModelUseImage", "gemini inlineData received: mime=$mime bytes=${bytes.size}")
             out.add(LLMMediaAttachment(type, mime, bytes))
         }
         return out
@@ -506,13 +556,23 @@ class GeminiProvider(
         )
     }
 
-    private fun mapHttpError(statusCode: Int, body: String): LLMError {
-        if (statusCode == 401 || statusCode == 403) return LLMError.InvalidApiKey()
-        if (statusCode == 429) return LLMError.RateLimited()
-        val message = "Gemini API error $statusCode: ${body.take(200)}"
-        val transientCodes = setOf(500, 502, 503, 504, 529)
-        if (statusCode in transientCodes) return LLMError.TransientError(message)
-        return LLMError.ProviderError(message)
+    // nanoMuse: Gemini sends its key in the query, so it must be redacted as well as headers.
+    private fun requestCredentials(request: Request): List<String> =
+        ai.tama.net.ProviderCredentials.fromHeaders(
+            request.headers.names().associateWith { request.headers.values(it) }, apiKey,
+        ) + listOfNotNull(request.url.queryParameter("key"))
+
+    private fun mapHttpError(
+        statusCode: Int, body: String, retryAfter: String?, requestModel: String?,
+        credentials: Collection<String>, hasHttpStatus: Boolean = true, transientStream: Boolean = false,
+    ): LLMError {
+        val captured = ai.tama.net.ProviderErrorDiagnostics.capture(
+            code = statusCode, body = body, host = io.github.nanomuse.net.OwnProviderProxy.hostOf(basePath),
+            oauth = false, requestModel = requestModel, credentials = credentials,
+            retryAfter = retryAfter, fromRelay = io.github.nanomuse.net.OwnProviderProxy.isRelay(basePath),
+            hasHttpStatus = hasHttpStatus,
+        )
+        return captured.nativeError(statusCode, hasHttpStatus, transientStream = transientStream)
     }
 
     private fun mapError(error: Throwable): LLMError {

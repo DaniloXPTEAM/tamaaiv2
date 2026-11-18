@@ -86,6 +86,14 @@ interface ChatDao {
     @Query("UPDATE sessions SET model_binding = :binding, model_id = :modelId, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateSessionBinding(id: String, binding: String, modelId: String, updatedAt: Long = System.currentTimeMillis())
 
+    // nanoMuse: a provisional fallback cannot replace a binding another writer has changed.
+    @Query("""UPDATE sessions SET model_binding = :binding, model_id = :modelId, updated_at = :updatedAt
+        WHERE id = :id AND model_binding IS :expectedBinding AND model_id = :expectedModelId""")
+    suspend fun compareAndSetSessionBinding(
+        id: String, binding: String?, modelId: String, expectedBinding: String?, expectedModelId: String,
+        updatedAt: Long = System.currentTimeMillis(),
+    ): Int
+
     @Query("DELETE FROM sessions WHERE id = :id")
     suspend fun deleteSession(id: String)
 

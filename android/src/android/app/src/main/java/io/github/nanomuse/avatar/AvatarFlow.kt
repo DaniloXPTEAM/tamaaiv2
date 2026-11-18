@@ -173,9 +173,11 @@ object AvatarFlow {
             runCatching { AvatarStudio.moodProgress.first { it == null || !it.running } }
             _stage.value = Stage.Idle
             _done.tryEmit(Done(s.sessionId, s.description))
-            // With a video model set, the poses come alive next — in the background, one clip
-            // at a time; the header plays each as it lands.
-            if (AvatarMotion.enabled(context)) AvatarMotion.animateAll(context)
+            // nanoMuse: selecting a picture does not authorize a separate video batch in
+            // the parallel package. The normal app keeps its existing background behavior.
+            if (ai.tama.media.AutomaticAvatarGuard.permitsImplicitBatches(
+                    com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+                ) && AvatarMotion.enabled(context)) AvatarMotion.animateAll(context)
         }
         return slots.map { (it as? AvatarStudio.Slot.Ready)?.file?.absolutePath ?: "" }
     }

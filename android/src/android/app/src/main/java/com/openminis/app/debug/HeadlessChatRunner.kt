@@ -160,6 +160,11 @@ internal object HeadlessChatRunner {
         timeoutMs: Long,
         persistentTurn: String? = null, // nanoMuse: persistent Hub results and stops name this turn.
     ): PromptResult = withContext(Dispatchers.Main) {
+        // Parallel persistent turns currently carry only text. Do not put caller
+        // media into the shared local composer's draft, even if the turn is refused.
+        val strictPersistent = persistentTurn != null &&
+            com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        if (strictPersistent && attachments.isNotEmpty()) return@withContext PromptResult("Blocked", null, false)
         val vm = viewModel(context, sessionId)
         // Apply per-call thinking override BEFORE sendMessage so streamMessage
         // picks up the new level. Caller passes null to keep the VM's existing
@@ -213,13 +218,14 @@ internal object HeadlessChatRunner {
                 timedOut = false,
             )
         }
-        for (att in attachments) vm.addAttachment(att)
+        if (!strictPersistent) for (att in attachments) vm.addAttachment(att)
         // nanoMuse: bind persistent results to a saved user row, never the session's last reply.
         if (persistentTurn != null) {
             require(wait) { "A verified turn must wait for its result" }
             val outcome = io.github.nanomuse.hub.HeadlessTurn.run(
                 turnId = persistentTurn,
                 timeoutMs = timeoutMs,
+                strict = strictPersistent,
                 send = { receipt -> vm.nmSendHeadless(text, receipt) },
                 stop = { receipt -> vm.nmCancelHeadless(receipt) },
                 text = ::extractText,
@@ -232,7 +238,7 @@ internal object HeadlessChatRunner {
                 is io.github.nanomuse.hub.HeadlessTurn.Outcome.Completed -> PromptResult("Completed", outcome.text, false)
             }
         }
-        vm.sendMessage(text)
+        vm.nmSendAutomatedMessage(text) // nanoMuse: a routine or RPC prompt is not a person typing in chat.
         if (!wait) return@withContext PromptResult(status = "Running", responseText = null, timedOut = false)
 
         // Wait for isStreaming to be false (sendMessage flips it true synchronously

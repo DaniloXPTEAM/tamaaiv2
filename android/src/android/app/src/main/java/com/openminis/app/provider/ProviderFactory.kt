@@ -111,7 +111,7 @@ object ProviderFactory {
                     basePath = "https://openrouter.ai/api/v1",
                     extraHeaders = mapOf(
                         "HTTP-Referer" to "https://github.com/OpenMinis/OpenMinis",
-                        "X-Title" to "nanoMuse App",
+                        "X-Title" to "TAMA AI App",
                     ),
                 )
             }

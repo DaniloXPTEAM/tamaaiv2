@@ -6,6 +6,8 @@ import android.util.Log
 import androidx.browser.customtabs.CustomTabsIntent
 import com.openminis.app.data.repository.ProviderRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive // nanoMuse
+import kotlinx.coroutines.isActive // nanoMuse
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -50,27 +52,46 @@ object OpenRouterOAuthManager {
     suspend fun login(context: Context, instanceId: String, providerRepository: ProviderRepository): String {
         Log.i(TAG, "=== OpenRouter OAuth login started (instance: $instanceId) ===")
 
-        callbackServer?.stop()
-        callbackServer = null
+        // nanoMuse: remember which account and login opened this browser.
+        val ticket = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            ai.tama.router.OAuthLoginAttempts.begin(instanceId) else null
+        if (ticket == null) {
+            callbackServer?.stop()
+            callbackServer = null
+        }
+        // nanoMuse: do not use the shared legacy field to stop a different attempt.
+        var attemptServer: OAuthCallbackServer? = null
 
         val (verifier, challenge) = generatePKCE()
+        // nanoMuse: OpenRouter returns the optional state parameter unchanged.
+        // Use a separate unpredictable value per attempt so an old browser
+        // cannot consume the newer listener's callback before PKCE exchange.
+        val expectedState = if (ticket != null) nmNewState() else null
         Log.i(TAG, "PKCE generated — verifier length: ${verifier.length}")
 
         val apiKey = withContext(Dispatchers.IO) {
             val code = suspendCancellableCoroutine { cont ->
-                val server = OAuthCallbackServer(CALLBACK_PORT, FALLBACK_PORTS) { receivedCode, _ ->
+                val server = OAuthCallbackServer(CALLBACK_PORT, FALLBACK_PORTS,
+                    expectedPath = if (ticket != null) "/callback" else null,
+                    expectedState = expectedState,
+                    startOrder = ticket?.order,
+                    mayStart = { ticket == null || (cont.isActive && ai.tama.router.OAuthLoginAttempts.isCurrent(ticket)) },
+                ) { receivedCode, _ ->
                     if (cont.isActive) {
                         cont.resume(receivedCode)
                     }
                 }
-                callbackServer = server
+                if (ticket != null) {
+                    server.onExternalCancel = { cont.cancel(kotlinx.coroutines.CancellationException("OAuth callback cancelled")) }
+                    attemptServer = server
+                } else callbackServer = server
                 server.start()
                 val boundPort = server.boundPort
                 Log.i(TAG, "Callback server started on port $boundPort")
 
                 cont.invokeOnCancellation {
                     server.stop()
-                    callbackServer = null
+                    if (ticket == null && callbackServer === server) callbackServer = null
                 }
 
                 val callbackUrl = "http://localhost:$boundPort/callback"
@@ -79,8 +100,11 @@ object OpenRouterOAuthManager {
                     .appendQueryParameter("code_challenge", challenge)
                     .appendQueryParameter("code_challenge_method", "S256")
                     .appendQueryParameter("_nc", System.currentTimeMillis().toString()) // cache-bust
+                    .apply { if (expectedState != null) appendQueryParameter("state", expectedState) } // nanoMuse
                     .build()
-                Log.d(TAG, "Auth URL: $authUrl")
+                // nanoMuse: do not log the PKCE challenge in the parallel build.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                    Log.d(TAG, "Auth URL: $authUrl")
 
                 // Open in Chrome Custom Tab (in-app browser, like iOS SFSafariViewController)
                 val customTabsIntent = CustomTabsIntent.Builder()
@@ -91,16 +115,32 @@ object OpenRouterOAuthManager {
                 Log.i(TAG, "Opened Custom Tab for OpenRouter authorization")
             }
 
-            callbackServer?.stop()
-            callbackServer = null
+            if (ticket != null) attemptServer?.stop() else {
+                callbackServer?.stop()
+                callbackServer = null
+            }
             Log.i(TAG, "Callback received — code length: ${code.length}")
 
+            // nanoMuse: a superseded callback must not initiate a token exchange.
+            if (ticket != null) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (!ai.tama.router.OAuthLoginAttempts.isCurrent(ticket))
+                    throw IllegalStateException("OAuth sign-in was superseded")
+            }
             // Exchange code for permanent API key
             exchangeCode(code, verifier)
         }
 
-        // Store the API key
-        providerRepository.saveApiKey(instanceId, apiKey)
+        // nanoMuse: a late or cancelled exchange cannot overwrite a newer key.
+        if (ticket != null) {
+            require(apiKey.isNotEmpty()) { "Missing API key" }
+            val coroutine = kotlinx.coroutines.currentCoroutineContext()
+            coroutine.ensureActive()
+            if (!providerRepository.nmCommitOAuthLogin(ticket, apiKey, { coroutine.isActive }) {}) {
+                coroutine.ensureActive()
+                throw IllegalStateException("OAuth sign-in was superseded")
+            }
+        } else providerRepository.saveApiKey(instanceId, apiKey)
         Log.i(TAG, "=== OpenRouter OAuth login complete (instance: $instanceId) ===")
         return apiKey
     }
@@ -114,6 +154,10 @@ object OpenRouterOAuthManager {
         Log.i(TAG, "Logout — cleared API key (instance: $instanceId)")
     }
 
+    // nanoMuse: independent from PKCE; never persist or log callback state.
+    internal fun nmNewState(): String = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        .let { java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
+
     private fun generatePKCE(): Pair<String, String> {
         val bytes = ByteArray(96)
         SecureRandom().nextBytes(bytes)
@@ -123,8 +167,11 @@ object OpenRouterOAuthManager {
         val hash = MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.UTF_8))
         val challenge = standardBase64ToUrlSafe(hash)
 
-        Log.d(TAG, "PKCE verifier (${verifier.length} chars): ${verifier.take(20)}...")
-        Log.d(TAG, "PKCE challenge (${challenge.length} chars): $challenge")
+        // nanoMuse: verifier and challenge must never be copied to the test build's logs.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test") {
+            Log.d(TAG, "PKCE verifier (${verifier.length} chars): ${verifier.take(20)}...")
+            Log.d(TAG, "PKCE challenge (${challenge.length} chars): $challenge")
+        }
 
         return verifier to challenge
     }
@@ -151,16 +198,19 @@ object OpenRouterOAuthManager {
         body.put("code_verifier", verifier)
         body.put("code_challenge_method", "S256")
 
-        Log.d(TAG, "Exchange request body: ${body.toString()}")
-        Log.d(TAG, "Code: $code")
-        Log.d(TAG, "Verifier (${verifier.length} chars): ${verifier.take(20)}...${verifier.takeLast(10)}")
+        // nanoMuse: both the request body and the callback code contain credentials.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test") {
+            Log.d(TAG, "Exchange request body: ${body.toString()}")
+            Log.d(TAG, "Code: $code")
+            Log.d(TAG, "Verifier (${verifier.length} chars): ${verifier.take(20)}...${verifier.takeLast(10)}")
+        }
 
         val request = Request.Builder()
             .url(KEYS_URL)
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .header("Content-Type", "application/json")
             .header("HTTP-Referer", "https://github.com/OpenMinis/OpenMinis")
-            .header("X-Title", "nanoMuse App")
+            .header("X-Title", "TAMA AI App")
             .build()
 
         val response = client.newCall(request).execute()
@@ -171,7 +221,9 @@ object OpenRouterOAuthManager {
         Log.d(TAG, "Response body received (len=${responseBody.length})")
 
         if (!response.isSuccessful) {
-            throw Exception("OpenRouter key exchange failed (${response.code}): $responseBody")
+            // nanoMuse: the response can echo arbitrary secrets.
+            throw Exception(if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                "OpenRouter key exchange failed (${response.code})" else "OpenRouter key exchange failed (${response.code}): $responseBody")
         }
 
         val json = JSONObject(responseBody)

@@ -755,7 +755,9 @@ internal fun ToolCallPill(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = block.toolTitle.ifEmpty { block.toolName },
+                    text = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+                        block.toolName == ai.tama.tools.ImageGenerationTool.NAME) stringResource(R.string.nm_models_image_title)
+                    else block.toolTitle.ifEmpty { block.toolName },
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface,

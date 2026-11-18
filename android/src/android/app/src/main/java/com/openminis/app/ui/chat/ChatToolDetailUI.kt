@@ -290,6 +290,35 @@ internal fun ToolDetailSheet(
         block.toolStatus == ToolBlockStatus.STREAMING ||
         block.toolStatus == ToolBlockStatus.PENDING
     val toolAccent = toolAccentColor(block.toolName)
+    val imageInParallel = BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+        block.toolName == ai.tama.tools.ImageGenerationTool.NAME
+    val imageContext = LocalContext.current
+    val displayContent = if (imageInParallel) {
+        val summary = ai.tama.media.ImageToolPresentation.summary(
+            raw = block.content, live = isLive, success = block.toolStatus == ToolBlockStatus.SUCCESS,
+            ambiguousMessage = imageContext.getString(R.string.nm_image_guard_ambiguous),
+            repeatedMessage = imageContext.getString(R.string.nm_image_guard_repeat),
+            invalidMessage = imageContext.getString(R.string.nm_image_guard_invalid),
+        )
+        val resource = when (summary) {
+            ai.tama.media.ImageToolPresentation.Summary.PREPARING -> R.string.nm_image_detail_preparing
+            ai.tama.media.ImageToolPresentation.Summary.GENERATED -> R.string.nm_image_detail_generated
+            ai.tama.media.ImageToolPresentation.Summary.NO_MODEL -> R.string.nm_image_provider_missing
+            ai.tama.media.ImageToolPresentation.Summary.NO_APPROVAL -> R.string.nm_auto_image_missing
+            ai.tama.media.ImageToolPresentation.Summary.UNVERIFIED_COST -> R.string.nm_auto_reason_unverified_cost
+            ai.tama.media.ImageToolPresentation.Summary.MODEL_COST_UNVERIFIED -> R.string.nm_model_cost_blocked
+            ai.tama.media.ImageToolPresentation.Summary.AUTHORIZATION_CHANGED -> R.string.nm_auto_image_changed
+            ai.tama.media.ImageToolPresentation.Summary.PERMISSION_DENIED -> R.string.nm_image_permission_denied
+            ai.tama.media.ImageToolPresentation.Summary.EDIT_UNAVAILABLE -> R.string.nm_auto_image_edit_blocked
+            // nanoMuse: explain a blocked sibling model without showing provider text.
+            ai.tama.media.ImageToolPresentation.Summary.MODEL_CHANGE_BLOCKED -> R.string.nm_media_model_change_blocked
+            ai.tama.media.ImageToolPresentation.Summary.AMBIGUOUS -> R.string.nm_image_guard_ambiguous
+            ai.tama.media.ImageToolPresentation.Summary.ALREADY_HANDLED -> R.string.nm_image_guard_repeat
+            ai.tama.media.ImageToolPresentation.Summary.INVALID -> R.string.nm_image_guard_invalid
+            ai.tama.media.ImageToolPresentation.Summary.FAILED -> R.string.nm_image_detail_failed
+        }
+        imageContext.getString(resource)
+    } else block.content
 
     // nanoMuse (issue #67): one way out for the ✕, the scrim and the back
     // gesture — slide the sheet down, then tell the owner, and tell the owner
@@ -353,7 +382,7 @@ internal fun ToolDetailSheet(
                 // the elapsed-duration text) so it sits next to where the
                 // user is already scanning timing info.
                 Text(
-                    text = "nanoMuse Computer",
+                    text = "TAMA AI Computer",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = ChatColors.primaryText,
@@ -437,8 +466,8 @@ internal fun ToolDetailSheet(
                                     "browser_use action → open in session pool: ${browserActionUrl.take(160)}",
                                 )
                                 onOpenBrowserForUrl(browserActionUrl)
-                            } else if (block.content.isNotEmpty()) {
-                                clipboardManager.setText(AnnotatedString(block.content))
+                            } else if (displayContent.isNotEmpty()) {
+                                clipboardManager.setText(AnnotatedString(displayContent))
                                 copyDone = true
                             }
                         },
@@ -1113,7 +1142,7 @@ internal fun ToolDetailSheet(
 
                     // ── Default: generic text output ──
                     else -> {
-                        if (block.content.isNotEmpty()) {
+                        if (displayContent.isNotEmpty()) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -1131,7 +1160,7 @@ internal fun ToolDetailSheet(
                                 // selectable/copyable (it wasn't before).
                                 androidx.compose.foundation.text.selection.SelectionContainer {
                                     LazyRevealToolText(
-                                        bodyText = block.content,
+                                        bodyText = displayContent,
                                         color = ChatColors.primaryText,
                                         scrollState = outputScrollState,
                                         linkify = true,
@@ -1203,7 +1232,8 @@ internal fun ToolDetailSheet(
                     // Title + subtitle
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = toolTitleLabel(block.toolName, block.toolStatus), // nanoMuse (issue #67): past tense once over
+                            text = if (imageInParallel) stringResource(R.string.nm_models_image_title)
+                                else toolTitleLabel(block.toolName, block.toolStatus), // nanoMuse (issue #67): past tense once over
                             fontSize = 14.sp,
                             lineHeight = 16.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -1212,7 +1242,8 @@ internal fun ToolDetailSheet(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = block.toolTitle.ifEmpty { block.toolName },
+                            text = if (imageInParallel) stringResource(R.string.nm_models_image_title)
+                                else block.toolTitle.ifEmpty { block.toolName },
                             fontSize = 12.sp,
                             lineHeight = 14.sp,
                             color = ChatColors.secondaryText,

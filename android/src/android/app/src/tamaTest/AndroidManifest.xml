@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- nanoMuse: override every launcher alias as well as the application. Do not
+         override app_name: other in-app strings should stay identical to debug. -->
+    <application android:label="Tama V2 Test" tools:replace="android:label">
+        <activity-alias android:name=".MainActivityIconAuto"
+            android:label="Tama V2 Test" tools:replace="android:label" />
+        <activity-alias android:name=".MainActivityIconLight"
+            android:label="Tama V2 Test" tools:replace="android:label" />
+        <activity-alias android:name=".MainActivityIconDark"
+            android:label="Tama V2 Test" tools:replace="android:label" />
+    </application>
+</manifest>

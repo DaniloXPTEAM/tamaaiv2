@@ -8,22 +8,22 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The sandbox's offload socket is the app's own, so nanoMuse and OpenMinis start side by side
+ * The sandbox's offload socket is the app's own, so TAMA AI and nanoMuse start side by side
  * (#271), and the server binds that name, not upstream's.
  */
 class OffloadSocketNameTest {
-    private val appId = "io.github.nanomuse.app"
+    private val appId = "ai.tama.assistant" // TAMA: the applicationId, not the package
 
     @Test fun `the app's name carries the application id and is not upstream's`() {
         val name = OffloadSocketName.forApp(appId)
-        assertEquals("io.github.nanomuse.app.native-offload", name)
+        assertEquals("ai.tama.assistant.native-offload", name)
         assertNotEquals(OffloadSocketName.UPSTREAM, name)
         assertTrue(name.startsWith("$appId."))
     }
 
     @Test fun `the per-process fallback is the app's name plus the pid`() {
         val name = OffloadSocketName.forProcess(appId, 24601)
-        assertEquals("io.github.nanomuse.app.native-offload-24601", name)
+        assertEquals("ai.tama.assistant.native-offload-24601", name)
         assertTrue(name.startsWith(OffloadSocketName.forApp(appId)))
     }
 

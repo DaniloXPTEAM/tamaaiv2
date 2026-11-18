@@ -161,7 +161,7 @@ fun CodingScreen(onBack: () -> Unit, onOpenDevices: () -> Unit) {
                     if (computer != null) {
                         IconButton(onClick = { load() }, enabled = !loading) {
                             if (loading) {
-                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.action)
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.accent)
                             } else {
                                 Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.nm_coding_refresh))
                             }
@@ -413,7 +413,7 @@ private fun NewConversationDialog(agent: Agent, workspaces: List<String>, onDism
                     label = { Text(stringResource(R.string.nm_coding_workspace)) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, cursorColor = MuseTones.action, focusedLabelColor = MuseTones.action),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, cursorColor = MuseTones.accent, focusedLabelColor = MuseTones.accent),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (workspaces.size > 1) {
@@ -423,7 +423,7 @@ private fun NewConversationDialog(agent: Agent, workspaces: List<String>, onDism
                             text = w,
                             fontSize = 12.sp,
                             fontFamily = FontFamily.Monospace,
-                            color = MuseTones.action,
+                            color = MuseTones.accent,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.fillMaxWidth().clickable { workspace = w }.padding(vertical = 4.dp),
@@ -439,7 +439,7 @@ private fun NewConversationDialog(agent: Agent, workspaces: List<String>, onDism
             }
         },
         confirmButton = {
-            TextButton(onClick = { onStart(workspace.trim()) }) { Text(stringResource(R.string.nm_coding_start), color = MuseTones.action) }
+            TextButton(onClick = { onStart(workspace.trim()) }) { Text(stringResource(R.string.nm_coding_start), color = MuseTones.accent) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
@@ -623,7 +623,7 @@ private fun LiveBlock(run: LiveRun) {
                 .widthIn(max = 340.dp)
                 .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 6.dp, bottomEnd = 18.dp))
                 .background(MuseTones.surface)
-                .border(1.dp, if (run.status == "running") MuseTones.action.copy(alpha = 0.35f) else Color.Transparent, RoundedCornerShape(18.dp))
+                .border(1.dp, if (run.status == "running") MuseTones.accent.copy(alpha = 0.35f) else Color.Transparent, RoundedCornerShape(18.dp))
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
             val body = listOf(run.output, run.current).filter { it.isNotBlank() }.joinToString("\n")
@@ -653,7 +653,7 @@ private fun LiveBlock(run: LiveRun) {
             if (foot != null) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = if (body.isNotBlank()) 8.dp else 0.dp)) {
                     if (run.status == "running") {
-                        CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = MuseTones.action)
+                        CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = MuseTones.accent)
                         Spacer(Modifier.width(8.dp))
                     }
                     Text(
@@ -685,11 +685,11 @@ private fun Composer(draft: String, onDraft: (String) -> Unit, hint: String, run
             shape = RoundedCornerShape(22.dp),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MuseTones.action,
+                focusedBorderColor = MuseTones.accent,
                 unfocusedBorderColor = MuseTones.hairline,
                 focusedContainerColor = MuseTones.surface,
                 unfocusedContainerColor = MuseTones.surface,
-                cursorColor = MuseTones.action,
+                cursorColor = MuseTones.accent,
             ),
             modifier = Modifier.weight(1f),
         )

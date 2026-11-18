@@ -15,6 +15,8 @@ import com.openminis.app.provider.ImageBudget
 import com.openminis.app.provider.LLMProvider
 import com.openminis.app.provider.applyUserAgentOverride
 import com.openminis.app.provider.safeOptString
+import ai.tama.net.singleUseImageBody // nanoMuse: direct ModelUse must not replay a possibly billed request.
+import ai.tama.net.singleUseImageClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.awaitClose
@@ -48,6 +50,18 @@ class AnthropicProvider(
 ) : LLMProvider {
     override val name = "Anthropic"
     override val defaultMaxOutputTokens: Int get() = 64_000
+
+    // nanoMuse: only enabled on a fresh direct ModelUse provider in the test
+    // package. The recheck is not atomic with the network and is not a budget.
+    internal var singleUseDirectRequest: Boolean = false
+    internal var beforeDirectRequest: (() -> Unit)? = null
+
+    private fun protectDirectRequest(request: Request): Request {
+        val body = request.body
+        return if (singleUseDirectRequest && body != null)
+            request.newBuilder().method(request.method, body.singleUseImageBody()).build()
+        else request
+    }
 
     /**
      * [T-android-enhanced-cache] Enhanced Cache toggle — when true, every
@@ -92,13 +106,22 @@ class AnthropicProvider(
         tools: List<AgentToolDefinition>,
         thinkingLevel: ThinkingLevel,
     ): LLMResponse = withContext(Dispatchers.IO) {
+        // nanoMuse: a selected model or account does not establish its request cost.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         val body = buildRequestBody(messages, systemPrompt, maxTokens, stream = false, temperature = temperature, imageParts = imageParts, tools = tools, thinkingLevel = thinkingLevel)
-        val request = buildRequest(body.toString(), body)
-        val response = client.newCall(request).execute()
+        val request = protectDirectRequest(buildRequest(body.toString(), body))
+        // nanoMuse: snapshot the model and credentials for this specific wire request.
+        val requestModel = body.opt("model") as? String
+        val credentials = requestCredentials(request)
+        // nanoMuse: revalidate after request preparation and before dispatch.
+        beforeDirectRequest?.invoke()
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+        val requestClient = if (singleUseDirectRequest) client.singleUseImageClient() else client
+        val response = requestClient.newCall(request).execute()
         val responseBody = response.body?.string() ?: ""
 
         if (!response.isSuccessful) {
-            throw mapHttpError(response.code, responseBody)
+            throw mapHttpError(response.code, responseBody, response.header("Retry-After"), requestModel, credentials)
         }
 
         val json = JSONObject(responseBody)
@@ -126,13 +149,18 @@ class AnthropicProvider(
         tools: List<AgentToolDefinition>,
         thinkingLevel: ThinkingLevel,
     ): Flow<LLMStreamChunk> = callbackFlow {
+        // nanoMuse: block unknown-cost streams before building the outbound request.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         val body = buildRequestBody(messages, systemPrompt, maxTokens, stream = true, temperature = temperature, imageParts = imageParts, tools = tools, thinkingLevel = thinkingLevel)
         // T302: serialize the body exactly once and pass the string to
         // buildRequest. Pre-T302 body.toString() ran twice per call (once
         // here, once inside buildRequest); each emitted string was tens of
         // MB on long agent loops and stacked under GC pressure.
         val bodyStr = body.toString()
-        val request = buildRequest(bodyStr, body)
+        val request = protectDirectRequest(buildRequest(bodyStr, body))
+        // nanoMuse: a later model or credential change cannot rewrite this failure's details.
+        val requestModel = body.opt("model") as? String
+        val credentials = requestCredentials(request)
 
         val startTime = System.currentTimeMillis()
 
@@ -142,7 +170,11 @@ class AnthropicProvider(
             headerMap[name] = request.headers[name] ?: ""
         }
 
-        val response = client.newCall(request).execute()
+        // nanoMuse: the guards may have changed while the request was prepared.
+        beforeDirectRequest?.invoke()
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+        val requestClient = if (singleUseDirectRequest) client.singleUseImageClient() else client
+        val response = requestClient.newCall(request).execute()
         val durationMs = System.currentTimeMillis() - startTime
 
         if (!response.isSuccessful) {
@@ -161,12 +193,14 @@ class AnthropicProvider(
                         requestBody = bodyStr,
                         durationMs = durationMs,
                         responseStatusCode = response.code,
-                        responseBody = errorBody.take(2000),
+                        // nanoMuse: keep only the decoded, redacted provider message, not metadata.
+                        responseBody = io.github.nanomuse.net.ProviderReach.diagnosticMessage(errorBody, maxChars = 2000, credentials = credentials),
                     )
                 )
             }
-            android.util.Log.e("AnthropicProvider", "Stream failed: ${response.code} isOAuth=$isOAuth body=${errorBody.take(300)}")
-            throw mapHttpError(response.code, errorBody)
+            // nanoMuse: raw errors can echo prompts or credentials, including JSON-escaped keys.
+            android.util.Log.e("AnthropicProvider", "Stream failed: ${response.code}")
+            throw mapHttpError(response.code, errorBody, response.header("Retry-After"), requestModel, credentials)
         }
 
         // Log successful request (debug builds only — see above)
@@ -198,8 +232,18 @@ class AnthropicProvider(
                 if (payload == "[DONE]") break
 
                 val event = try { JSONObject(payload) } catch (_: Exception) { continue }
-                android.util.Log.d("ToolChain[Provider]", "RAW SSE: $payload")
                 val eventType = event.safeOptString("type", "")
+                // nanoMuse: a successful HTTP stream can still contain a provider error.
+                // Never log raw SSE: it can contain conversation text or escaped credentials.
+                val streamError = event.optJSONObject("error")
+                if (eventType == "error" || streamError != null) {
+                    val code = streamError?.optInt("code", 0) ?: 0
+                    val type = streamError?.opt("type") as? String
+                    throw mapHttpError(
+                        code, event.toString(), null, requestModel, credentials,
+                        hasHttpStatus = false, transientStream = type in setOf("api_error", "overloaded_error"),
+                    )
+                }
 
                 when (eventType) {
                     "message_start" -> {
@@ -214,7 +258,8 @@ class AnthropicProvider(
                             currentToolId = contentBlock.safeOptString("id", "")
                             currentToolName = contentBlock.safeOptString("name", "")
                             toolInputBuffer.clear()
-                            android.util.Log.d("ToolChain[Provider]", "→ ToolUseStart id=$currentToolId name=$currentToolName")
+                            // nanoMuse: identifiers and tool names are provider-supplied; do not log them.
+                            android.util.Log.d("ToolChain[Provider]", "Tool use started")
                             send(LLMStreamChunk.ToolUseStart(currentToolId!!, currentToolName!!))
                         }
                     }
@@ -233,7 +278,8 @@ class AnthropicProvider(
                                 val partial = delta.safeOptString("partial_json", "")
                                 if (partial.isNotEmpty() && currentToolId != null) {
                                     toolInputBuffer.append(partial)
-                                    android.util.Log.d("ToolChain[Provider]", "→ ToolInputDelta id=$currentToolId accumulated=${toolInputBuffer.length}chars")
+                                    // nanoMuse: report size only; the id can be provider-supplied data.
+                                    android.util.Log.d("ToolChain[Provider]", "Tool input received: ${toolInputBuffer.length} chars")
                                     send(LLMStreamChunk.ToolInputDelta(currentToolId!!, toolInputBuffer.toString()))
                                 }
                             }
@@ -246,7 +292,8 @@ class AnthropicProvider(
                             } catch (_: Exception) {
                                 JSONObject()
                             }
-                            android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete id=$currentToolId name=$currentToolName args=${args.toString().take(300)}")
+                            // nanoMuse: tool arguments may contain private data; do not write them to logcat.
+                            android.util.Log.d("ToolChain[Provider]", "Tool call complete")
                             send(LLMStreamChunk.ToolCallComplete(currentToolId!!, currentToolName!!, args))
                             currentToolId = null
                             currentToolName = null
@@ -1034,25 +1081,26 @@ class AnthropicProvider(
         )
     }
 
-    private fun mapHttpError(statusCode: Int, body: String): LLMError {
-        if (statusCode == 401 || statusCode == 403) return LLMError.InvalidApiKey()
-        if (statusCode == 429) return LLMError.RateLimited()
+    // nanoMuse: retain only request-scoped, decoded and redacted diagnostics.
+    private fun requestCredentials(request: Request): List<String> =
+        ai.tama.net.ProviderCredentials.fromHeaders(
+            request.headers.names().associateWith { request.headers.values(it) }, apiKey,
+        )
 
-        val message = try {
-            val json = JSONObject(body)
-            val error = json.optJSONObject("error")
-            val errorType = error?.safeOptString("type", "") ?: "error"
-            val errorMessage = error?.safeOptString("message", "") ?: body
-            "[$errorType] $errorMessage"
-        } catch (_: Exception) {
-            "HTTP $statusCode: ${body.take(500)}"
-        }
-
-        val transientCodes = setOf(500, 502, 503, 504, 529)
-        if (statusCode in transientCodes) {
-            return LLMError.TransientError(message)
-        }
-        return LLMError.ProviderError(message)
+    private fun mapHttpError(
+        statusCode: Int, body: String, retryAfter: String?, requestModel: String?,
+        credentials: Collection<String>, hasHttpStatus: Boolean = true, transientStream: Boolean = false,
+    ): LLMError {
+        val diagnostics = ai.tama.net.ProviderErrorDiagnostics
+        val captured = diagnostics.capture(
+            code = statusCode, body = body, host = io.github.nanomuse.net.OwnProviderProxy.hostOf(basePath),
+            oauth = isOAuth, requestModel = requestModel, credentials = credentials,
+            retryAfter = retryAfter, fromRelay = io.github.nanomuse.net.OwnProviderProxy.isRelay(basePath),
+            hasHttpStatus = hasHttpStatus,
+        )
+        return captured.nativeError(
+            statusCode, hasHttpStatus, diagnostics.safeErrorType(body, credentials), transientStream,
+        )
     }
 
     private fun mapError(error: Throwable): LLMError {

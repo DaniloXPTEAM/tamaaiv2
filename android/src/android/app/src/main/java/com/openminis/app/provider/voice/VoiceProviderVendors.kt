@@ -368,10 +368,18 @@ class XunfeiVoiceProvider(
         return suspendCancellableCoroutine { cont ->
             val pcm = ByteArrayOutputStream()
             val wsRequest = Request.Builder().url(signedUrl).build()
+            // nanoMuse: opening a vendor speech socket is a model request.
+            ai.tama.pricing.ModelCostGuard.requireAllowed()
             val socket = httpClient.newWebSocket(
                 wsRequest,
                 object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
+                        // nanoMuse: permission can change after the handshake begins.
+                        if (!ai.tama.pricing.ModelCostGuard.permits()) {
+                            if (cont.isActive) cont.resumeWithException(ai.tama.pricing.ModelCostGuard.Blocked())
+                            webSocket.cancel()
+                            return
+                        }
                         webSocket.send(payload)
                     }
 
@@ -931,6 +939,8 @@ class OpenRouterVoiceProvider(providerId: String, baseURL: String, apiKey: Strin
         val pcm = ByteArrayOutputStream()
         val transcript = StringBuilder()
         withContext(Dispatchers.IO) {
+            // nanoMuse: the OpenRouter streaming voice path bypasses executeRequest.
+            ai.tama.pricing.ModelCostGuard.requireAllowed()
             httpClient.newCall(builder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     // Drain the body so the server's message survives into the
@@ -941,11 +951,16 @@ class OpenRouterVoiceProvider(providerId: String, baseURL: String, apiKey: Strin
                         Log.e("VoiceProvider", "OpenRouter voice auth failed: HTTP ${response.code}")
                         throw VoiceProviderException.Auth()
                     }
-                    Log.e(
-                        "VoiceProvider",
-                        "OpenRouter chat-audio failed: HTTP ${response.code} " +
-                            "body=${errBody?.toString(Charsets.UTF_8).orEmpty()}",
-                    )
+                    // nanoMuse: provider errors can echo input or credentials.
+                    if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                        Log.e("VoiceProvider", "OpenRouter chat-audio failed: HTTP ${response.code}")
+                    } else {
+                        Log.e(
+                            "VoiceProvider",
+                            "OpenRouter chat-audio failed: HTTP ${response.code} " +
+                                "body=${errBody?.toString(Charsets.UTF_8).orEmpty()}",
+                        )
+                    }
                     throw VoiceProviderException.Http(response.code, errBody)
                 }
                 val source = response.body?.source()

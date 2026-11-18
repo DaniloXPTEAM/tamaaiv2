@@ -49,6 +49,18 @@ const PROTOCOLS = new Set(['openai', 'openai-responses', 'anthropic', 'gemini'])
 const REGIONS = new Set(['cn', 'global'])
 const WIRES = new Set(['reasoning_effort', 'thinking+reasoning_effort', 'reasoning.effort', 'output_config.effort'])
 const LEVELS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const MODEL_CAPABILITIES = new Set(['chat', 'tools', 'vision', 'image_gen', 'long_context', 'reasoning'])
+
+// Null means unknown, never a promised allowance; only positive integer observations are accepted.
+function limitsProblems(where, limits) {
+  if (typeof limits !== 'object' || limits === null || Array.isArray(limits)) return [`${where}: limits must be an object`]
+  const out = []
+  for (const [key, value] of Object.entries(limits)) {
+    if (!['free_tpm', 'max_output', 'context'].includes(key)) out.push(`${where}: unknown limit ${key}`)
+    else if (value !== null && (!Number.isSafeInteger(value) || value < 1 || value > 2147483647)) out.push(`${where}: ${key} must be a positive integer or null`)
+  }
+  return out
+}
 
 /** The problems with a provider's `reasoning` hint, as lines; none for a well-formed hint. */
 function reasoningProblems(where, protocol, hint) {
@@ -119,6 +131,17 @@ for (const p of catalogue.providers) {
   for (const c of p.capabilities ?? []) {
     if (c === 'vision' || p.id === 'custom' || p.auth.includes('none')) continue
     if (!(p.defaults ?? {})[c]) problems.push(`${where}: a ${c} capability needs defaults.${c}`)
+  }
+  if (p.limits !== undefined) problems.push(...limitsProblems(where, p.limits))
+  if (p.models !== undefined) {
+    if (typeof p.models !== 'object' || p.models === null || Array.isArray(p.models)) problems.push(`${where}: models must map exact ids to metadata`)
+    else for (const [id, model] of Object.entries(p.models)) {
+      const at = `${where}: models[${id}]`
+      if (!id || typeof model !== 'object' || model === null || Array.isArray(model)) { problems.push(`${at} must be an object with an exact id`); continue }
+      if (model.capabilities !== undefined && (!Array.isArray(model.capabilities) || model.capabilities.some(c => !MODEL_CAPABILITIES.has(c)))) problems.push(`${at}: invalid model capabilities`)
+      if (model.limits !== undefined) problems.push(...limitsProblems(at, model.limits))
+      for (const key of Object.keys(model)) if (!['limits', 'capabilities'].includes(key)) problems.push(`${at}: unknown field ${key}`)
+    }
   }
   if (p.reasoning !== undefined) problems.push(...reasoningProblems(where, p.protocol, p.reasoning))
   if (p.session_header !== undefined && !/^x-[a-z0-9-]+$/.test(p.session_header)) problems.push(`${where}: session_header must be a lowercase x- header name`)

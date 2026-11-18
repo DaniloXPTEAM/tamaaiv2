@@ -7,10 +7,9 @@ Bundled skills in Settings → Skills can be read, exported and switched off. Th
 browser, MCP servers, skills and scheduled tasks inside the APK, with nanoMuse's own
 identity, design and features on top. Everything of nanoMuse's lives in
 `io.github.nanomuse.*`; edits inside OpenMinis files are marked `// nanoMuse:`. The
-application id is `io.github.nanomuse.app` and the URL scheme the system knows the app by is
-`nanomuse://`, so a phone that also has OpenMinis installed never has two apps claiming one
-scheme; inside the app, links stay `minis://…` (upstream's vocabulary, shared with the sandbox,
-the system prompt and the model), a `nanomuse://` link arriving from the system is read as its
+TAMA Android application id is `ai.tama.assistant` and the system URL scheme is `tama://`.
+Inside the app, links stay `minis://…` (upstream's vocabulary, shared with the sandbox,
+the system prompt and the model), a `tama://` link arriving from the system is read as its
 `minis://` form, and every link of the app's own that the app opens itself is addressed to
 `MainActivity` by name, never resolved by the system
 (`io.github.nanomuse.deeplink.OwnScheme`). The sandbox's offload socket, the abstract socket
@@ -24,19 +23,62 @@ around a Python server, two APK flavours) is kept as a design record in
 [archive/android-python-line.md](archive/android-python-line.md) and is not what you
 download today.
 
-One APK, one architecture: `nanoMuse-<version>-arm64.apk` (arm64-v8a, Android 8.0 / API 26
-or newer, `targetSdk` 35). Every release is signed with the same key, so a newer APK
-installs over the old one and keeps its data. No Play Store listing: *Settings → Version* shows
-the installed build next to the newest release (`nanomuse.cn/dl/index.json` first, this
-repository's GitHub Releases second: *Latest 0.1.x, you have it* / *0.1.x is out, tap to
-update*) and offers the download.
+The CI candidate is a debug-signed `arm64-v8a` APK for Android 8.0 / API 26 or newer,
+`targetSdk` 35. It is not a production release. Different runners can create different debug
+signing certificates, so an update over an installed build is **not guaranteed**. Check the
+installed certificate and the new APK before attempting an update; do not uninstall or clear
+the existing app to work around a mismatch, because the local Pet data is not in backup.
+
+## Appearance
+
+TAMA uses warm cream, amber and cocoa colours across onboarding, chat, navigation, settings and
+the Pet, with a matching dark palette. The five home destinations and their functions stay the
+same. The current tab carries its label, and the paw beside the agent name opens the Pet directly;
+tapping the face or name still opens the agent profile. Appearance settings, including a custom
+avatar, theme override and chat background, remain in place. The isolated test procedure and its
+limits are in [TAMA_ANDROID_TESTE_ISOLADO.md](TAMA_ANDROID_TESTE_ISOLADO.md). In run `43544369188`
+the Compose journey and process-restart assertions passed, but a Pixel Launcher dialog appeared in
+some raw emulator screenshots and the translated PRoot shell check timed out. Those results do not
+establish an unobstructed physical-phone journey or a working native ARM sandbox.
+
+## Pet
+
+Tap the paw beside the agent's name, or open the agent profile, tap the pen on its face and
+choose the Pet. Feeding, resting and playing
+change its needs. The built-in character has six stages at levels 1, 5, 10, 20, 35 and 50. The
+existing XP-to-level formula stays the same. A custom picture, emoji or clip is kept and gets a
+stage silhouette; it is not replaced or sent to an image generator.
+
+A successful tracked work cycle grants 10 XP and a failed one grants 3. Nine daily missions give
+bonuses, but cycles and missions together cannot grant more than 100 XP per local calendar day.
+The last reward may be partial. A cycle can contain several queued prompts; conversation
+missions count saved person prompts, including device-directed chat and avatar choices, not
+scheduled or headless prompts. A queued or compacted prompt keeps the Pet that was present when
+it was submitted. A goal counts after its updated goal file is saved. A new skill counts after its
+metadata and `SKILL.md` are written; other files may still be downloading or may be incomplete.
+Mission progress also comes from care, successful work, memory and file writes, stages and games.
+The Pet's activities and two mini-games are manual and run locally without model calls.
+
+The feeding clock starts on first use or migration. Only an explicit feed resets it. After 72
+hours without feeding, the Pet dies and the screen shows a read-only memorial for 72 hours. When
+the app next reconciles the elapsed time, the old generation is archived and one new Pet starts at
+level 1 with zero XP. An unattended phone does not create a chain of unseen generations. Existing
+Pets keep their XP on migration; an old visit is not treated as evidence of feeding.
+
+Pet data and archives stay in this installation's local preferences. The app does not currently
+restore them through its backup flow or sync them to another device. Check the installed APK's
+signing certificate before updating a debug build, and do not uninstall or clear its data to work
+around a signing mismatch.
 
 ## Install
 
-1. Download `nanoMuse-<version>-arm64.apk` from the
-   [latest release](https://github.com/nano-muse/nanoMuse/releases/latest). Verify with
-   `sha256sum -c nanoMuse-<version>-arm64.apk.sha256` if you like.
-2. Open it. Android asks once to allow installs from your browser or file manager.
+1. For a debug candidate, use the `nanoMuse-debug-apk` artifact from this repository's
+   [Android workflow](https://github.com/DaniloXPTEAM/tamaaiv2/actions/workflows/android.yml).
+   Compare its SHA-256 with the accompanying `phone-apk.sha256`, and verify its signing
+   certificate against the one actually installed. CI builds are not interchangeable if their
+   certificates differ. Do not remove the installed app to make a debug APK install.
+2. Only after the candidate and update compatibility have been verified, open the APK. Android
+   asks once to allow installs from your browser or file manager.
 3. **Sign in.** The first screen is the account: a phone number or an e-mail address,
    a code, or a password once you have set one. It is what lets your devices work as one
    ([hub.md](hub.md)) and brings a model to start with ([cloud.md](cloud.md): a free pool per
@@ -89,6 +131,25 @@ it* switches the ticked rows to this provider, each on the catalogue's default f
 (`defaults.chat` and friends in `providers.json`), or on the first model of its list that
 fits when the default is not there; *Not now* changes nothing, and so does an unticked switch.
 The other model choices stay as they are. The page is the place to change it later.
+
+**A provider refusal.** For OpenAI-compatible providers, the chat distinguishes rejected
+authentication (HTTP 401), denied access (403), a reported credit or payment limit, request or
+output size refusals, and rate limits (429). Tap the provider error card or *Details* to see the
+HTTP status, provider, model from the failed request, and a bounded provider message. The sheet
+can copy the message, retry the same unresolved turn, open the model picker or provider settings.
+An older error or a stream event may not have a status or model snapshot; the sheet says when a
+value is unavailable rather than guessing from the current picker. A numeric error code inside a
+successful event stream is not labelled as an HTTP status in the card or detail sheet. A retry from an old sheet is
+refused if the conversation or failure has changed. Relay and allowance refusals keep their
+special cards and actions.
+
+Known request credentials and common key forms are redacted, but an error message can still
+contain private text or a secret in an unrecognized or transformed form. Review it before copying
+or sharing it. A 403 alone does not say whether the key or account balance is the problem. For
+OpenRouter, select an available `:free` model or `openrouter/free` if you want to try a free model;
+availability, request limits and account restrictions still apply. OpenRouter describes these
+limits at [API limits](https://openrouter.ai/docs/api_reference/limits). A model listing is not a
+successful chat request, so send a message to check the selected provider and model.
 
 **When you have not chosen.** Chat is the relay's recommended model when signed in, else the
 first provider of your own. The screen, pictures and clips follow the chat provider when it is
@@ -178,6 +239,17 @@ task budgets.
 parameter, and condenses the `minis-*` paragraphs in the Android tools section. Each CLI's
 `--help` provides its full usage instructions.
 
+The local `/prompt-size` command reports fixed section names and schema sizes before and after
+that diet, without sending a model request or enabling general logging. Its character counts use
+UTF-16 units; estimated tokens are characters divided by 3.7, rounded up. History, attachments,
+output and request overhead are excluded. These numbers are neither exact tokenization nor a
+billing quote. The image-model indicator checks only whether an endpoint resolves locally; it
+does not generate an image or verify a provider. Results are snapshots of the current session.
+The report opens separately from the scrolling message row and dismisses the keyboard so it can
+remain open while the chat is laid out again.
+The isolated test compares the after counts with a loopback fixture's request and publishes only
+allowlisted labels and numbers, never prompt text, tool descriptions or credentials.
+
 With the default thinking rules, Qwen3.8-Max summary requests explicitly send `enable_thinking: false`. Omitting that
 field leaves the provider's default in control even though the app requested thinking off.
 The switch is documented in [Alibaba Cloud's thinking guide](https://help.aliyun.com/zh/model-studio/deep-thinking).
@@ -191,10 +263,18 @@ sends a chunk with no `choices` and a `nanomuse: {phase, ahead}` field every fiv
 is known (`NmStreamStatus`, one marked line in `OpenAIProvider`). Each step of a tool-using
 turn counts its own wait.
 
+**Screen-operation privacy.** When Hands is enabled, screenshots can be saved with a session and
+sent to its configured screen model, which may be a remote provider. They can contain private
+information. Accessibility also reads labels near taps for risk checks. These checks are
+heuristics, not guarantees: they can miss sensitive fields or actions, and an earlier approval can
+apply. Take over for passwords and payment details, and use Stop when unsure; an action already in
+progress may still finish. In the built-in browser, the click/type guard does not inspect arbitrary
+JavaScript, and checking a page element before acting cannot guarantee that the page stays unchanged.
+
 | | |
 | --- | --- |
-| **The agent, on the phone** | A sandboxed Alpine Linux, a real shell, files, a browser, MCP servers, skills in the Agent Skills format, memory, scheduled tasks; approvals before deleting, sending or paying. The model is the account's or your own; with your own key the chat itself goes from the phone to that provider and never through the project's relay, and from 1.0.7 the finished turn is added to your account's record afterwards (the model's id and the turn, never the key) so your other devices have it ([cloud.md](cloud.md#the-record)). |
-| **Hands** (`hands/`) | With *Hands* on and the accessibility service enabled, the agent looks at the phone's screen and taps, types and swipes in its apps: the last rung after APIs, fetches and the browser. A stage over the app shows where it is about to tap and a capsule with the step and **Stop**; a glow breathes along the screen's edges (blue working, amber waiting; 2.4 s in, 2.4 s out, like every working light on every client since round 9: nothing runs round the rim or slides down the screen, and the capsule's ring and bars breathe at the same pace; everything holds still under the system's reduce-motion setting); when a tap would send, post or delete, the capsule itself asks (**Allow** / **Deny**, the same request the chat card and the notification show), so you are not pulled back into nanoMuse (money is confirmed with the screen lock in the chat card; the capsule offers *Open* for that one); the capsule only ever answers its own request, never a shell or browser card of another conversation, and **Stop** while a card is waiting denies it and ends the run at once. Passwords and codes are always yours to type. The same action a third time on a screen that did not change gets a line in the history so the model changes tack, and a sixth ends the run as *infeasible* with the action named (`HandsLoopWatch`, the floor the runtime has too), instead of one model call per step until the thirty-minute limit. Every step's screenshot is written next to the run's trace under the session's `attachments/hands/<run>/`; the ten newest runs keep all of theirs, an older run keeps its trace and the last screen (the one the chat shows), and past 200 runs the oldest is removed (`HandsTraces`). [gui.md](gui.md) is the design record; the app's own hands are in `io.github.nanomuse.hands`. |
+| **The agent, on the phone** | A sandboxed Alpine Linux, a real shell, files, a browser, MCP servers, skills in the Agent Skills format, memory, scheduled tasks; risk checks for deleting, sending or paying. The model is the account's or your own; with your own key the chat itself goes from the phone to that provider and never through the project's relay, and from 1.0.7 the finished turn is added to your account's record afterwards (the model's id and the turn, never the key) so your other devices have it ([cloud.md](cloud.md#the-record)). |
+| **Hands** (`hands/`) | With *Hands* on and the accessibility service enabled, the agent looks at the phone's screen and taps, types and swipes in its apps: the last rung after APIs, fetches and the browser. A stage over the app shows where it is about to tap and a capsule with the step and **Stop**; a glow breathes along the screen's edges (blue working, amber waiting; 2.4 s in, 2.4 s out, like every working light on every client since round 9: nothing runs round the rim or slides down the screen, and the capsule's ring and bars breathe at the same pace; everything holds still under the system's reduce-motion setting); when a tap is recognized as sending, posting or deleting, the app checks for approval and the capsule can ask (**Allow** / **Deny**, the same request the chat card and notification show); an earlier approval can apply and label checks can miss an action (a detected payment opens the chat approval; remembering that payment needs the screen lock); the capsule only ever answers its own request, never a shell or browser card of another conversation, and **Stop** while a card is waiting denies it and ends the run at once. Take over for passwords, codes and payment details: field detection can miss them. The same action a third time on a screen that did not change gets a line in the history so the model changes tack, and a sixth ends the run as *infeasible* with the action named (`HandsLoopWatch`, the floor the runtime has too), instead of one model call per step until the thirty-minute limit. When a trace directory is available, step screenshots can be written next to the run's trace under the session's `attachments/hands/<run>/`; the ten newest runs keep all of theirs, an older run keeps its trace and the last screen (the one the chat shows), and past 200 runs the oldest is removed (`HandsTraces`). [gui.md](gui.md) is the design record; the app's own hands are in `io.github.nanomuse.hands`. |
 | **Reach** (`reach/`) | Your computers, from the phone: "say it on the phone, it gets done there" (a shell command, a file, the computer's screen, or a whole task for the nanoMuse running there). The way in is the hub (next row): install nanoMuse Desktop on the computer and sign in with the same account, and it is under *Account → Devices* within seconds, on any network, the only way since 0.1.24 (the local-network host script is gone). *Settings → Computers* lists the account's computers and says which account the phone uses, since a missing computer has nearly always signed in with another one. Approvals are decided on the phone before anything is sent. [every-device.md](every-device.md). |
 | **The hub** (`hub/`) | Every signed-in device of the account meets on the relay's hub: the phone sees your computers, asks them to do things, gets their approvals as cards, and can be asked by them. A foreground service keeps it reachable in the background (Android 13+ asks for the notification permission for that). [hub.md](hub.md). |
 | **Coding agents** (`ui/coding/`) | The Cursor, Codex and Claude Code sessions on your computers, seen and steered from the phone. [coding-agents.md](coding-agents.md). |
@@ -247,6 +327,12 @@ colors. Background images, gradients and theme imports are not included.
 Under **Settings → Appearance**, the font-size labels for **Chat Input**, **Message Text** and **App Base** follow the app's language.
 
 ## Your own key
+
+If a provider's model-list endpoint is unavailable, Android may use the public models.dev
+catalogue as a fallback. A host fallback must match the configured URL's scheme, hostname and
+effective port; `http` and `https`, or two servers on different ports, are not interchangeable.
+Paths can still differ, and hostnames are not resolved to compare aliases. When no catalogue
+entry matches, the existing model list is kept.
 
 The vendors the app knows are one file, `assets/nanomuse/providers.json`, a copy of the
 runtime's `nanomuse/llm/providers.json` written by `node scripts/providers-json.mjs`, the same
@@ -314,13 +400,20 @@ Again starts the new request without waiting for the old picture to finish savin
 A failed turn whose error is the transport's (OkHttp's *failed to connect to chatgpt.com/… (port
 443)*, *Unable to resolve host*, a TLS or timeout line) or OpenAI's *region not supported* is
 shown as a card instead of the red banner: what happened, what helps (a VPN on this phone, the
-proxy under *Settings → Network*, another provider with a key of your own), *Try again*, and the
-raw line behind *Details*. The 401/403/429 whose bodies upstream's `mapHttpError` drops are
-kept for a few seconds by `ReachSignal` (one `// nanoMuse:` spot in `OpenAIProvider`) and
-written into the message as a canonical `nm_reach:` line, so an expired ChatGPT sign-in reads
-*Sign in again* and a spent plan window reads *The ChatGPT plan has nothing left for now* with
-OpenAI's own sentence and the reset time; a plain *Invalid API key* on a key provider stays
-upstream's. The relay's `daily_cap` 429 is now read like `allowance_exhausted` and the card
+proxy under *Settings → Network*, another provider with a key of your own), *Try again*, and a
+bounded, redacted message behind *Details*. The 401/403/429 and credit refusals are attached to their own
+`LLMError` in `OpenAIProvider` and written into the message as a versioned canonical reach line.
+A 413 or explicit input-size refusal is not sent unchanged to the next group member. An output
+limit refusal is retried once only when the provider gives an unambiguous smaller maximum; a
+completed retry stores the maximum actually sent on that accepted attempt, isolated by route
+and model, for up to seven days. A normal 429 waits once for `Retry-After` (seconds or HTTP date),
+or five seconds when absent, up to a 60-second automatic-wait ceiling. An invalid supplied header
+is not treated as absent, and a quota refusal is not assumed to be a minute limit. These
+retries resend only the failed model request, not earlier executed tools. An oversized prompt is
+not yet reduced by profile here; that needs the subsequent router work. An expired ChatGPT sign-in reads *Sign in again*, a spent plan window keeps the provider's
+sentence and reset time, and an own-key provider's 401 is distinguished from a 403 or 429. The
+provider's message is shown when available, with the request credential redacted. The relay's
+`daily_cap` 429 is read like `allowance_exhausted` and the card
 says today's share is spent and comes back with the day. The allowance card also lists a model
 of your own (Ollama, LM Studio, vLLM on a computer you own) and, for a signed-in account, your
 computer: *@* and its name in the chat runs the turn there.
@@ -328,9 +421,8 @@ computer: *@* and its name in the chat runs the turn there.
 **When the relay refuses a turn** (`cloud/RelayRefusal.kt`, `ui/chat/RelayRefusalCard.kt`).
 Every refusal nanoMuse Cloud sends is one plain sentence in the phone's language and the button
 that fits, never a status code, the relay's JSON or upstream's *Rate limited*. The reply is
-read where the body is still whole (`AllowanceSignal.noteHttpError`, through the same
-`// nanoMuse:` spot in `OpenAIProvider`), stored in the message as a canonical `nm_relay:` line
-and drawn by the card: `413 too_large` (also a proxy's plain 413 from the relay's host) → *That
+read where the body is still whole (`AllowanceSignal.fromHttpError` in `OpenAIProvider`),
+attached to that request's exception, stored as a canonical `nm_relay:` line and drawn by the card: `413 too_large` (also a proxy's plain 413 from the relay's host) → *That
 message is too large for the model. Shorten it, leave out some attachments, or start a new
 chat.* with *New chat*; `400 content_rejected` (the provider's content check declined the
 words; also a provider's own `DataInspectionFailed` on a key of one's own) → *The model

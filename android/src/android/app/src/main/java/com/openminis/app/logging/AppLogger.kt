@@ -181,7 +181,7 @@ object AppLogger {
         val parenIdx = if (slashIdx >= 0) rawLine.indexOf('(', slashIdx) else -1
         if (slashIdx >= 0 && parenIdx > slashIdx) {
             val tag = rawLine.substring(slashIdx + 1, parenIdx).trim()
-            if (tag.startsWith("nanoMuse.") || tag == "AppLogger") return
+            if (tag.startsWith("TAMA AI.") || tag == "AppLogger") return
         }
         try {
             val now = Date()
@@ -301,12 +301,16 @@ object AppLogger {
     }
 
     private fun log(level: String, category: String, message: String) {
+        // nanoMuse: in the parallel app these upstream categories can contain raw
+        // endpoint URLs, provider fields or tool arguments, even after key redaction.
+        if (!ai.tama.net.ProviderLogPrivacy.allow(category,
+                com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")) return
         val now = Date()
         val today = dateFormat.format(now)
         val timestamp = timestampFormat.format(now)
 
         // Also output to logcat
-        val logcatTag = "nanoMuse.$category"
+        val logcatTag = "TAMA AI.$category"
         when (level) {
             "ERROR" -> Log.e(logcatTag, message)
             "WARN" -> Log.w(logcatTag, message)

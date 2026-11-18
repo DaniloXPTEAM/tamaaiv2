@@ -82,13 +82,20 @@ fun UseItForScreen(instanceId: String, onDone: () -> Unit) {
     // observed, not read once: the card can open before the saved config has landed
     val config = repo?.config?.collectAsState()
     val inst = config?.value?.instances?.firstOrNull { it.id == instanceId }
-    val offered = remember(inst) { inst?.let { ModelSlots.offeredSlots(context, it) }.orEmpty() }
+    val nmParallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" // nanoMuse
+    val freeOnly = nmParallel && inst?.tamaImportFreeOnly == true
+    // nanoMuse: a free-chat catalogue is not evidence for image, video or screen use.
+    val offered = remember(inst, freeOnly) {
+        inst?.let { ModelSlots.offeredSlots(context, it) }.orEmpty().filter { !freeOnly || it == Slot.CHAT }
+    }
     if (inst == null || offered.isEmpty()) {
         LaunchedEffect(Unit) { onDone() }
         return
     }
-    val ticked = remember { mutableStateOf(offered.toSet()) }
+    val status = if (freeOnly) repo?.nmFreeImportStatus?.collectAsState()?.value?.get(instanceId) else null
+    val ticked = remember(instanceId, offered) { mutableStateOf(offered.toSet()) }
     var busy by remember { mutableStateOf(false) }
+    var applyFailed by remember(instanceId) { mutableStateOf(false) } // nanoMuse
     val scope = rememberCoroutineScope()
 
     SettingsScaffold(title = stringResource(R.string.nm_useit_title), onBack = onDone) {
@@ -111,15 +118,42 @@ fun UseItForScreen(instanceId: String, onDone: () -> Unit) {
                 )
             }
         }
+        if (freeOnly) { // nanoMuse: keep the limits visible beside the choice
+            Text(
+                text = stringResource(R.string.nm_free_import_help),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 12.dp),
+            )
+            ai.tama.providers.freeModelImportStatusText(status)?.let { message ->
+                Text(message, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp))
+            }
+        }
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             MinisButton(
                 onClick = {
                     if (busy) return@MinisButton
                     busy = true
+                    applyFailed = false
+                    val requested = ticked.value
                     scope.launch {
-                        runCatching { ModelSlots.applyProvider(context, inst, ticked.value) }
-                        busy = false
-                        onDone()
+                        try {
+                            val done = ModelSlots.applyProvider(context, inst, requested)
+                            if (!nmParallel || done.containsAll(requested)) onDone()
+                            else {
+                                // Choices already applied stay applied; only the
+                                // missing ones remain selected for a retry.
+                                ticked.value = requested - done
+                                applyFailed = true
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            if (nmParallel) applyFailed = true else onDone()
+                        } finally {
+                            busy = false
+                        }
                     }
                 },
                 enabled = !busy && ticked.value.isNotEmpty(),
@@ -132,8 +166,14 @@ fun UseItForScreen(instanceId: String, onDone: () -> Unit) {
                 }
             }
             MinisTextButton(onClick = onDone, enabled = !busy, modifier = Modifier.padding(top = 4.dp)) {
-                Text(stringResource(R.string.nm_useit_not_now), color = MuseTones.action)
+                Text(stringResource(R.string.nm_useit_not_now), color = MuseTones.accent)
             }
+            if (applyFailed) Text( // nanoMuse
+                text = stringResource(R.string.nm_useit_incomplete),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 8.dp),
+            )
             Text(
                 text = stringResource(R.string.nm_useit_footnote),
                 fontSize = 12.sp,

@@ -9,10 +9,10 @@ from nanomuse.llm import catalogue
 from nanomuse.llm.factory import create_llm
 
 
-def test_the_packaged_file_is_read_once_and_has_the_twenty_six_providers():
+def test_the_packaged_file_is_read_once_and_has_the_twenty_seven_providers():
     cat = catalogue.load()
     assert cat.source.endswith("providers.json")
-    assert len(cat.providers) == 26
+    assert len(cat.providers) == 27
     assert cat.get("bailian").capabilities == ["chat", "vision", "image", "video"]
     assert cat.get("nowhere") is None
     # the same object on every call
@@ -198,3 +198,55 @@ def test_a_missing_file_falls_back_to_the_built_in_table(tmp_path: Path):
     broken = tmp_path / "broken.json"
     broken.write_text("{not json", encoding="utf-8")
     assert catalogue.load_file(broken).source == "built-in"
+
+
+# --- TAMA: the NVIDIA NIM endpoint ----------------------------------------------
+# TAMA's own provider list names NVIDIA NIM / any OpenAI-compatible endpoint as a
+# wanted capability. nanoMuse reached NIM only through `custom` (address + ticked
+# capabilities), which cannot tell anyone which ids exist or what they can do, and
+# which the catalogue deliberately keeps out of its capability guidance. This entry
+# makes NIM a first-class, discoverable endpoint; it promises no free tier.
+
+
+def test_nvidia_nim_is_a_first_class_openai_endpoint_with_a_checked_default():
+    cat = catalogue.load()
+    nim = cat.get("nvidia")
+    assert nim is not None
+    assert nim.protocol == "openai"
+    assert nim.base_url == "https://integrate.api.nvidia.com/v1"
+    assert nim.key_url == "https://build.nvidia.com/settings/api-keys"
+    assert nim.auth == ["key"]
+    assert nim.regions == ["global"]
+    assert nim.capabilities == ["chat", "vision"]
+    # a default chat model checked against NVIDIA's reference, like the groq entry
+    assert nim.defaults.get("chat") == "nvidia/llama-3.3-nemotron-super-49b-v1"
+    assert nim.defaults.get("hands") == "meta/llama-3.2-90b-vision-instruct"
+    # the note must not sell a free tier as unlimited
+    assert "rate-limited" in nim.note and "not assumed" in nim.note
+
+
+def test_nvidia_nim_routes_like_any_openai_provider():
+    assert check_provider("nvidia") == "nvidia"
+    assert resolve_provider("nvidia", None) == (
+        "openai",
+        "https://integrate.api.nvidia.com/v1",
+    )
+    settings = LLMSettings(provider="nvidia")
+    assert settings.protocol == "openai"
+    assert settings.endpoint == "https://integrate.api.nvidia.com/v1"
+    assert settings.model == "nvidia/llama-3.3-nemotron-super-49b-v1"
+    # a person's own id wins over the shipped default
+    assert LLMSettings(provider="nvidia", model="meta/llama-3.2-90b-vision-instruct").model == (
+        "meta/llama-3.2-90b-vision-instruct"
+    )
+
+
+def test_nvidia_nim_is_offered_for_chat_and_hands_in_the_global_region_only():
+    cat = catalogue.load()
+    nim = cat.get("nvidia")
+    assert nim in cat.providers_for("chat", "global")
+    assert nim in cat.providers_for("vision", "global")
+    for capability in ("image", "video"):
+        assert nim not in cat.providers_for(capability, "global")
+    # NVIDIA has no mainland-China sign-up path in this catalogue
+    assert nim not in cat.providers_for("chat", "cn")

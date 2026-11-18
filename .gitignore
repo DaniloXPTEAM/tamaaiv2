@@ -1,3 +1,6 @@
+# Packaged handoffs are generated locally, not repository sources.
+/entregas/
+
 # local configuration & secrets
 config/config.toml
 config/*.local.toml
@@ -16,6 +19,9 @@ workspace/
 *.key
 audit.jsonl
 sessions/
+# These Android source directories share the runtime-data name, but are project code.
+!/android/src/android/app/src/main/java/com/openminis/app/ui/sessions/
+!/android/src/android/app/src/test/java/com/openminis/app/ui/sessions/
 logs/
 
 # python

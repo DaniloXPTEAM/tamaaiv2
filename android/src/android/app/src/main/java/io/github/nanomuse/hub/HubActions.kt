@@ -85,7 +85,7 @@ object HubActions {
                 "file.put" -> call.result(filePut(context, call.args.optString("path"), call.args.optString("data"), call.args.optBoolean("force")))
                 "open" -> call.result(open(context, call.args.optString("url")))
                 "screen" -> call.result(screen())
-                "notify" -> call.result(notify(context, call.args.optString("text"), call.args.optString("title").ifBlank { "nanoMuse" }, call.senderName))
+                "notify" -> call.result(notify(context, call.args.optString("text"), call.args.optString("title").ifBlank { "TAMA AI" }, call.senderName))
                 "task" -> call.result(task(context, call))
                 "task.status" -> call.result(PersistentTaskEndpoint.get(context).status(
                     PersistentTaskEndpoint.owner(context, call), call.args.optString("turn_id"),
@@ -126,7 +126,7 @@ object HubActions {
         .put("name", Hub.name(context))
         .put("os", "Android ${Build.VERSION.RELEASE}")
         .put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
-        .put("app", "nanoMuse ${Hub.VERSION}")
+        .put("app", "TAMA AI ${Hub.VERSION}")
         .put("sandbox", if (PRootKernel.isBooted) "ready" else "not booted")
         .put("screen", MinisAccessibilityService.getInstance() != null)
         .put("actions", JSONArray(Hub.ACTIONS))
@@ -262,7 +262,7 @@ object HubActions {
             PendingIntent.getActivity(context, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
         val n = NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_nanomuse)
+            .setSmallIcon(R.drawable.ic_stat_tama)
             .setContentTitle(title)
             .setContentText(text)
             .setSubText(from)
@@ -277,13 +277,13 @@ object HubActions {
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                 nm.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE)
         if (blocked) {
-            return JSONObject().put("ok", false).put("shown", false).put("message", "notifications are not allowed for nanoMuse on this phone")
+            return JSONObject().put("ok", false).put("shown", false).put("message", "notifications are not allowed for TAMA AI on this phone")
         }
         return try {
             nm.notify((System.currentTimeMillis() % 100_000).toInt() + 40_000, n)
             JSONObject().put("ok", true).put("shown", true)
         } catch (e: SecurityException) {
-            JSONObject().put("ok", false).put("shown", false).put("message", "notifications are not allowed for nanoMuse on this phone")
+            JSONObject().put("ok", false).put("shown", false).put("message", "notifications are not allowed for TAMA AI on this phone")
         }
     }
 
@@ -293,7 +293,7 @@ object HubActions {
         val text = call.args.optString("text").trim()
         if (text.isEmpty()) throw Refused("usage", "text is required")
         val app = context.applicationContext as? MinisApp
-        if (app == null || !app.subsystemsReady()) throw Refused("not_ready", "nanoMuse on the phone is still starting")
+        if (app == null || !app.subsystemsReady()) throw Refused("not_ready", "TAMA AI on the phone is still starting")
         val senderId = call.from.optString("id")
         val conversation = running.conversationKey(senderId, call.args.optString("conversation"))
         if (call.args.has("turn_id")) {
@@ -301,51 +301,68 @@ object HubActions {
             return PersistentTaskEndpoint.get(context).run(owner, call.args.optString("turn_id"), call, create = {
                 if (!call.args.optBoolean("new_conversation")) throw Refused("context_lost", "The remote conversation no longer exists")
                 runBlocking { createTaskSession(app, call.senderName) } ?: throw Refused("no_model", "The phone has no model configured")
-            }) { sessionId, emit ->
+            }) { sessionId, emit, live -> // nanoMuse: keep the journal's invocation identity through execution.
                 if (PersistentTaskEndpoint.owner(context, call) != owner) throw Refused("denied", "The account changed")
                 if (runBlocking { app.chatRepository.dao.getSession(sessionId) } == null) {
                     throw Refused("context_lost", "The remote conversation no longer exists")
                 }
-                executeTask(app, call, text, conversation, sessionId, emit)
+                executeTask(app, call, text, conversation, sessionId, emit, live)
             }
         }
         val sessionId = runBlocking { sessionFor(app, conversation, call.senderName) }
-            ?: throw Refused("no_model", "the phone has no model to think with; sign in to nanoMuse Cloud there")
+            ?: throw Refused("no_model", "the phone has no model to think with; sign in to TAMA AI Cloud there")
         return executeTask(app, call, text, conversation, sessionId)
     }
 
     private fun executeTask(
         context: MinisApp, call: IncomingCall, text: String, conversation: String, sessionId: String,
         emit: (JSONObject) -> Unit = call::event,
+        live: LiveTurn? = null, // nanoMuse: the persistent journal and Stop share this witness.
     ): JSONObject {
         val senderId = call.from.optString("id")
-        emit(JSONObject().put("stage", "thinking").put("session", sessionId))
-        AgentForegroundService.startService(context, sessionCount = 1, toolStatus = context.getString(R.string.nm_hub_task_from, call.senderName))
-        val prompt = HubTasks.prompt(
-            text,
-            prefix = if (call.senderKind == "web") null else context.getString(R.string.nm_hub_task_prefix, call.senderName),
-            language = call.args.optString("language"),
-        )
-        val relay = relayApprovals(context, call, sessionId, emit)
-        running.started(call.id, senderId, conversation, sessionId)
-        Provenance.arm(sessionId, Provenance.RUN_HUB) // the turn is another device's, for the record
-        val stopped: Boolean
-        val result = try {
-            runBlocking {
-                HeadlessChatRunner.prompt(context = context, sessionId = sessionId, text = prompt, attachments = emptyList(), thinkingLevel = null, wait = true, timeoutMs = TASK_TIMEOUT_MS, persistentTurn = call.args.optString("turn_id").takeIf { call.args.has("turn_id") })
-            }
-        } finally {
-            relay.cancel()
-            stopped = running.finished(call.id)
+        // nanoMuse: a relay may reuse an id after a disconnect while the old worker is still
+        // running. Refuse a collision before "thinking", the service, or another model run;
+        // the persistent journal may already have emitted its provisional "accepted" event.
+        val parallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        val owner = live ?: call
+        if (parallel && !running.tryStart(call.id, senderId, conversation, sessionId, owner)) {
+            throw Refused("busy", "A task with this call id is still running")
         }
-        if (stopped) throw Refused("cancelled", "${call.senderName} stopped this task")
-        val answer = result.responseText?.trim().orEmpty()
-        if (result.timedOut) throw Refused("timeout", "the phone's agent did not finish within ten minutes")
-        if (call.args.has("turn_id") && result.status == "Cancelled") throw Refused("cancelled", "This task was stopped on the phone")
-        if (call.args.has("turn_id") && result.status == "Blocked") throw Refused("blocked", "The phone could not start this turn")
-        if (result.status == "Error" && (call.args.has("turn_id") || answer.isEmpty())) throw Refused("failed", "the phone's agent could not run this")
-        return JSONObject().put("text", answer.ifBlank { "(no answer)" }).put("conversation", conversation).put("session", sessionId)
-            .put("device", Hub.name(context)).put("status", result.status)
+        try {
+            emit(JSONObject().put("stage", "thinking").put("session", sessionId))
+            AgentForegroundService.startService(context, sessionCount = 1, toolStatus = context.getString(R.string.nm_hub_task_from, call.senderName))
+            val prompt = HubTasks.prompt(
+                text,
+                prefix = if (call.senderKind == "web") null else context.getString(R.string.nm_hub_task_prefix, call.senderName),
+                language = call.args.optString("language"),
+            )
+            val relay = relayApprovals(context, call, sessionId, emit)
+            if (!parallel) running.started(call.id, senderId, conversation, sessionId)
+            // nanoMuse: preserve the normal package's original setup boundary; the
+            // parallel package cleans its reservation and relay even if arm fails.
+            if (!parallel) Provenance.arm(sessionId, Provenance.RUN_HUB)
+            val stopped: Boolean
+            val result = try {
+                if (parallel) Provenance.arm(sessionId, Provenance.RUN_HUB) // another device's turn, for the record
+                runBlocking {
+                    HeadlessChatRunner.prompt(context = context, sessionId = sessionId, text = prompt, attachments = emptyList(), thinkingLevel = null, wait = true, timeoutMs = TASK_TIMEOUT_MS, persistentTurn = call.args.optString("turn_id").takeIf { call.args.has("turn_id") })
+                }
+            } finally {
+                relay.cancel()
+                stopped = if (parallel) running.finishedExact(call.id, owner) else running.finished(call.id)
+            }
+            if (stopped) throw Refused("cancelled", "${call.senderName} stopped this task")
+            val answer = result.responseText?.trim().orEmpty()
+            if (result.timedOut) throw Refused("timeout", "the phone's agent did not finish within ten minutes")
+            if (call.args.has("turn_id") && result.status == "Cancelled") throw Refused("cancelled", "This task was stopped on the phone")
+            if (call.args.has("turn_id") && result.status == "Blocked") throw Refused("blocked", "The phone could not start this turn")
+            if (result.status == "Error" && (call.args.has("turn_id") || answer.isEmpty())) throw Refused("failed", "the phone's agent could not run this")
+            return JSONObject().put("text", answer.ifBlank { "(no answer)" }).put("conversation", conversation).put("session", sessionId)
+                .put("device", Hub.name(context)).put("status", result.status)
+        } finally {
+            // nanoMuse: also release a reservation when setup fails before the inner finally.
+            if (parallel) running.finishedExact(call.id, owner)
+        }
     }
 
     /**
@@ -394,14 +411,26 @@ object HubActions {
      * `cancelled`. Only the asker's own runs; `{stopped: false}` when there is nothing to end.
      */
     private fun stop(context: Context, call: IncomingCall): Boolean {
-        val id = if (call.args.has("turn_id")) {
-            PersistentTaskEndpoint.get(context).callId(PersistentTaskEndpoint.owner(context, call), call.args.optString("turn_id"))
+        val persistentTurn = call.args.optString("turn_id").takeIf { call.args.has("turn_id") }
+        val parallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        // nanoMuse: retain the invocation object, not only its reusable call id.
+        val live = if (persistentTurn != null && parallel) {
+            PersistentTaskEndpoint.get(context).active(PersistentTaskEndpoint.owner(context, call), persistentTurn)
+                ?: return false
+        } else null
+        val id = if (persistentTurn != null) {
+            if (parallel) checkNotNull(live).callId
+            else PersistentTaskEndpoint.get(context).callId(PersistentTaskEndpoint.owner(context, call), persistentTurn)
                 ?: return false
         } else call.args.optString("call")
-        val conversation = call.args.optString("conversation").takeUnless { call.args.has("turn_id") }
-        return running.stop(call.from.optString("id"), id, conversation) { sessionId ->
-            runBlocking { runCatching { HeadlessChatRunner.cancel(context, sessionId, call.args.optString("turn_id").takeIf { call.args.has("turn_id") }) }.getOrDefault(false) }
+        val cancel: (String) -> Boolean = { sessionId ->
+            runBlocking { runCatching { HeadlessChatRunner.cancel(context, sessionId, persistentTurn) }.getOrDefault(false) }
         }
+        // nanoMuse: on the parallel app, a verified persistent stop marks only
+        // this live invocation, even if another call has reused the id meanwhile.
+        if (live != null) return running.stopExact(call.from.optString("id"), id, live, cancel)
+        val conversation = call.args.optString("conversation").takeUnless { call.args.has("turn_id") }
+        return running.stop(call.from.optString("id"), id, conversation, cancel)
     }
 
     /**

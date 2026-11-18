@@ -328,7 +328,7 @@ private fun Preview(request: RiskRequest, expanded: Boolean, onToggle: () -> Uni
                     },
                     fontSize = 12.5.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = MuseTones.action,
+                    color = MuseTones.accent,
                     modifier = Modifier
                         .padding(top = 4.dp)
                         .clip(RoundedCornerShape(6.dp))
@@ -381,7 +381,7 @@ private fun ElsewhereBanner(request: RiskRequest, onOpenSession: (String) -> Uni
             overflow = TextOverflow.Ellipsis,
         )
         TextButton(onClick = { onOpenSession(request.sessionId) }) {
-            Text(stringResource(R.string.nm_risk_view), color = MuseTones.action, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.nm_risk_view), color = MuseTones.accent, fontWeight = FontWeight.SemiBold)
         }
     }
 }

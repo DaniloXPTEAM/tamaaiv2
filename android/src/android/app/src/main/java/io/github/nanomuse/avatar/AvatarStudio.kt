@@ -83,7 +83,19 @@ object AvatarStudio {
         return "429" in m || "rate" in m || "throttl" in m || "too many" in m || "limit" in m
     }
 
-    /** Runs [block] in a lane, retrying a rate-limited call twice with a growing pause. */
+    private val parallelTest: Boolean
+        get() = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+
+    // nanoMuse: these batches do not yet carry exact automatic-image approval.
+    private fun requireManualAvatarMode(context: Context) = ai.tama.media.AutomaticAvatarGuard.requireManual(parallelTest) {
+        ai.tama.router.AutoModelStore.enabled(context)
+    }
+
+    // nanoMuse: a failed picture may still be charged. Only the normal app keeps its retry policy.
+    internal fun shouldRetryRateLimit(parallelTest: Boolean, attempt: Int, e: Throwable): Boolean =
+        !parallelTest && attempt < 2 && !ai.tama.pricing.ModelCostGuard.causedByBlock(e) && looksRateLimited(e)
+
+    /** Runs [block] in a lane; only the normal app retries rate-limited calls. */
     private suspend fun <T> throttled(block: suspend () -> T): T {
         var attempt = 0
         while (true) {
@@ -92,7 +104,7 @@ object AvatarStudio {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (attempt >= 2 || !looksRateLimited(e)) throw e
+                if (!shouldRetryRateLimit(parallelTest, attempt, e)) throw e
                 attempt += 1
                 delay(4_000L * attempt)
             }
@@ -139,6 +151,16 @@ object AvatarStudio {
      * @return false when no image model is configured (the error flow says which).
      */
     fun generateCandidates(context: Context, desc: String, chosen: Style, referenceImage: Bitmap? = null): Boolean {
+        // nanoMuse: this route has no per-model automatic-image consent yet.
+        try { requireManualAvatarMode(context) } catch (_: ai.tama.media.AutomaticAvatarGuard.Blocked) {
+            _error.value = context.getString(R.string.nm_avatar_auto_unavailable)
+            return false
+        }
+        // nanoMuse: stop before resolving a key or starting four unverified-cost requests.
+        if (!ai.tama.pricing.ModelCostGuard.permits()) {
+            _error.value = context.getString(R.string.nm_model_cost_blocked)
+            return false
+        }
         val ep = ImageGen.endpoint(context) ?: run {
             _error.value = context.getString(R.string.nm_avatar_no_provider); return false
         }
@@ -175,8 +197,11 @@ object AvatarStudio {
 
     /** Draws one picture: from [reference] through the edit endpoint, else from the prompt alone. Tests swap it. */
     internal var drawer: suspend (Context, ImageGen.Endpoint, Bitmap?, String) -> Bitmap = { context, ep, ref, prompt ->
-        if (ref != null) ImageGen.edit(context, ep, ref, REFERENCE_PREFIX + prompt)
-        else ImageGen.generate(context, ep, prompt)
+        // nanoMuse: do not replay a candidate, and recheck mode at the provider POST.
+        val beforeSend: (() -> Unit)? = if (parallelTest) { { requireManualAvatarMode(context) } } else null
+        if (ref != null) ImageGen.edit(context, ep, ref, REFERENCE_PREFIX + prompt,
+            allowFormatRetry = !parallelTest, beforeRequest = beforeSend)
+        else ImageGen.generate(context, ep, prompt, allowFormatRetry = !parallelTest, beforeRequest = beforeSend)
     }
 
     /** The same sentence again — a fresh set of four. */
@@ -187,6 +212,11 @@ object AvatarStudio {
 
     /** One tile again, after a failure. */
     fun retrySlot(context: Context, index: Int) {
+        // nanoMuse: a retry is a new request, not permission to bypass the current mode.
+        try { requireManualAvatarMode(context) } catch (_: ai.tama.media.AutomaticAvatarGuard.Blocked) {
+            _error.value = context.getString(R.string.nm_avatar_auto_unavailable)
+            return
+        }
         synchronized(candidateLock) {
             val (text, chosen, ep) = lastRequest ?: return
             if (_slots.value.getOrNull(index) !is Slot.Failed) return
@@ -200,7 +230,8 @@ object AvatarStudio {
         val dir = AvatarStore.candidatesDir()
         val prompt = buildPrompt(text, chosen, i)
         val ref = reference
-        val result = runCatching { throttled { drawer(context, ep, ref, prompt) } }
+        // nanoMuse: waiting for a lane must not retain a stale manual-mode decision.
+        val result = runCatching { throttled { requireManualAvatarMode(context); drawer(context, ep, ref, prompt) } }
         // Cancelled, or a new set was asked for meanwhile: nothing to say about this tile any more.
         if (result.exceptionOrNull() is CancellationException || !currentCoroutineContext().isActive || gen != generation) return
         val jobContext = currentCoroutineContext()
@@ -222,9 +253,20 @@ object AvatarStudio {
                     check(pending!!.renameTo(ready.file)) { "could not save candidate $i" }
                     ready
                 }.getOrElse { e ->
-                    AppLogger.warning(TAG, "candidate $i failed: ${e.message}")
-                    // a provider still busy after the retries: a sentence, not its status line
-                    Slot.Failed(if (looksRateLimited(e)) context.getString(R.string.nm_avatar_provider_busy) else e.message ?: "failed")
+                    // nanoMuse: a provider may echo the prompt or key in an exception.
+                    if (parallelTest) {
+                        AppLogger.warning(TAG, "candidate failed")
+                        Slot.Failed(context.getString(when {
+                            e is ai.tama.media.AutomaticAvatarGuard.Blocked -> R.string.nm_avatar_auto_unavailable
+                            e is ai.tama.media.MediaModelChangeGuard.Blocked -> R.string.nm_media_model_change_blocked
+                            ai.tama.pricing.ModelCostGuard.causedByBlock(e) -> R.string.nm_model_cost_blocked
+                            looksRateLimited(e) -> R.string.nm_avatar_provider_busy
+                            else -> R.string.nm_error_private_generic
+                        }))
+                    } else {
+                        AppLogger.warning(TAG, "candidate $i failed: ${e.message}")
+                        Slot.Failed(if (looksRateLimited(e)) context.getString(R.string.nm_avatar_provider_busy) else e.message ?: "failed")
+                    }
                 }
                 _slots.update { list -> list.toMutableList().also { it[i] = slot } }
             }
@@ -240,17 +282,36 @@ object AvatarStudio {
     fun adopt(context: Context, index: Int) {
         val slot = _slots.value.getOrNull(index) as? Slot.Ready ?: return
         val ep = ImageGen.endpoint(context)
+        // nanoMuse: choosing a saved candidate is not consent for another image batch.
+        if (!ai.tama.media.AutomaticAvatarGuard.permitsImplicitBatches(parallelTest)) {
+            moodJob?.cancel()
+            _moodProgress.value = null
+        }
         AvatarStore.adopt(slot.bitmap, description.value, style.value.id, ep?.model.orEmpty())
         _selected.value = null
-        generateMoods(context)
+        if (ai.tama.media.AutomaticAvatarGuard.permitsImplicitBatches(parallelTest)) generateMoods(context)
     }
 
     /** Pose the current face for each mood. Skips moods that already have a picture. */
     fun generateMoods(context: Context, force: Boolean = false) {
-        val ep = ImageGen.endpoint(context) ?: return
         val base = AvatarStore.decodeBitmap(AvatarStore.baseFile()) ?: return
         val todo = AgentMood.entries.filter { it != AgentMood.IDLE && (force || !AvatarStore.moodFile(it).exists()) }
         if (todo.isEmpty()) return
+        // nanoMuse: pose edits have no separate automatic-route approval.
+        try { requireManualAvatarMode(context) } catch (_: ai.tama.media.AutomaticAvatarGuard.Blocked) {
+            moodJob?.cancel()
+            _moodProgress.value = MoodProgress(0, todo.size, todo, running = false)
+            _error.value = context.getString(R.string.nm_avatar_auto_unavailable)
+            return
+        }
+        // nanoMuse: the background edits are separate billable requests, not part of a free preview.
+        if (!ai.tama.pricing.ModelCostGuard.permits()) {
+            moodJob?.cancel()
+            _moodProgress.value = MoodProgress(0, todo.size, todo, running = false)
+            _error.value = context.getString(R.string.nm_model_cost_blocked)
+            return
+        }
+        val ep = ImageGen.endpoint(context) ?: return
         moodJob?.cancel()
         _moodProgress.value = MoodProgress(0, todo.size, emptyList(), running = true)
         moodJob = scope.launch {
@@ -258,9 +319,33 @@ object AvatarStudio {
             val done = java.util.concurrent.atomic.AtomicInteger(0)
             todo.map { mood ->
                 async {
-                    val result = runCatching { throttled { ImageGen.edit(context, ep, base, moodInstruction(mood)) } }
+                    val result = runCatching {
+                        // nanoMuse: recheck after waiting for an image lane.
+                        throttled {
+                            requireManualAvatarMode(context)
+                            val beforeSend: (() -> Unit)? = if (parallelTest) { { requireManualAvatarMode(context) } } else null
+                            ImageGen.edit(context, ep, base, moodInstruction(mood),
+                                allowFormatRetry = !parallelTest, beforeRequest = beforeSend)
+                        }
+                    }
+                    // nanoMuse: do not publish a result from a cancelled batch into a new face.
+                    if (parallelTest && !currentCoroutineContext().isActive) return@async
                     result.onSuccess { AvatarStore.putMood(mood, it) }
-                        .onFailure { AppLogger.warning(TAG, "mood $mood failed: ${it.message}"); failed += mood }
+                        .onFailure {
+                            // nanoMuse: do not expose provider text or swallow cancellation in the test app.
+                            if (parallelTest) {
+                                if (it is CancellationException) throw it
+                                AppLogger.warning(TAG, "mood request failed")
+                                val message = when {
+                                    it is ai.tama.media.AutomaticAvatarGuard.Blocked -> R.string.nm_avatar_auto_unavailable
+                                    it is ai.tama.media.MediaModelChangeGuard.Blocked -> R.string.nm_media_model_change_blocked
+                                    ai.tama.pricing.ModelCostGuard.causedByBlock(it) -> R.string.nm_model_cost_blocked
+                                    else -> null
+                                }
+                                if (message != null) _error.value = context.getString(message)
+                            } else AppLogger.warning(TAG, "mood $mood failed: ${it.message}")
+                            failed += mood
+                        }
                     _moodProgress.value = MoodProgress(done.incrementAndGet(), todo.size, failed.toList(), running = true)
                 }
             }.awaitAll()

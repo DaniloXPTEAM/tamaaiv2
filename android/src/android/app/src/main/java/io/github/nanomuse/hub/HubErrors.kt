@@ -11,8 +11,18 @@ import com.openminis.app.R
  */
 object HubErrors {
     fun describe(context: Context, e: Throwable): String {
-        val code = (e as? HubException)?.code ?: return context.getString(R.string.nm_hub_err_generic)
-        return describe(context, code)
+        val error = e as? HubException ?: return context.getString(R.string.nm_hub_err_generic)
+        // nanoMuse: only a witnessed admission refusal can say the target did not receive it.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" && error.notAdmitted) {
+            val explanation = when (error.code) {
+                "duplicate_call" -> R.string.nm_hub_err_id_reused
+                "bad_call_id" -> R.string.nm_hub_err_bad_call_id
+                "call_id_limit" -> R.string.nm_hub_err_id_limit
+                else -> null
+            }
+            if (explanation != null) return context.getString(explanation)
+        }
+        return describe(context, error.code)
     }
 
     fun describe(context: Context, code: String): String = context.getString(

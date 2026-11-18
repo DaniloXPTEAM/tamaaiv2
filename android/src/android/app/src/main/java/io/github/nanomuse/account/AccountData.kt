@@ -208,6 +208,8 @@ object AccountData {
         // and send tombstones for chats that still exist on the account's other devices
         ids.chunked(500).forEach { dao.removeMessagesOfAll(it); dao.removeConversations(it) }
         for (id in ids) {
+            // Revoke approvals before removing this account's local chat.
+            com.openminis.app.offload.OffloadPermissionManager.clearSessionGrants(id)
             runCatching {
                 repo.dao.deleteMessages(id)
                 repo.dao.deleteSession(id)

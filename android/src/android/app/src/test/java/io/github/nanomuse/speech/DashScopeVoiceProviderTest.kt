@@ -28,6 +28,7 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.LinkedBlockingQueue
@@ -41,7 +42,12 @@ class DashScopeVoiceProviderTest {
     private val opened = LinkedBlockingQueue<WebSocket>()
     private var taskId = ""
 
-    @After fun close() { server.shutdown() }
+    // These are loopback transport tests, not consent to call a real provider.
+    @Before fun allowLoopbackFixture() { ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(true) }
+    @After fun close() {
+        ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(false)
+        server.shutdown()
+    }
 
     private fun provider(timeout: Long = 3000) = DashScopeVoiceProvider(
         "test", server.url("/compatible-mode/v1").toString(), "test-key", timeoutMillis = timeout,

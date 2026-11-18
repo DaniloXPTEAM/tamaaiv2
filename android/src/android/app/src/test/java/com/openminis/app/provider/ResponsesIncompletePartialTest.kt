@@ -42,6 +42,11 @@ import org.junit.Test
  */
 class ResponsesIncompletePartialTest {
 
+    // nanoMuse: these transport fixtures use MockWebServer, never a provider account.
+    @org.junit.Before fun allowFixtureRequests() { ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(true) }
+    @org.junit.After fun resetFixtureCostPermission() { ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(false) }
+
+
     private lateinit var server: MockWebServer
 
     @Before fun setUp() { server = MockWebServer(); server.start() }

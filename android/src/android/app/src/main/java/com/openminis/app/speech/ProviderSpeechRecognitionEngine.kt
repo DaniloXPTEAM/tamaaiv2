@@ -137,6 +137,11 @@ class ProviderSpeechRecognitionEngine(private val appContext: Context) : SpeechR
 
     @SuppressLint("MissingPermission") // caller ensures RECORD_AUDIO per interface contract
     override fun start(locale: Locale, listener: SpeechRecognitionEngine.Listener) {
+        // nanoMuse: do not record for a provider request that is blocked locally.
+        if (!ai.tama.pricing.ModelCostGuard.permits()) {
+            listener.onError(RecognitionError.UNKNOWN, appContext.getString(com.openminis.app.R.string.nm_model_cost_blocked))
+            return
+        }
         val repo = repository()
         // [T-voice-asr-group-failover] Resolve the whole ordered candidate
         // chain instead of one entry. loadBalance groups get a fresh rotation
@@ -193,7 +198,13 @@ class ProviderSpeechRecognitionEngine(private val appContext: Context) : SpeechR
                 )
             } catch (e: Exception) {
                 recording.set(false)
-                listener.onError(RecognitionError.AUDIO_ERROR, "AudioRecord init failed: ${e.message}")
+                // nanoMuse: avoid relaying unexpected platform exception text in the parallel app.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+                    e is kotlinx.coroutines.CancellationException) throw e
+                listener.onError(RecognitionError.AUDIO_ERROR,
+                    if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                        appContext.getString(com.openminis.app.R.string.nm_error_private_generic)
+                    else "AudioRecord init failed: ${e.message}")
                 return@launch
             }
             if (recorder.state != AudioRecord.STATE_INITIALIZED) {
@@ -216,9 +227,13 @@ class ProviderSpeechRecognitionEngine(private val appContext: Context) : SpeechR
                     listener.onRmsDb(rmsDb(buf, n))
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "capture failed: ${e.message}", e)
+                // nanoMuse: keep arbitrary exception text out of parallel logs and UI.
+                val parallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
                 recording.set(false)
-                listener.onError(RecognitionError.AUDIO_ERROR, e.message)
+                if (parallel && e is kotlinx.coroutines.CancellationException) throw e
+                if (parallel) Log.e(TAG, "audio capture failed") else Log.e(TAG, "capture failed: ${e.message}", e)
+                listener.onError(RecognitionError.AUDIO_ERROR,
+                    if (parallel) appContext.getString(com.openminis.app.R.string.nm_error_private_generic) else e.message)
                 return@launch
             } finally {
                 runCatching { recorder.stop() }
@@ -252,7 +267,10 @@ class ProviderSpeechRecognitionEngine(private val appContext: Context) : SpeechR
                     if (cancelled.get()) return@launch
                     val provider = VoiceProviderFactory.make(instance, repo.loadApiKey(instance.id))
                     if (provider == null) {
-                        Log.w(TAG, "candidate ${instance.label} cannot serve voice input — skipping")
+                        // nanoMuse: a custom label can contain private text.
+                        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                            Log.w(TAG, "voice input candidate unavailable")
+                        else Log.w(TAG, "candidate ${instance.label} cannot serve voice input — skipping")
                         continue
                     }
                     try {
@@ -279,7 +297,15 @@ class ProviderSpeechRecognitionEngine(private val appContext: Context) : SpeechR
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        Log.e(TAG, "transcribe failed on ${entry.model.displayName}: ${e.message} — trying next candidate")
+                        // nanoMuse: a local cost refusal is not a provider failure to retry.
+                        if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) {
+                            if (!cancelled.get()) listener.onError(RecognitionError.UNKNOWN,
+                                appContext.getString(com.openminis.app.R.string.nm_model_cost_blocked))
+                            return@launch
+                        }
+                        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                            Log.e(TAG, "Provider transcription failed, trying next candidate")
+                        else Log.e(TAG, "transcribe failed on ${entry.model.displayName}: ${e.message} — trying next candidate")
                         lastError = e
                     }
                 }
@@ -290,7 +316,11 @@ class ProviderSpeechRecognitionEngine(private val appContext: Context) : SpeechR
                         e is java.io.IOException -> RecognitionError.NETWORK
                         else -> RecognitionError.UNKNOWN
                     }
-                    listener.onError(kind, e?.message ?: "All voice-input candidates failed.")
+                    // nanoMuse: the parallel error cannot expose a provider-echoed prompt or credential.
+                    val detail = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                        appContext.getString(com.openminis.app.R.string.nm_error_private_generic)
+                    else e?.message ?: "All voice-input candidates failed."
+                    listener.onError(kind, detail)
                 }
             }
         }
@@ -465,7 +495,10 @@ class ProviderSpeechRecognitionEngine(private val appContext: Context) : SpeechR
             if (cancelled.get()) return
             val provider = VoiceProviderFactory.make(instance, repo.loadApiKey(instance.id))
             if (provider == null) {
-                Log.w(TAG, "candidate ${instance.label} cannot serve voice input — skipping")
+                // nanoMuse: a custom label can contain private text.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    Log.w(TAG, "voice input candidate unavailable")
+                else Log.w(TAG, "candidate ${instance.label} cannot serve voice input — skipping")
                 continue
             }
             try {
@@ -489,7 +522,15 @@ class ProviderSpeechRecognitionEngine(private val appContext: Context) : SpeechR
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "transcribe failed on ${entry.model.displayName}: ${e.message} — trying next candidate")
+                // nanoMuse: revocation is final for this utterance, not a reason to try another provider.
+                if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) {
+                    if (!cancelled.get()) listener.onError(RecognitionError.UNKNOWN,
+                        appContext.getString(com.openminis.app.R.string.nm_model_cost_blocked))
+                    return
+                }
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    Log.e(TAG, "Provider transcription failed, trying next candidate")
+                else Log.e(TAG, "transcribe failed on ${entry.model.displayName}: ${e.message} — trying next candidate")
                 lastError = e
             }
         }
@@ -500,7 +541,11 @@ class ProviderSpeechRecognitionEngine(private val appContext: Context) : SpeechR
                 e is java.io.IOException -> RecognitionError.NETWORK
                 else -> RecognitionError.UNKNOWN
             }
-            listener.onError(kind, e?.message ?: "All voice-input candidates failed.")
+            // nanoMuse: the parallel error cannot expose provider-controlled text.
+            val detail = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                appContext.getString(com.openminis.app.R.string.nm_error_private_generic)
+            else e?.message ?: "All voice-input candidates failed."
+            listener.onError(kind, detail)
         }
     }
 

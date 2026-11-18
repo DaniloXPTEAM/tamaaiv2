@@ -203,6 +203,7 @@ data class QueuedPrompt(
     val id: String,
     val text: String,
     val attachments: List<InputAttachment> = emptyList(),
+    val petGeneration: Long? = null, // nanoMuse: null for automated prompts; bind people to the Pet alive at enqueue.
 )
 
 /**

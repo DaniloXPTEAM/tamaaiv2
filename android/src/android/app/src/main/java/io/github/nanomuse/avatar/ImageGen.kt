@@ -17,6 +17,8 @@ import com.openminis.app.provider.gemini.GeminiProvider
 import com.openminis.app.provider.openai.OpenAIProvider
 import io.github.nanomuse.cloud.NanoMuseCloud
 import io.github.nanomuse.media.RelayMediaPolicy
+import ai.tama.net.singleUseImageBody
+import ai.tama.net.singleUseImageClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -45,6 +47,13 @@ object ImageGen {
     private const val PREFS = "nanomuse"
     private const val KEY_INSTANCE = "avatar.provider_id"
     private const val KEY_MODEL = "avatar.model"
+    // nanoMuse: a choice changed away and back must not revive an in-flight image request.
+    private var imageChoiceRevision = 0L
+    @Synchronized internal fun imageChoiceRevision(): Long = imageChoiceRevision
+    private fun advanceImageChoice() {
+        check(imageChoiceRevision < Long.MAX_VALUE) { "image choice version exhausted" }
+        imageChoiceRevision++
+    }
 
     data class Endpoint(
         val instance: ProviderInstance,
@@ -64,6 +73,9 @@ object ImageGen {
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(180, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
+            // Preserve the configured proxy's CONNECT authentication before a
+            // billable POST; the one-shot client still refuses body replay.
+            .proxyAuthenticator(io.github.nanomuse.net.OwnProviderProxy.authenticator)
             .build()
     }
 
@@ -226,7 +238,9 @@ object ImageGen {
         return Endpoint(inst, key, model)
     }
 
+    @Synchronized // nanoMuse: serialize the revision with the preference write.
     fun save(context: Context, instanceId: String, model: String) {
+        advanceImageChoice() // nanoMuse: even a failed write invalidates earlier attempts.
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_INSTANCE, instanceId).putString(KEY_MODEL, model.trim()).apply()
     }
@@ -236,7 +250,9 @@ object ImageGen {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_INSTANCE, null) != null
 
     /** Forgets the choice: the slot follows the automatic order again. Nothing else moves. */
+    @Synchronized // nanoMuse: clearing the choice also invalidates earlier observations.
     fun clear(context: Context) {
+        advanceImageChoice()
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_INSTANCE).remove(KEY_MODEL).apply()
     }
 
@@ -262,15 +278,30 @@ object ImageGen {
             ?: throw ImageGenException(context.getString(com.openminis.app.R.string.nm_avatar_no_model))
     }
 
-    suspend fun generate(context: Context, ep: Endpoint, prompt: String, size: String = "1024x1024"): Bitmap = withContext(Dispatchers.IO) {
+    suspend fun generate(
+        context: Context, ep: Endpoint, prompt: String, size: String = "1024x1024", allowFormatRetry: Boolean = true,
+        // nanoMuse: optional caller authorization, checked again at network dispatch.
+        beforeRequest: (() -> Unit)? = null,
+    ): Bitmap = withContext(Dispatchers.IO) {
+        // nanoMuse: image selection and per-image permission are not price evidence.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         if (ep.model.isBlank()) throw ImageGenException("No image model set")
         // Model Studio's OpenAI-compatible host has no `images/generations` (the public one
         // answers 404 to every model); its native endpoint draws with the same key.
-        if (ep.isDashScope) return@withContext generateDashScope(ep, prompt, size)
+        if (ep.isDashScope) return@withContext generateDashScope(ep, prompt, size, singleAttempt = !allowFormatRetry, beforeRequest = beforeRequest)
         val response = try {
-            ImageModelRequests.request(provider(context, ep, ep.model), prompt, size)
+            ImageModelRequests.request(provider(context, ep, ep.model), prompt, size,
+                allowFormatRetry = allowFormatRetry, beforeRequest = beforeRequest)
         } catch (e: ImageGenException) {
             throw e
+        } catch (e: ai.tama.media.AutomaticAvatarGuard.Blocked) {
+            throw e
+        } catch (e: ai.tama.media.ImageDispatch.AuthorizationChanged) {
+            throw e // nanoMuse: preserve a route refusal from the transport preflight.
+        } catch (e: ai.tama.media.ImageAttemptTracker.Stopped) {
+            throw e // nanoMuse: distinguish a registered Stop before and after possible submission.
+        } catch (e: ai.tama.pricing.ModelCostGuard.Blocked) {
+            throw e // nanoMuse: keep a local cost refusal out of network-retry handling.
         } catch (e: CancellationException) {
             throw e // the caller was cancelled; not a failure of the picture (#337)
         } catch (e: Exception) {
@@ -281,8 +312,15 @@ object ImageGen {
         decode(bytes)
     }
 
-    suspend fun edit(context: Context, ep: Endpoint, image: Bitmap, instruction: String): Bitmap = withContext(Dispatchers.IO) {
-        if (ep.isDashScope) return@withContext editDashScope(ep, image, instruction)
+    // nanoMuse: a caller can prohibit automatic retries of an edit that may already be charged.
+    suspend fun edit(
+        context: Context, ep: Endpoint, image: Bitmap, instruction: String, allowFormatRetry: Boolean = true,
+        // nanoMuse: optional caller authorization, checked again at network dispatch.
+        beforeRequest: (() -> Unit)? = null,
+    ): Bitmap = withContext(Dispatchers.IO) {
+        // nanoMuse: editing can have its own price even when chat is advertised free.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+        if (ep.isDashScope) return@withContext editDashScope(ep, image, instruction, singleAttempt = !allowFormatRetry, beforeRequest = beforeRequest)
         val png = pngBytes(image)
         val response = try {
             // gpt-image-* edits with the same model; other hosts get the configured one.
@@ -291,7 +329,17 @@ object ImageGen {
                 prompt = instruction,
                 images = listOf(LLMMessage.ImagePart(data = png, mimeType = "image/png")),
                 size = "1024x1024",
+                allowFormatRetry = allowFormatRetry,
+                beforeRequest = beforeRequest,
             )
+        } catch (e: ai.tama.media.AutomaticAvatarGuard.Blocked) {
+            throw e
+        } catch (e: ai.tama.media.ImageDispatch.AuthorizationChanged) {
+            throw e // nanoMuse: preserve a route refusal from the transport preflight.
+        } catch (e: ai.tama.media.ImageAttemptTracker.Stopped) {
+            throw e // nanoMuse: a stopped edit is not a generic provider failure.
+        } catch (e: ai.tama.pricing.ModelCostGuard.Blocked) {
+            throw e // nanoMuse: a cost refusal must not be treated as an image transport error.
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -307,46 +355,66 @@ object ImageGen {
      * (2.x, 3.x, plus, max) and wan-image all take `size` as `W*H`; prompt extension stays off
      * so the avatar prompts are drawn as written.
      */
-    private fun generateDashScope(ep: Endpoint, prompt: String, size: String): Bitmap {
+    private fun generateDashScope(
+        ep: Endpoint, prompt: String, size: String, singleAttempt: Boolean, beforeRequest: (() -> Unit)?,
+    ): Bitmap {
         val parameters = JSONObject().put("size", size.replace('x', '*')).put("watermark", false)
         if (ep.model.startsWith("qwen-image")) parameters.put("prompt_extend", false)
         val content = JSONArray().put(JSONObject().put("text", prompt))
-        return callDashScope(ep, ep.model, content, parameters, what = "generation")
+        return callDashScope(ep, ep.model, content, parameters, what = "generation", singleAttempt = singleAttempt, beforeRequest = beforeRequest)
     }
 
     /** DashScope image editing: same host and key, native path, data-URI input. */
-    private fun editDashScope(ep: Endpoint, image: Bitmap, instruction: String): Bitmap {
+    private fun editDashScope(
+        ep: Endpoint, image: Bitmap, instruction: String, singleAttempt: Boolean, beforeRequest: (() -> Unit)?,
+    ): Bitmap {
         // qwen-image-3.x, wan-image and the qwen-image-edit-* models take a picture themselves;
         // an older text-only qwen-image is posed by qwen-image-edit-max on the same key.
         val threeX = ep.model.startsWith("qwen-image-3") || ep.model.startsWith("wan")
         val model = if (threeX || ep.model.contains("edit")) ep.model else "qwen-image-edit-max"
+        // nanoMuse: the implicit edit sibling can have a different price and approval.
+        ai.tama.media.MediaModelChangeGuard.requireSame(
+            com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test", ep.model, model,
+        )
         val parameters = if (threeX) JSONObject().put("size", "1024*1024").put("prompt_extend", false).put("watermark", false)
         else JSONObject().put("n", 1).put("watermark", false)
         val content = JSONArray()
             .put(JSONObject().put("image", "data:image/png;base64," + Base64.encodeToString(pngBytes(image), Base64.NO_WRAP)))
             .put(JSONObject().put("text", instruction))
-        return callDashScope(ep, model, content, parameters, what = "edit")
+        return callDashScope(ep, model, content, parameters, what = "edit", singleAttempt = singleAttempt, beforeRequest = beforeRequest)
     }
 
     /** One call to `multimodal-generation/generation`; returns the first image of the reply. */
-    private fun callDashScope(ep: Endpoint, model: String, content: JSONArray, parameters: JSONObject, what: String): Bitmap {
+    private fun callDashScope(
+        ep: Endpoint, model: String, content: JSONArray, parameters: JSONObject, what: String,
+        singleAttempt: Boolean = false, beforeRequest: (() -> Unit)? = null,
+    ): Bitmap {
         val host = ep.baseUrl.substringBefore("/compatible-mode").substringBefore("/api/v1").trimEnd('/')
         val body = JSONObject()
             .put("model", model)
             .put("input", JSONObject().put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", content))))
             .put("parameters", parameters)
+        val requestBody = body.toString().toRequestBody("application/json".toMediaType())
         val req = Request.Builder()
             .url("$host/api/v1/services/aigc/multimodal-generation/generation")
             .header("Authorization", "Bearer ${ep.apiKey}")
             .header("Content-Type", "application/json")
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .post(if (singleAttempt) requestBody.singleUseImageBody() else requestBody)
             .build()
-        val json = http.newCall(req).execute().use { resp ->
+        val submitClient = if (singleAttempt) http.singleUseImageClient() else http
+        // nanoMuse: the native image endpoint bypasses ProviderFactory, so check at its POST.
+        beforeRequest?.invoke()
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+        val json = submitClient.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                val msg = runCatching { JSONObject(text).optString("message") }.getOrNull()
-                AppLogger.warning(TAG, "DashScope $what HTTP ${resp.code}: ${text.take(300)}")
-                throw ImageGenException("HTTP ${resp.code}" + (msg?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""))
+                // Provider replies may echo prompts or credentials. Never log the body;
+                // retain only a bounded, decoded message with this request's key removed.
+                val msg = io.github.nanomuse.net.ProviderReach.diagnosticMessage(
+                    text, maxChars = 300, credentials = listOf(ep.apiKey),
+                )
+                AppLogger.warning(TAG, "DashScope $what HTTP ${resp.code}")
+                throw ImageGenException("HTTP ${resp.code}" + (msg.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""))
             }
             runCatching { JSONObject(text) }.getOrElse { throw ImageGenException("Unreadable $what response") }
         }
@@ -354,7 +422,15 @@ object ImageGen {
             ?.optJSONObject("message")?.optJSONArray("content")?.optJSONObject(0)?.optString("image")
             ?.takeIf { it.isNotBlank() }
             ?: throw ImageGenException(json.optString("message").ifBlank { "Empty $what response" })
-        val bytes = http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+        // nanoMuse: revocation stops the follow-up download, not the already submitted image.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            beforeRequest?.invoke()
+            ai.tama.pricing.ModelCostGuard.requireAllowed()
+        }
+        // nanoMuse: do not follow an unapproved redirect or retry the result URL in the parallel app.
+        val downloadClient = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            http.singleUseImageClient() else http
+        val bytes = downloadClient.newCall(Request.Builder().url(url).build()).execute().use { r ->
             if (!r.isSuccessful) throw ImageGenException("Image download failed (${r.code})")
             r.body?.bytes() ?: throw ImageGenException("Empty image")
         }

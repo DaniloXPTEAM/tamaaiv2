@@ -41,6 +41,8 @@ data class NativeOffloadRequest(
      * to `OFFLOAD_GLOBAL_SESSION_ID` in that case.
      */
     val sessionId: String? = null,
+    /** Host-owned PRoot lifetime; never constructed from guest argv or environment. */
+    val executionPeer: ai.tama.sandbox.OffloadPeerLease? = null, // nanoMuse: guarded media offloads.
 )
 
 data class NativeOffloadResult(
@@ -58,6 +60,8 @@ object NativeOffloadServer {
     private const val MAGIC_REQ = 0x46464F4E  // 'N' 'O' 'F' 'F' little-endian
     private const val MAGIC_RSP = 0x52464F4E  // 'N' 'O' 'F' 'R'
     private const val VERSION = 1
+    // nanoMuse: socket arguments and exceptions can contain private input or credentials.
+    private val nmParallel: Boolean get() = BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
 
     /** [T-android-offload-tmp-leak] Filename prefix of a handler reply file. */
     private const val REPLY_PREFIX = ".native-offload-"
@@ -222,11 +226,18 @@ object NativeOffloadServer {
                 return
             }
             Log.d(TAG, "accepted client from proot extension")
+            // nanoMuse: capture the kernel-reported socket peer at accept, before
+            // a delayed worker could be confused with a later process or session.
+            val peer = if (nmParallel) try {
+                ai.tama.sandbox.OffloadPeerBindings.capture(client.peerCredentials.pid)
+            } catch (_: Exception) { null } else null
             thread(name = "native-offload-worker", isDaemon = true) {
                 try {
-                    handleClient(client)
+                    handleClient(client, peer)
                 } catch (e: Exception) {
-                    Log.w(TAG, "worker error: ${e.message}", e)
+                    // nanoMuse: even a socket/write exception can echo private data.
+                    if (nmParallel) Log.w(TAG, "offload worker failed")
+                    else Log.w(TAG, "worker error: ${e.message}", e)
                 } finally {
                     try { client.close() } catch (_: Exception) {}
                 }
@@ -234,7 +245,7 @@ object NativeOffloadServer {
         }
     }
 
-    private fun handleClient(client: LocalSocket) {
+    private fun handleClient(client: LocalSocket, peer: ai.tama.sandbox.OffloadPeerLease?) {
         val input = DataInputStream(client.inputStream)
         val output = DataOutputStream(client.outputStream)
 
@@ -266,25 +277,39 @@ object NativeOffloadServer {
         val cwd = input.readLEString()
 
         val name = argv.firstOrNull().orEmpty().substringAfterLast('/')
-        Log.d(TAG, "recv pid=$pid name='$name' argc=$argc argv=$argv cwd=$cwd envc=$envc")
+        // nanoMuse: do not log shell arguments or private paths in the parallel app.
+        Log.d(TAG, ai.tama.net.NativeOffloadPrivacy.incoming(nmParallel, pid, name, argc, argv, cwd, envc))
 
         val t0 = System.nanoTime()
         val handler = handlers[name]
-        val result = if (handler == null) {
-            Log.w(TAG, "no handler registered for '$name' (known=${handlers.keys})")
-            NativeOffloadResult(exitCode = 127, output = "native_offload: no handler for '$name'\n")
+        // nanoMuse: the wire PID and guest environment are untrusted. The managed
+        // shell's session comes from the host registration of the socket peer.
+        val guestSession = env["MINIS_CHAT_SESSION_ID"]?.takeIf { it.isNotEmpty() }
+        val decision = ai.tama.sandbox.OffloadPeerPolicy.resolve(nmParallel, peer, guestSession, name, argv)
+        val sessionId = decision.sessionId
+        val result = if (!decision.allowed) {
+            NativeOffloadResult(exitCode = 2, output = decision.refusal ?: "native_offload: request refused\n")
+        } else if (!ai.tama.net.NativeOffloadSession.valid(nmParallel, sessionId)) {
+            NativeOffloadResult(exitCode = 2, output = "native_offload: invalid chat session\n")
+        } else if (handler == null) {
+            // nanoMuse: an unregistered name is caller-controlled too.
+            Log.w(TAG, ai.tama.net.NativeOffloadPrivacy.missingLog(nmParallel, name, handlers.keys))
+            NativeOffloadResult(exitCode = 127, output = ai.tama.net.NativeOffloadPrivacy.missingOutput(nmParallel, name))
         } else {
             try {
                 handler.handle(NativeOffloadRequest(
                     pid = pid,
                     argv = argv,
-                    env = env,
+                    env = if (nmParallel && peer != null) env + ("MINIS_CHAT_SESSION_ID" to peer.sessionId) else env,
                     cwd = cwd,
-                    sessionId = env["MINIS_CHAT_SESSION_ID"]?.takeIf { it.isNotEmpty() },
+                    sessionId = sessionId,
+                    executionPeer = peer, // nanoMuse: captured at accept, not parsed from the guest.
                 ))
             } catch (e: Exception) {
-                Log.w(TAG, "handler '$name' threw: ${e.message}", e)
-                NativeOffloadResult(exitCode = 1, output = "native_offload: ${e.message}\n")
+                // nanoMuse: neither the message nor stack trace is safe to echo in the parallel app.
+                val message = ai.tama.net.NativeOffloadPrivacy.failureLog(nmParallel, name, e.message)
+                if (nmParallel) Log.w(TAG, message) else Log.w(TAG, message, e)
+                NativeOffloadResult(exitCode = 1, output = ai.tama.net.NativeOffloadPrivacy.failureOutput(nmParallel, e.message))
             }
         }
         val elapsedMs = (System.nanoTime() - t0) / 1_000_000
@@ -305,8 +330,10 @@ object NativeOffloadServer {
         // touched. Sampled rather than run per reply to keep the hot path cheap.
         if (seq % SWEEP_EVERY_N_REPLIES == 0L) sweepStaleReplies(all = false)
 
-        Log.d(TAG, "reply name='$name' exit=${result.exitCode} outBytes=${result.output.length} " +
-            "tmpGuest=$tmpGuest elapsed=${elapsedMs}ms")
+        // nanoMuse: avoid logging caller-controlled names and guest paths.
+        Log.d(TAG, ai.tama.net.NativeOffloadPrivacy.reply(
+            nmParallel, name, result.exitCode, result.output.length, tmpGuest, elapsedMs,
+        ))
 
         output.writeLEInt(MAGIC_RSP)
         output.writeLEInt(result.exitCode)

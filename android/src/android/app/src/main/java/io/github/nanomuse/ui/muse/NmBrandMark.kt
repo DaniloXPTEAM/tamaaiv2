@@ -17,7 +17,7 @@ import com.openminis.app.R
 import io.github.nanomuse.ui.home.MuseTones
 
 /**
- * The app's icon as a hero: the brand's N in white on the blue rounded square. For the screens
+ * The TAMA mark as a hero, on a warm rounded square. For the screens
  * that are about the app and the account — sign-in, the first-run door — where the face would
  * promise a conversation that is not there yet.
  */
@@ -28,7 +28,7 @@ fun NmBrandMark(size: Dp = 104.dp, modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            painter = painterResource(R.drawable.ic_stat_nanomuse),
+            painter = painterResource(R.drawable.ic_stat_tama),
             contentDescription = null,
             tint = Color.White,
             modifier = Modifier.size(size * 0.58f),

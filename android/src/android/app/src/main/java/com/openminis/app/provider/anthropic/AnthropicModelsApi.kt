@@ -35,6 +35,7 @@ object AnthropicModelsApi {
         // [T-provider-custom-user-agent] Per-provider UA override; null/blank
         // keeps the default UA. Threaded from ProviderRepository.refreshModels.
         customUserAgent: String? = null,
+        discoverParents: Boolean = true, // nanoMuse: the parallel form lists only its selected route
     ): List<LLMModel> = withContext(Dispatchers.IO) {
         // Cache key: base URL included so the same API key across proxies doesn't
         // share cached model lists (vLLM vs api.anthropic.com can differ).
@@ -53,7 +54,7 @@ object AnthropicModelsApi {
         // path up to 3 levels. Lets vendor-specific bases like
         // `https://api.deepseek.com/anthropic` discover `/v1/models` at the host root.
         val candidateBases = mutableListOf<String?>(baseURL)
-        if (baseURL != null) {
+        if (baseURL != null && discoverParents) { // nanoMuse: do not send the credential to unselected parent paths
             var current: String = baseURL
             for (i in 0 until 3) {
                 val parent = parentPath(current) ?: break
@@ -79,7 +80,9 @@ object AnthropicModelsApi {
                 // [T-provider-custom-user-agent] models-list UA override.
                 .applyUserAgentOverride(customUserAgent)
 
-            if (isOAuth) {
+            if (apiKey.isEmpty() && com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                // nanoMuse: keyless local endpoints receive no empty auth header, like chat.
+            } else if (isOAuth) {
                 // OAuth: Bearer token + required beta header (mirrors iOS fetchModels(oauthToken:))
                 requestBuilder.header("Authorization", "Bearer $apiKey")
                 requestBuilder.header("anthropic-beta", "oauth-2025-04-20")
@@ -92,12 +95,17 @@ object AnthropicModelsApi {
             }
 
             val request = requestBuilder.build()
-            android.util.Log.d("AnthropicModels", "Fetching models (level=$idx): ${request.url} isOAuth=$isOAuth headers=${request.headers}")
+            // nanoMuse: URLs and headers may contain credentials, not just known key names.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                android.util.Log.d("AnthropicModels", "Fetching models (level=$idx): ${request.url} isOAuth=$isOAuth headers=${request.headers}")
 
             val response: Response = try {
                 client.newCall(request).execute()
             } catch (e: Exception) {
-                android.util.Log.e("AnthropicModels", "Fetch error (level=$idx): ${e.message}")
+                // nanoMuse: a transport exception can echo an endpoint or credential.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    android.util.Log.e("AnthropicModels", "Model discovery failed")
+                else android.util.Log.e("AnthropicModels", "Fetch error (level=$idx): ${e.message}")
                 continue
             }
             val body = response.body?.string() ?: run {
@@ -106,7 +114,10 @@ object AnthropicModelsApi {
             }
 
             if (!response.isSuccessful) {
-                android.util.Log.e("AnthropicModels", "Fetch failed (level=$idx): ${response.code} ${body.take(200)}")
+                // nanoMuse: the response can echo arbitrary private request data.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    android.util.Log.e("AnthropicModels", "Model discovery failed: HTTP ${response.code}")
+                else android.util.Log.e("AnthropicModels", "Fetch failed (level=$idx): ${response.code} ${body.take(200)}")
                 // 401/403 almost always means the credential rotated; drop any stale
                 // cache entry so the next lookup hits the network again.
                 if (context != null && (response.code == 401 || response.code == 403)) {
@@ -118,7 +129,9 @@ object AnthropicModelsApi {
             }
 
             if (idx > 0) {
-                android.util.Log.i("AnthropicModels", "Parent-path fallback succeeded at level=$idx base=$candidate")
+                // nanoMuse: a custom base can contain a credential.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                    android.util.Log.i("AnthropicModels", "Parent-path fallback succeeded at level=$idx base=$candidate")
             }
             android.util.Log.d("AnthropicModels", "Response ${response.code}, body length: ${body.length}")
             return@withContext parseAndCache(body, isCustomEndpoint, context, cacheKey)
@@ -157,7 +170,9 @@ object AnthropicModelsApi {
                 val reasoning = if (AnthropicProvider.supportsThinking(id)) true else null
                 parsed.add(LLMModel(id, displayName, "Anthropic", supportsReasoning = reasoning))
             }
-            android.util.Log.i("AnthropicModels", "Parsed ${parsed.size} models: ${parsed.map { it.id }.joinToString()}")
+            // nanoMuse: model IDs from a remote endpoint are untrusted text.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                android.util.Log.i("AnthropicModels", "Parsed ${parsed.size} models: ${parsed.map { it.id }.joinToString()}")
             if (parsed.isEmpty()) return fallback
             ModelsDevApi.enrichModels(parsed)
         } catch (_: Exception) {

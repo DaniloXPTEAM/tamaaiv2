@@ -128,6 +128,8 @@ open class DashScopeVoiceProvider(
     }
 
     private suspend fun fetch(request: Request): ByteArray = suspendCancellableCoroutine { continuation ->
+        // nanoMuse: this native HTTP path bypasses VoiceProvider.executeRequest.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         val call = client.newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
@@ -179,6 +181,8 @@ open class DashScopeVoiceProvider(
             }
             val builder = Request.Builder().url(endpoint("/api-ws/v1/inference"))
             applyVoiceAuth(builder)
+            // nanoMuse: native realtime speech bypasses the shared HTTP transport.
+            ai.tama.pricing.ModelCostGuard.requireAllowed()
             val socket = client.newWebSocket(builder.build(), object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     if (ended.get()) { webSocket.cancel(); return }
@@ -227,9 +231,13 @@ open class DashScopeVoiceProvider(
         .put("payload", payload).toString()
 
     private fun send(socket: WebSocket, message: String) {
+        // nanoMuse: recheck after the socket opens or the server starts the task.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         if (!socket.send(message)) throw IOException("WebSocket send")
     }
     private fun send(socket: WebSocket, message: ByteString) {
+        // nanoMuse: a long recording may span a change of permission.
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
         if (!socket.send(message)) throw IOException("WebSocket send")
     }
 

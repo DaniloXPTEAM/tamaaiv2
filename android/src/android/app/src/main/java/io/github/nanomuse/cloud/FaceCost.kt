@@ -33,10 +33,16 @@ object FaceCost {
     }
 
     /** A new face: the candidates, one pose per mood, and the clips when animation is on. */
-    fun newFace(context: Context): Job = Job(
-        images = AvatarStudio.CANDIDATES + AgentMood.entries.count { it != AgentMood.IDLE },
-        clips = if (clipsOnCloud(context)) AvatarMotion.animated.size else 0,
-    )
+    fun newFace(context: Context): Job {
+        // nanoMuse: the parallel app does not silently start poses or clips after a choice.
+        if (!ai.tama.media.AutomaticAvatarGuard.permitsImplicitBatches(
+                com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+            )) return candidates()
+        return Job(
+            images = AvatarStudio.CANDIDATES + AgentMood.entries.count { it != AgentMood.IDLE },
+            clips = if (clipsOnCloud(context)) AvatarMotion.animated.size else 0,
+        )
+    }
 
     /** Another set of candidates while choosing: four pictures, no clips yet. */
     fun candidates(): Job = Job(images = AvatarStudio.CANDIDATES, clips = 0)

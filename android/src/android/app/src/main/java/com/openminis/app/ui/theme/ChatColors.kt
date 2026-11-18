@@ -62,102 +62,88 @@ data class ChatPalette(
     val fabAccent: Color,
 )
 
+// nanoMuse: the TAMA chat canvas and bubbles use the same warm palette as the home shell.
+// scripts/tama_delta.py reapplies the named properties after rebrand.py.
 val LightChatPalette = ChatPalette(
     isDark = false,
-    background = Color.White,
-    secondaryBg = Color(0xFFF2F2F7),
-    inputBg = Color.White,
-    inputIconBg = Color(0xFFF2F2F7),
+    background = Color(0xFFFFF8E9),
+    secondaryBg = Color(0xFFF8EBD7),
+    inputBg = Color(0xFFFFFCF5),
+    inputIconBg = Color(0xFFF5E5CA),
     inputIconBorder = Color.Transparent,
-    inputBorder = Color(0x4D3C3C43),
-    primaryText = Color(0xFF000000),
-    secondaryText = Color(0x993C3C43),
-    tertiaryText = Color(0x4D3C3C43),
-    disabledText = Color(0x2E3C3C43),
-    // nanoMuse: the user's own message is a black pill with white ink (white
-    // pill, black ink in the dark theme below). scripts/rebrand.py writes these.
-    userBubble = Color(0xFF000000),
+    inputBorder = Color(0xFFD8BFA0),
+    primaryText = Color(0xFF281B12),
+    secondaryText = Color(0xFF705943),
+    tertiaryText = Color(0xFF8C755E),
+    disabledText = Color(0xFFAD9A87),
+    // nanoMuse: an amber-brown user bubble with white ink.
+    userBubble = Color(0xFF87410B),
     onUserBubble = Color(0xFFFFFFFF),
-    assistantBubble = Color(0xFFF2F2F7),
-    toolBg = Color(0xFFF2F2F7),
+    assistantBubble = Color(0xFFF7E7C9),
+    toolBg = Color(0xFFF8EBD7),
     toolBorder = Color(0x14000000),
-    toolCapsuleBg = Color(0xFFF2F2F7),
-    separator = Color(0x4D3C3C43),
-    sendButton = Color(0xFF000000),
+    toolCapsuleBg = Color(0xFFF5E5CA),
+    separator = Color(0xFFE6D5B8),
+    sendButton = Color(0xFF87410B),
     sendButtonDisabled = Color(0x2E3C3C43),
-    codeBlockBg = Color(0xFF000000),
+    codeBlockBg = Color(0xFF30251D),
     codeBlockText = Color(0xFFE5E5EA),
-    inlineCodeBg = Color(0xFFF2F2F7),
-    inlineCodeText = Color(0xFF015CFB),
-    link = Color(0xFF015CFB),
-    blockquoteBar = Color(0x80015CFB),
-    thinking = Color(0xFF015CFB),
+    inlineCodeBg = Color(0xFFF3E2C8),
+    inlineCodeText = Color(0xFF87410B),
+    link = Color(0xFF87410B),
+    blockquoteBar = Color(0xFFB56B27),
+    thinking = Color(0xFF87410B),
     warningBg = Color(0x14FF9500),
     warningText = Color(0x73000000),
     tableBorder = Color(0x1F000000),
     inputShadow = Color.Transparent,
-    toastBg = Color(0x2E015CFB),
+    toastBg = Color(0xFFF4D8A8),
     thumbnailBorder = Color(0x33808080),
-    sheetHeaderBg = Color(0xFFFFFFFF),
+    sheetHeaderBg = Color(0xFFFFFCF5),
     sheetHeaderBorder = Color(0x1A000000),
-    fabAccent = Color(0xFF015CFB),
+    fabAccent = Color(0xFF9B4508),
 )
 
-// T153: Android-specific dark palette tweaks. iOS borrows the system
-// palette (#1C1C1E / #2C2C2E etc.) which reads as "layered dark grey"
-// on a 1000+ nit display, but on a typical Android phone (Pixel 6 ≈
-// 500 nits, mid-range OEMs even less) those layers crush together
-// into a single near-black wash and the user can't tell tool capsules
-// from background or input from message list. Lift the non-background
-// layers ~6-10% so the contrast survives the brightness gap; the pure
-// `background` itself stays #000 because every other color is keyed
-// to "darker than this".
+// nanoMuse: warm dark surfaces are layered so the composer and messages stay distinct.
 val DarkChatPalette = ChatPalette(
     isDark = true,
-    background = Color(0xFF000000),
-    secondaryBg = Color(0xFF26262A),
-    inputBg = Color(0xFF2C2C30),
-    inputIconBg = Color(0xFF1C1C1E),
-    inputIconBorder = Color(0xFF595959),
-    inputBorder = Color(0x40545458),
-    primaryText = Color(0xFFFFFFFF),
-    secondaryText = Color(0x99EBEBF5),
-    tertiaryText = Color(0x4DEBEBF5),
-    disabledText = Color(0x2EEBEBF5),
-    // nanoMuse: the user's own message is a white pill with black ink; the
-    // assistant's pill is a touch off the pure-black wash. (Replaces the earlier
-    // opaque slate-blue user bubble.) scripts/rebrand.py writes these.
-    userBubble = Color(0xFFFFFFFF),
-    onUserBubble = Color(0xFF000000),
-    assistantBubble = Color(0xFF1C1C1E),
-    toolBg = Color(0xFF3A3A3F),
-    toolBorder = Color(0x40545458),
-    toolCapsuleBg = Color(0xFF28282C),
-    separator = Color(0x99545458),
-    sendButton = Color(0xFFFFFFFF),
+    background = Color(0xFF19130F),
+    secondaryBg = Color(0xFF30251D),
+    inputBg = Color(0xFF392C22),
+    inputIconBg = Color(0xFF49372A),
+    inputIconBorder = Color(0xFF705744),
+    inputBorder = Color(0xFF705744),
+    primaryText = Color(0xFFF3E4D6),
+    secondaryText = Color(0xFFD7C5B2),
+    tertiaryText = Color(0xFFB5A28D),
+    disabledText = Color(0xFF8D7D6D),
+    // nanoMuse: honey with dark ink keeps the user bubble legible in dark mode.
+    userBubble = Color(0xFFFFCA74),
+    onUserBubble = Color(0xFF4B2500),
+    assistantBubble = Color(0xFF3A2A1E),
+    toolBg = Color(0xFF49372A),
+    toolBorder = Color(0xFF705744),
+    toolCapsuleBg = Color(0xFF392C22),
+    separator = Color(0xFF705744),
+    sendButton = Color(0xFFFFCA74),
     sendButtonDisabled = Color(0x2EEBEBF5),
-    codeBlockBg = Color(0xFF262626),
+    codeBlockBg = Color(0xFF30251D),
     codeBlockText = Color(0xFFE5E5EA),
-    // [T-inline-code-dark-bg-android] Lifted into the T153 ramp — the old
-    // #1C1C1E chip was invisible on the #000 chat background (the comment
-    // block above explains why non-background layers need the ~6-10% lift;
-    // this one was missed). #34343A sits between inputBg (#2C2C30) and
-    // toolBg (#3A3A3F), clearly above codeBlockBg (#262626) so small inline
-    // chips read against both the wash and fenced blocks.
-    inlineCodeBg = Color(0xFF34343A),
-    inlineCodeText = Color(0xFF58A6FF),
-    link = Color(0xFF58A6FF),
-    blockquoteBar = Color(0x8058A6FF),
-    thinking = Color(0xFF58A6FF),
+    // nanoMuse: inline code remains a separate layer against both the canvas and code blocks.
+    inlineCodeBg = Color(0xFF49372A),
+    inlineCodeText = Color(0xFFFFCA74),
+    link = Color(0xFFFFCA74),
+    blockquoteBar = Color(0xFFC99040),
+    thinking = Color(0xFFFFCA74),
     warningBg = Color(0x14FF9F0A),
     warningText = Color(0x73FFFFFF),
     tableBorder = Color(0xFF38383A),
     inputShadow = Color(0x80000000),
-    toastBg = Color(0x2E58A6FF),
+    toastBg = Color(0xFF594024),
     thumbnailBorder = Color(0x20545458),
-    sheetHeaderBg = Color(0xFF2C2C2E),
+    sheetHeaderBg = Color(0xFF392C22),
     sheetHeaderBorder = Color(0x33FFFFFF),
-    fabAccent = Color(0xFF58A6FF),
+    fabAccent = Color(0xFFFFCA74),
 )
 
 val LocalChatPalette = compositionLocalOf { LightChatPalette }

@@ -107,13 +107,21 @@ class MediaTest {
         assertFalse(t2v27.getJSONObject("parameters").has("size"))
     }
 
-    @Test fun `failure messages are plain for the user`() {
+    @Test fun `failure messages respect the package privacy policy`() {
         val notActivated = JSONObject().put("code", "InvalidParameter").put("message", "The product is not activated, please activate it first")
-        assertTrue(VideoGen.failureMessage(notActivated).contains("activate"))
-        assertFalse(VideoGen.failureMessage(notActivated).contains("InvalidParameter"))
-        assertEquals("Throttling: too many requests", VideoGen.failureMessage(JSONObject().put("code", "Throttling").put("message", "too many requests")))
-        assertEquals("Video task CANCELED", VideoGen.failureMessage(JSONObject().put("task_status", "CANCELED")))
-        assertEquals("Video task failed", VideoGen.failureMessage(JSONObject()))
+        val throttled = JSONObject().put("code", "Throttling").put("message", "too many requests")
+        val canceled = JSONObject().put("task_status", "CANCELED")
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            // The parallel build cannot display untrusted provider-controlled fields.
+            for (output in listOf(notActivated, throttled, canceled, JSONObject()))
+                assertEquals("Video task failed", VideoGen.failureMessage(output))
+        } else {
+            assertTrue(VideoGen.failureMessage(notActivated).contains("activate"))
+            assertFalse(VideoGen.failureMessage(notActivated).contains("InvalidParameter"))
+            assertEquals("Throttling: too many requests", VideoGen.failureMessage(throttled))
+            assertEquals("Video task CANCELED", VideoGen.failureMessage(canceled))
+            assertEquals("Video task failed", VideoGen.failureMessage(JSONObject()))
+        }
     }
 
     @Test fun `every animated mood has a distinct prompt on a white background`() {

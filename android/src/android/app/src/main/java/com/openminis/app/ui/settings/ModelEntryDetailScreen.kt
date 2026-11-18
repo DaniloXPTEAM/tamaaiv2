@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -18,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -30,6 +32,8 @@ import com.openminis.app.ui.components.SectionTextField
 import com.openminis.app.R
 import com.openminis.app.ui.components.MinisButton
 import com.openminis.app.ui.components.MinisTextButton
+import ai.tama.router.AutoModelStore
+import ai.tama.router.Need
 
 /**
  * Detail / edit screen for a single ModelEntry. T210: brought to iOS
@@ -60,6 +64,37 @@ fun ModelEntryDetailScreen(
 
     val baseModel = entry.baseModel
     val overrides = entry.overrides
+    val context = LocalContext.current
+    val autoIdentity = instance?.let { AutoModelStore.identity(entry, it) }
+    // nanoMuse: a review is a snapshot, not permission to restore an old account's consent.
+    val nmParallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+    val nmReview = remember(autoIdentity) {
+        if (nmParallel) autoIdentity?.let { providerRepository.nmBeginAutoReview(it) } else null
+    }
+    val catalogueCapabilities = remember(autoIdentity) {
+        instance?.let {
+            io.github.nanomuse.cloud.ProviderCatalogue.match(
+                io.github.nanomuse.cloud.ProviderCatalogue.load(context), it,
+            )?.models?.get(entry.model.id)?.capabilities
+        }.orEmpty()
+    }
+    val knownCapabilities = remember(autoIdentity, catalogueCapabilities) {
+        autoIdentity?.let {
+            if (nmParallel) providerRepository.nmAutoReviewCapabilities(it, catalogueCapabilities)
+            else AutoModelStore.capabilities(context, it, catalogueCapabilities)
+        }.orEmpty()
+    }
+    var autoApproved by remember(autoIdentity) {
+        mutableStateOf(if (nmParallel) nmReview?.chatApproved == true else
+            autoIdentity?.let { AutoModelStore.approved(context, it) } == true)
+    }
+    var autoImageApproved by remember(autoIdentity) {
+        mutableStateOf(if (nmParallel) nmReview?.imageApproved == true else
+            autoIdentity?.let { AutoModelStore.imageApproved(context, it) } == true)
+    }
+    var autoEdits by remember(autoIdentity) { mutableStateOf<Map<Need, Boolean>>(emptyMap()) }
+    var confirmAuto by remember(autoIdentity) { mutableStateOf(false) }
+    var confirmAutoImage by remember(autoIdentity) { mutableStateOf(false) }
 
     var modelId by remember { mutableStateOf(baseModel.id) }
     var displayName by remember { mutableStateOf(overrides.displayName ?: baseModel.displayName) }
@@ -142,6 +177,24 @@ fun ModelEntryDetailScreen(
                         entry.copy(overrides = newOverrides, isHidden = isHidden)
                     }
                     providerRepository.updateEntry(updated)
+                    // nanoMuse: editing the model id or route cannot transfer consent to a
+                    // different endpoint/model. The new identity must be reviewed separately.
+                    if (instance != null && autoIdentity != null &&
+                        AutoModelStore.identity(updated, instance) == autoIdentity) {
+                        if (nmParallel) {
+                            // nanoMuse: the provider may have changed while this screen or
+                            // its confirmation dialog was open. Never resurrect old consent.
+                            val saved = nmReview?.let {
+                                providerRepository.nmSaveAutoReview(it, autoApproved, autoImageApproved, autoEdits)
+                            } == true
+                            if (!saved) android.widget.Toast.makeText(context,
+                                context.getString(R.string.nm_auto_review_changed), android.widget.Toast.LENGTH_LONG).show()
+                        } else {
+                            AutoModelStore.setApproved(context, autoIdentity, autoApproved)
+                            AutoModelStore.setImageApproved(context, autoIdentity, autoImageApproved)
+                            autoEdits.forEach { (need, value) -> AutoModelStore.setCapability(context, autoIdentity, need, value) }
+                        }
+                    }
                     onBack()
                 },
                 modifier = Modifier.padding(end = 8.dp),
@@ -222,6 +275,68 @@ fun ModelEntryDetailScreen(
                 checked = thinkingEnabled,
                 onCheckedChange = { thinkingEnabled = it },
                 showDivider = false,
+            )
+        }
+
+        // nanoMuse: capabilities are affirmative evidence, not guesses from a model name.
+        SettingsSection(
+            header = stringResource(R.string.nm_auto_model_section),
+            footer = stringResource(R.string.nm_auto_model_help),
+        ) {
+            SettingsSwitchRow(
+                title = stringResource(R.string.nm_auto_model_allow),
+                checked = autoApproved,
+                onCheckedChange = { enabled -> if (enabled) confirmAuto = true else autoApproved = false },
+            )
+            SettingsSwitchRow(
+                title = stringResource(R.string.nm_auto_image_allow),
+                checked = autoImageApproved,
+                onCheckedChange = { enabled -> if (enabled) confirmAutoImage = true else autoImageApproved = false },
+            )
+            val abilities = listOf(
+                Need.CHAT to R.string.nm_auto_cap_chat,
+                Need.TOOLS to R.string.nm_auto_cap_tools,
+                Need.VISION to R.string.nm_auto_cap_vision,
+                Need.IMAGE_GENERATION to R.string.nm_auto_cap_image,
+            )
+            abilities.forEachIndexed { index, (need, label) ->
+                SettingsSwitchRow(
+                    title = stringResource(label),
+                    checked = autoEdits[need] ?: (need in knownCapabilities),
+                    onCheckedChange = { autoEdits = autoEdits + (need to it) },
+                    showDivider = index != abilities.lastIndex,
+                )
+            }
+        }
+        if (confirmAuto) {
+            AlertDialog(
+                onDismissRequest = { confirmAuto = false },
+                title = { Text(stringResource(R.string.nm_auto_consent_title)) },
+                text = { Text(stringResource(R.string.nm_auto_consent_body)) },
+                confirmButton = {
+                    MinisTextButton(onClick = { autoApproved = true; confirmAuto = false }) {
+                        Text(stringResource(R.string.nm_auto_consent_allow))
+                    }
+                },
+                dismissButton = {
+                    MinisTextButton(onClick = { confirmAuto = false }) { Text(stringResource(R.string.common_cancel)) }
+                },
+            )
+        }
+
+        if (confirmAutoImage) {
+            AlertDialog(
+                onDismissRequest = { confirmAutoImage = false },
+                title = { Text(stringResource(R.string.nm_auto_image_consent_title)) },
+                text = { Text(stringResource(R.string.nm_auto_image_consent_body)) },
+                confirmButton = {
+                    MinisTextButton(onClick = { autoImageApproved = true; confirmAutoImage = false }) {
+                        Text(stringResource(R.string.nm_auto_image_allow))
+                    }
+                },
+                dismissButton = {
+                    MinisTextButton(onClick = { confirmAutoImage = false }) { Text(stringResource(R.string.common_cancel)) }
+                },
             )
         }
 

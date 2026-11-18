@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="seed">#015CFB</color>
+    <!-- nanoMuse: TAMA Android accent, re-applied by scripts/tama_delta.py. -->
+    <color name="seed">#9B4508</color>
     <!--
       T-android-shortcut-icons-blank: foreground glyph color for the
       app-icon shortcut adaptive icons. Dark glyph on the light

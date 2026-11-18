@@ -102,6 +102,7 @@ class RoomChats(private val context: Context, private val repo: ChatRepository) 
     }
 
     override suspend fun deleteSession(id: String) {
+        com.openminis.app.offload.OffloadPermissionManager.clearSessionGrants(id)
         io.github.nanomuse.hands.HandsRunMemory.shared.clear(id)
         dao.deleteMessages(id)
         dao.deleteSession(id)
@@ -109,6 +110,9 @@ class RoomChats(private val context: Context, private val repo: ChatRepository) 
     }
 
     override suspend fun clearMessages(sessionId: String) {
+        // A remote deletion of the main chat clears its messages but keeps its id.
+        com.openminis.app.offload.OffloadPermissionManager.clearSessionGrants(sessionId)
+        io.github.nanomuse.guard.Grants.clearSession(sessionId)
         io.github.nanomuse.hands.HandsRunMemory.shared.clear(sessionId)
         dao.deleteMessages(sessionId)
         dao.updateLastMessage(sessionId, null, System.currentTimeMillis())

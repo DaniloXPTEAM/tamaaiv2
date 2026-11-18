@@ -70,15 +70,38 @@ object AvatarMotion {
     /** True when a video model is set and the user has not turned the animation off. */
     fun enabled(context: Context): Boolean = MediaModels.animateAvatar(context) && MediaModels.videoEndpoint(context) != null
 
+    // nanoMuse: video batches have no exact-model automatic approval yet.
+    private fun requireManualVideoMode(context: Context) = ai.tama.media.AutomaticVideoGuard.requireAllowed(
+        parallelTest = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+        automatic = { ai.tama.router.AutoModelStore.enabled(context) },
+    )
+
     /**
      * Draws the missing clips (all of them with [force]). No-op without a face or a video model.
      * Returns false when nothing was started.
      */
     fun animateAll(context: Context, force: Boolean = false): Boolean {
-        val ep = MediaModels.videoEndpoint(context) ?: return false
         if (!AvatarStore.baseFile().exists()) return false
         val todo = animated.filter { force || !clipFile(it).exists() }
         if (todo.isEmpty()) return false
+        // nanoMuse: the explicit batch cannot bypass automatic-mode authorization.
+        try { requireManualVideoMode(context) } catch (_: ai.tama.media.AutomaticVideoGuard.Blocked) {
+            job?.cancel()
+            _progress.value = Progress(0, todo.size, emptyList(), running = false,
+                error = context.getString(com.openminis.app.R.string.nm_avatar_auto_unavailable))
+            return false
+        }
+        // nanoMuse: refuse before resolving a key, and stop any previous batch.
+        if (!ai.tama.pricing.ModelCostGuard.permits()) {
+            job?.cancel()
+            _progress.value = Progress(0, todo.size, emptyList(), running = false,
+                error = context.getString(com.openminis.app.R.string.nm_model_cost_blocked))
+            return false
+        }
+        val selectedEndpoint = MediaModels.videoEndpoint(context) ?: return false
+        // nanoMuse: the parallel package does not follow later in-place route edits.
+        val ep = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            selectedEndpoint.copy(instance = selectedEndpoint.instance.copy()) else selectedEndpoint
         job?.cancel()
         _progress.value = Progress(0, todo.size, emptyList(), running = true)
         job = scope.launch {
@@ -89,7 +112,9 @@ object AvatarMotion {
                 val frame = AvatarStore.decodeBitmap(AvatarStore.moodFile(mood).takeIf { it.exists() } ?: AvatarStore.baseFile())
                 if (frame == null) { failed += mood; return@forEachIndexed }
                 val result = runCatching {
-                    VideoGen.imageToVideo(ep, frame, motionPrompt(mood), SECONDS) { stage ->
+                    // nanoMuse: mode is rechecked at every upload, task, poll and download.
+                    VideoGen.imageToVideo(ep, frame, motionPrompt(mood), SECONDS,
+                        beforeRequest = { requireManualVideoMode(context) }) { stage ->
                         _progress.value = Progress(i, todo.size, failed.toList(), running = true, current = mood, stage = stage)
                     }
                 }
@@ -102,9 +127,32 @@ object AvatarMotion {
                     // the account's other devices take this clip instead of drawing their own (relay 0.29)
                     io.github.nanomuse.cloud.ProfileSync.shareClip(context, mood, bytes)
                 }.onFailure { e ->
-                    AppLogger.warning(TAG, "clip $mood failed: ${e.message}")
+                    // nanoMuse: these local refusals stop the batch before another clip is sent.
+                    val localRefusal = when (e) {
+                        is ai.tama.media.AutomaticVideoGuard.Blocked -> com.openminis.app.R.string.nm_avatar_auto_unavailable
+                        is ai.tama.media.MediaModelChangeGuard.Blocked -> com.openminis.app.R.string.nm_media_model_change_blocked
+                        else -> null
+                    }
+                    if (localRefusal != null) {
+                        _progress.value = Progress(i, todo.size, failed.toList() + mood, running = false,
+                            error = context.getString(localRefusal))
+                        return@launch
+                    }
+                    // nanoMuse: a local cost refusal stops the whole batch, not just this clip.
+                    if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) {
+                        _progress.value = Progress(i, todo.size, failed.toList() + mood, running = false,
+                            error = context.getString(com.openminis.app.R.string.nm_model_cost_blocked))
+                        return@launch
+                    }
+                    if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        AppLogger.warning(TAG, "clip failed")
+                        lastError = context.getString(com.openminis.app.R.string.nm_error_private_generic)
+                    } else {
+                        AppLogger.warning(TAG, "clip $mood failed: ${e.message}")
+                        lastError = e.message
+                    }
                     failed += mood
-                    lastError = e.message
                 }
             }
             _progress.value = Progress(todo.size, todo.size, failed.toList(), running = false, error = lastError)

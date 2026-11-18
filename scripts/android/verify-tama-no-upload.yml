@@ -1,0 +1,122 @@
+# Template only: this file is outside .github/workflows and cannot run as an Action.
+# A public workflow or any upload requires a separate user decision.
+name: Android verification without uploads
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: read
+
+env:
+  NDK_VERSION: 27.2.12479018
+
+jobs:
+  android-check:
+    if: github.head_ref == 'arena/4f0fb56f-tamaaiv2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache-jdk: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: platforms;android-36 build-tools;35.0.0 cmake;3.22.1 ndk;${{ env.NDK_VERSION }}
+      - name: Build required native dependencies locally
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          export GOROOT="$(go env GOROOT)" GOPATH="$(go env GOPATH)"
+          export PATH="$GOPATH/bin:$PATH"
+          bash scripts/android/build-natives.sh
+      - name: Assemble both debug variants locally
+        working-directory: android/src/android
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          ./gradlew :app:assembleDebug :app:assembleTamaTest --console=plain --no-daemon
+      # The test process is serial by default: cost opt-ins in loopback fixtures are process-wide.
+      - name: Unit tests
+        working-directory: android/src/android
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          ./gradlew :app:testTamaTestUnitTest \
+            --tests 'ai.tama.*' \
+            --tests 'ai.tama.net.SandboxLogPrivacyTest' \
+            --tests 'ai.tama.net.NativeOffloadSessionTest' \
+            --tests 'ai.tama.net.ChatLogPrivacyTest' \
+            --tests 'ai.tama.sandbox.ShellRetrySafetyTest' \
+            --tests 'ai.tama.media.MediaModelChangeDispatchTest' \
+            --tests 'ai.tama.media.MediaImageTransportIntegrationTest' \
+            --tests 'ai.tama.media.ImageGenStopTransportTest' \
+            --tests 'ai.tama.media.MediaVideoTransportIntegrationTest' \
+            --tests 'ai.tama.media.ImageAttemptTrackerTest' \
+            --tests 'ai.tama.media.ImageChoiceRevisionTest' \
+            --tests 'ai.tama.media.AutoImageSelectionTest' \
+            --tests 'ai.tama.media.VideoChoiceRevisionTest' \
+            --tests 'ai.tama.media.VideoAttemptTrackerTest' \
+            --tests 'ai.tama.media.VideoFollowupTransportTest' \
+            --tests 'io.github.nanomuse.*' \
+            --tests 'com.openminis.app.provider.*' \
+            --tests 'com.openminis.app.sandbox.*' \
+            --tests 'com.openminis.app.offload.OffloadPermissionQueueTest' \
+            --tests 'com.openminis.app.tools.VisionAutomaticGuardTest' \
+            --max-workers=1 --console=plain --no-daemon
+      - name: Run normal debug isolation tests
+        working-directory: android/src/android
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          ./gradlew :app:testDebugUnitTest \
+            --tests 'ai.tama.net.GroqHistoryPolicyTest' \
+            --tests 'ai.tama.net.GroqNormalHistoryWireTest' \
+            --tests 'ai.tama.net.ProviderErrorPrivacyTest' \
+            --tests 'ai.tama.net.NativeOffloadSessionTest' \
+            --tests 'ai.tama.net.SandboxLogPrivacyTest' \
+            --tests 'ai.tama.net.ChatLogPrivacyTest' \
+            --tests 'ai.tama.sandbox.ShellRetrySafetyTest' \
+            --tests 'ai.tama.net.DirectModelUseGuardTest' \
+            --tests 'ai.tama.net.DirectModelUseTransportTest' \
+            --tests 'ai.tama.pricing.ModelCostGuardTest' \
+            --tests 'ai.tama.router.ModelRouteHistoryTest' \
+            --tests 'ai.tama.router.AutomaticCostGuardTest' \
+            --tests 'ai.tama.media.VideoProbeBatchTest' \
+            --tests 'ai.tama.media.AutomaticVideoGuardTest' \
+            --tests 'ai.tama.media.AvatarAndMediaModelGuardTest' \
+            --tests 'ai.tama.media.MediaOffloadImageTest' \
+            --tests 'ai.tama.media.ImageGenStopTransportTest' \
+            --tests 'ai.tama.media.MediaImageGateTest' \
+            --tests 'ai.tama.media.ImageAttemptTrackerTest' \
+            --tests 'ai.tama.media.ImageChoiceRevisionTest' \
+            --tests 'ai.tama.media.AutoImageSelectionTest' \
+            --tests 'ai.tama.media.VideoChoiceRevisionTest' \
+            --tests 'ai.tama.media.VideoFollowupTransportTest' \
+            --tests 'ai.tama.media.VideoAttemptTrackerTest' \
+            --tests 'ai.tama.media.MediaOffloadVideoTest' \
+            --tests 'com.openminis.app.offload.OffloadPermissionQueueTest' \
+            --tests 'com.openminis.app.sandbox.offload.AutomaticModelUseGateTest' \
+            --tests 'io.github.nanomuse.avatar.AvatarStudioTest' \
+            --tests 'io.github.nanomuse.avatar.ImageModelRequestsTest' \
+            --tests 'io.github.nanomuse.media.MediaTest' \
+            --tests 'io.github.nanomuse.net.ModelBlipTest' \
+            --tests 'io.github.nanomuse.speech.ProviderSpeechCostGuardTest' \
+            --max-workers=1 --console=plain --no-daemon
+      - name: Verify separate APK identities locally
+        run: |
+          python3 scripts/android/verify-parallel-apk.py \
+            --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
+            --apk android/src/android/app/build/outputs/apk/tamaTest/app-tamaTest.apk \
+            --normal-apk android/src/android/app/build/outputs/apk/debug/app-debug.apk \
+            --out-dir /tmp/tama-identity-check

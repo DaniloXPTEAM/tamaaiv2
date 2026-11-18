@@ -5,6 +5,10 @@ package com.openminis.app.sandbox
  * like the host kernel's seccomp fast path miscompiling our syscall filter,
  * and should be retried once with `PROOT_NO_SECCOMP=1`.
  *
+ * nanoMuse: the legacy heuristic below cannot prove that a silent, early crash
+ * had no effects. ShellExecutor disables this fallback in the parallel app;
+ * the ordinary package retains it, and other callers must be assessed separately.
+ *
  * ## Why this exists
  *
  * GH#186: on one reporter's ARM64 device, `/bin/true` and `uname` run fine

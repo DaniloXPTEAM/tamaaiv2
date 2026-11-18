@@ -17,7 +17,10 @@ import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +41,8 @@ import com.openminis.app.ui.components.openExternalUrl
 fun AboutScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val tileBlue = Color(0xFF015CFB)
+    // nanoMuse: the report is previewed locally before the person chooses to copy it.
+    var nmDiagnosticOpen by remember { mutableStateOf(false) }
 
     SettingsScaffold(title = stringResource(R.string.about_title), onBack = onBack) {
         Column(
@@ -89,6 +94,18 @@ fun AboutScreen(onBack: () -> Unit) {
             )
         }
 
+        // nanoMuse: no provider, account or conversation data is read for this report.
+        SettingsSection {
+            SettingsRow(
+                icon = Icons.Outlined.Code,
+                title = stringResource(R.string.nm_diagnostic_title),
+                subtitle = stringResource(R.string.nm_diagnostic_subtitle),
+                onClick = { nmDiagnosticOpen = true },
+                showDivider = false,
+                minHeight = 72.dp,
+            )
+        }
+
         SettingsSection(header = stringResource(R.string.about_links)) {
             SettingsRow(
                 icon = Icons.Outlined.Code,
@@ -99,7 +116,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 // LocalInAppBrowserLauncher ambient defaults to a no-op when
                 // no InAppBrowserHost is in the tree above this screen — and
                 // nothing wraps Settings, so the row used to be a dead tap.
-                onClick = { openExternalUrl(context, "https://github.com/nano-muse/nanoMuse") },
+                onClick = { openExternalUrl(context, "https://github.com/DaniloXPTEAM/tamaaiv2") },
                 trailing = { ExternalLinkIcon() },
                 showDivider = false,
             )
@@ -113,7 +130,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 iconColor = tileBlue,
                 title = stringResource(R.string.nm_about_license),
                 subtitle = "GPL-3.0-or-later",
-                onClick = { openExternalUrl(context, "https://github.com/nano-muse/nanoMuse/blob/main/LICENSE") },
+                onClick = { openExternalUrl(context, "https://github.com/DaniloXPTEAM/tamaaiv2/blob/main/LICENSE") },
                 trailing = { ExternalLinkIcon() },
                 minHeight = 72.dp,
             )
@@ -122,7 +139,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 iconColor = tileBlue,
                 title = stringResource(R.string.nm_about_upstream),
                 subtitle = stringResource(R.string.nm_about_upstream_detail),
-                onClick = { openExternalUrl(context, "https://github.com/nano-muse/nanoMuse") },
+                onClick = { openExternalUrl(context, "https://github.com/DaniloXPTEAM/tamaaiv2") },
                 trailing = { ExternalLinkIcon() },
                 minHeight = 72.dp,
             )
@@ -142,6 +159,13 @@ fun AboutScreen(onBack: () -> Unit) {
         CheckUpdateSection()
 
         Spacer(Modifier.height(24.dp))
+    }
+    // nanoMuse: the About entry is independent of any chat and uses no chat snapshot.
+    if (nmDiagnosticOpen) {
+        ai.tama.diagnostics.DiagnosticDialog(
+            snapshot = ai.tama.diagnostics.DiagnosticCapture.settings(),
+            onDismiss = { nmDiagnosticOpen = false },
+        )
     }
 }
 

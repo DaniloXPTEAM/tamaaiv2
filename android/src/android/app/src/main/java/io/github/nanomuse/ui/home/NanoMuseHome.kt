@@ -426,7 +426,11 @@ fun NanoMuseHome(
                                 navController.safeNavigate(Routes.FILE_PREVIEW)
                             },
                             onModelGroupsClick = { navController.safeNavigate(Routes.MODEL_GROUPS) },
-                            nmHome = NmHomeChrome(isMainChat = isMainChat, onOpenDrawer = { openDrawer() }),
+                            nmHome = NmHomeChrome(
+                                isMainChat = isMainChat,
+                                onOpenDrawer = { openDrawer() },
+                                onOpenPet = { navController.safeNavigate(io.github.nanomuse.pet.ROUTE_PET) },
+                            ),
                             // nanoMuse: preserve the full-size blur source, but keep
                             // the chat footer above the bar measured by Scaffold.
                             nmBottomOverlay = bottom,
@@ -566,6 +570,7 @@ private fun TabHeader(
         statusLine = statusLine,
         onAvatarClick = onAvatarClick,
         onNameClick = onNameClick,
+        onPetClick = { navController.safeNavigate(io.github.nanomuse.pet.ROUTE_PET) },
         leading = {
             MuseRoundButton(
                 icon = Icons.Filled.Menu,

@@ -89,7 +89,7 @@ packages = ["nanomuse"]
 "config/config.example.toml" = "nanomuse/config.example.toml"
 
 [tool.hatch.build.targets.sdist]
-include = ["nanomuse", "config/config.example.toml", "README.md", "docs/readme", "LICENSE"]
+include = ["nanomuse", "config/config.example.toml", "README.md", "docs/readme", "LICENSE", "LICENSE-TAMA-MIT", "LICENCIAMENTO_TAMA.md", "NOTICE", "THIRD_PARTY_NOTICES.md"]
 
 [tool.ruff]
 line-length = 100
@@ -111,5 +111,7 @@ warn_unused_ignores = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# nanoMuse: the pytest console script also needs the repo root for tests.* helper imports.
+pythonpath = ["."]
 testpaths = ["tests"]
 markers = ["live: tests that call a real LLM endpoint (set NANOMUSE_LIVE=1)"]

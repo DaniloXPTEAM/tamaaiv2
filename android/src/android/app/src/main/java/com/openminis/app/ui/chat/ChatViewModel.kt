@@ -21,6 +21,21 @@ import io.github.nanomuse.chat.CompactSummaryIdleTimeoutException // nanoMuse
 import io.github.nanomuse.chat.CompactSummaryOutputException // nanoMuse
 import io.github.nanomuse.chat.ContextBudget // nanoMuse
 import io.github.nanomuse.chat.ContextEstimate // nanoMuse
+import ai.tama.chat.PromptSize // nanoMuse: count-only prompt diagnostics
+import ai.tama.chat.PromptProfiles // nanoMuse: one snapshot for the actual outbound profile
+import ai.tama.router.AutoModelStore
+import ai.tama.router.AutoModelRuntime
+import ai.tama.router.AutoModelTurn
+import ai.tama.router.ModelHealth
+import ai.tama.router.ModelRouter
+import ai.tama.router.Need
+import ai.tama.router.Profile
+import ai.tama.router.ProviderBudget
+import ai.tama.router.ProviderBudgetStore
+import ai.tama.router.Route
+import ai.tama.router.SessionState
+import ai.tama.router.TurnRequestPlanner
+import ai.tama.router.TurnRouter
 import io.github.nanomuse.chat.ContextCalibrationStore // nanoMuse
 import io.github.nanomuse.chat.ContextTrimming // nanoMuse
 import io.github.nanomuse.chat.ContextTrimStore // nanoMuse
@@ -48,8 +63,13 @@ import com.openminis.app.data.model.LLMMessage
 import com.openminis.app.data.model.LLMModel
 import com.openminis.app.data.model.LLMStreamChunk
 import com.openminis.app.data.model.LLMUsage
+import com.openminis.app.data.model.ModelEntry
 import com.openminis.app.data.model.ModelGroup
+import com.openminis.app.data.model.ProviderCredential
+import com.openminis.app.data.model.ProviderInstance
+import com.openminis.app.data.model.ProviderType
 import com.openminis.app.data.model.RoutingStrategy
+import com.openminis.app.data.model.normalizeModalityName
 import com.openminis.app.data.model.hasImageInput
 import com.openminis.app.data.model.ThinkingLevel
 import com.openminis.app.R
@@ -166,6 +186,10 @@ class ChatViewModel(
             // `DataInspectionFailed`) is about the words, not the size; halving sends the same
             // words twice, and one long chat was refused two hundred times in an hour that way.
             if (error is LLMError.ProviderError && io.github.nanomuse.cloud.RelayRefusal.contentCheck(error.detail)) return false
+            // nanoMuse: credit/payment and access refusals cannot be fixed by splitting the input.
+            if (error is LLMError.ProviderError &&
+                (error.detail.startsWith("[402]") || error.detail.startsWith("HTTP 402:") ||
+                    error.detail.startsWith("[403]") || error.detail.startsWith("HTTP 403:"))) return false
             if (error is LLMError) {
                 return when (error) {
                     // Never worth a smaller payload:
@@ -1149,12 +1173,224 @@ class ChatViewModel(
     // streaming, hiding the Stop button while the new turn was live).
     @Volatile
     private var streamJob: Job? = null
+
+    // nanoMuse: completion may happen before a dispatched coroutine enters its body.
+    // Only the owner may clear the indicator, and UI state is updated on Main.
+    private fun nmIdleWhenOwnerEnds(owner: Job) {
+        viewModelScope.launch {
+            if (streamJob === owner) _isStreaming.value = false
+        }
+    }
+
+    // nanoMuse: an older setup must not hide a newer turn's Stop control.
+    private fun nmMayFinishSetup(owner: Job?): Boolean = ai.tama.chat.ChatSetupLaunch.mayUpdateOwner(
+        enabled = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+        owner = owner, current = streamJob,
+    )
+
+    // nanoMuse: publish the child before starting it and keep it under the setup job.
+    private fun nmLaunchStream(
+        scope: kotlinx.coroutines.CoroutineScope,
+        block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit,
+    ): Job = ai.tama.chat.ChatSetupLaunch.launchStream(
+        scope = scope,
+        enabled = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+        onOwner = { streamJob = it },
+        onFinished = ::nmIdleWhenOwnerEnds,
+        block = block,
+    )
+
+    // Identifies the direct-image lifecycle for Stop/queue handling; it never owns another turn.
+    @Volatile
+    private var nmImageShortcutJob: Job? = null
+    @Volatile
+    private var nmImageShortcutPlaceholderId: String? = null
+    @Volatile
+    private var nmActiveImageShortcutCall: Job? = null
+    // nanoMuse: Stop must only retire the tracker run owned by the job it cancels.
+    private val nmTrackedLocalRuns = io.github.nanomuse.pet.PetRunBindings<Job>()
     private var currentProvider: LLMProvider? = null
     private var currentModel: LLMModel? = null
+    // Bind opaque-history compatibility to the endpoint/account used when each client was
+    // actually constructed, not a later live configuration lookup.
+    private val nmProviderRoutes = java.util.Collections.synchronizedMap(
+        java.util.WeakHashMap<LLMProvider, String>(),
+    )
+    private fun nmCreateProvider(instance: ProviderInstance, key: String, model: LLMModel): LLMProvider {
+        val snapshot = instance.copy()
+        val fingerprint = AutoModelStore.historyFingerprint(context, snapshot)
+        return ProviderFactory.create(snapshot, key, model, context).also { nmProviderRoutes[it] = fingerprint }
+    }
+
+    // nanoMuse: keep a refresh result private and bind it to the captured account/key.
+    private class NmOAuthChanged : Exception()
+    private class NmOAuthRefreshResult(
+        val oldKey: String?, val freshKey: String?, val snapshot: ProviderRepository.OAuthKeySnapshot,
+    )
+
+    private suspend fun nmGuardedOAuthRefresh(instance: ProviderInstance): NmOAuthRefreshResult {
+        val before = providerRepository.nmOAuthKeySnapshot(instance.id)
+        val manager = com.openminis.app.auth.OAuthManager.forInstance(context, instance)
+        val fresh = manager?.validAccessToken()
+        kotlin.coroutines.coroutineContext.ensureActive()
+        if (fresh == null) {
+            if (!providerRepository.nmOAuthKeyStillCurrent(before)) throw NmOAuthChanged()
+            return NmOAuthRefreshResult(before.key, null, before)
+        }
+        if (!providerRepository.nmSaveOAuthRefresh(before, fresh)) throw NmOAuthChanged()
+        val after = providerRepository.nmOAuthKeySnapshot(instance.id)
+        if (after.version != before.version || after.key != fresh) throw NmOAuthChanged()
+        kotlin.coroutines.coroutineContext.ensureActive()
+        return NmOAuthRefreshResult(before.key, fresh, after)
+    }
+
+    /** Parallel build: resolve by live entry, not concrete client (OwnTurns can wrap it). */
+    private suspend fun nmRefreshSelectedOAuth(client: LLMProvider): LLMProvider? {
+        // A changed selection cannot reuse the client captured by the older turn.
+        if (currentProvider !== client) return null
+        val session = realSessionId.ifEmpty { sessionId }
+        val entryId = _activeEntryId.value ?: return null
+        val config = providerRepository.config.value
+        val entry = config.modelEntries.find { it.id == entryId } ?: return null
+        val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return null
+        if (instance.providerType != ProviderType.anthropic || instance.credentialType != ProviderCredential.oauth) return client
+        // A client built for a previous account must not be reused just because
+        // the new account already has a fresh access token in the mirror.
+        if (nmRouteFingerprint(client) != AutoModelStore.historyFingerprint(context, instance)) return null
+        val route = AutoModelStore.routeFingerprint(instance)
+        val result = try {
+            nmGuardedOAuthRefresh(instance)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            nmLogPrivateFailure("OAuth token refresh failed", e)
+            return null
+        }
+        fun stillCurrent(): Boolean {
+            val live = providerRepository.config.value
+            val liveEntry = live.modelEntries.find { it.id == entryId } ?: return false
+            val liveInstance = live.instances.find { it.id == instance.id } ?: return false
+            return session == realSessionId.ifEmpty { sessionId } && currentProvider === client &&
+                _activeEntryId.value == entryId && liveEntry == entry &&
+                AutoModelStore.routeFingerprint(liveInstance) == route &&
+                nmRouteFingerprint(client) == AutoModelStore.historyFingerprint(context, liveInstance) &&
+                providerRepository.nmOAuthKeyStillCurrent(result.snapshot)
+        }
+        if (!stillCurrent()) return null
+        val fresh = result.freshKey ?: return client
+        if (fresh == result.oldKey) return client
+        val refreshed = try {
+            nmCreateProvider(instance, fresh, currentModel ?: client.model)
+        } catch (e: Exception) {
+            nmLogPrivateFailure("OAuth client update failed", e)
+            return null
+        }
+        if (!stillCurrent()) return null
+        currentProvider = refreshed
+        return refreshed
+    }
+
+    private fun nmOAuthChangedMessage() {
+        _error.value = context.getString(R.string.nm_auto_disabled_during_turn)
+    }
+
+    // nanoMuse: a mode is a request shape, never an authorization to use tools.
+    private val _nmProfileOverride = MutableStateFlow<Profile?>(null)
+    val nmProfileOverride: StateFlow<Profile?> = _nmProfileOverride.asStateFlow()
+    private val _nmActiveProfile = MutableStateFlow<Profile?>(null)
+    val nmActiveProfile: StateFlow<Profile?> = _nmActiveProfile.asStateFlow()
+    // nanoMuse: ephemeral diagnostic state contains only a classified error and HTTP number.
+    private val _nmDiagnosticOpen = MutableStateFlow(false)
+    val nmDiagnosticOpen: StateFlow<Boolean> = _nmDiagnosticOpen.asStateFlow()
+    private val _nmDiagnosticFailure = MutableStateFlow<ai.tama.diagnostics.DiagnosticReport.Failure?>(null)
+    internal val nmDiagnosticFailure = _nmDiagnosticFailure.asStateFlow()
+    fun nmDismissDiagnostic() { _nmDiagnosticOpen.value = false }
+    @Volatile private var nmPreviousRoute = SessionState()
+    // The person's preferred entry survives a temporary automatic switch in this session.
+    @Volatile private var nmPreferredAutoEntryId: String? = null
+
+    fun nmSetProfileOverride(profile: Profile?) {
+        _nmProfileOverride.value = profile
+    }
+
+    // nanoMuse: recognize the common PT-BR "faz uma imagem" form only in the parallel app.
+    private fun nmExplicitImageRequest(text: String): Boolean = ai.tama.router.ImageRequestIntent.explicit(
+        text, portugueseMake = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+    )
+
+    /** Reclassify a new user turn, including queued messages and attachments. */
+    private fun nmRouteLatest(): Route.Chat {
+        val user = agentHistory.lastOrNull { message ->
+            message.role == LLMMessage.Role.USER &&
+                !message.content.trimStart().startsWith("<system-reminder>") &&
+                (message.content.isNotBlank() || message.imageParts.isNotEmpty() ||
+                    message.contentParts.any { it is AgentContentPart.ImageData ||
+                        (it is AgentContentPart.Text && it.text.contains("<user-attached-files>")) })
+        }
+        return TurnRouter.route(
+            text = user?.content.orEmpty(),
+            session = nmPreviousRoute,
+            override = _nmProfileOverride.value,
+            hasImageAttachment = user?.let { message ->
+                message.imageParts.isNotEmpty() || message.contentParts.any { it is AgentContentPart.ImageData }
+            } == true,
+            hasFileAttachment = user?.contentParts?.any {
+                it is AgentContentPart.Text && it.text.contains("<user-attached-files>")
+            } == true,
+        )
+    }
+
+    /** No model inherits a different model's observed limit. Missing metadata stays unknown. */
+    private fun nmBudgetForEntry(entryId: String, modelId: String): ProviderBudget {
+        val config = providerRepository.config.value
+        val entry = config.modelEntries.find { it.id == entryId && it.model.id == modelId }
+            ?: return ProviderBudget()
+        val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return ProviderBudget()
+        val vendor = io.github.nanomuse.cloud.ProviderCatalogue.match(
+            io.github.nanomuse.cloud.ProviderCatalogue.load(context), instance,
+        )
+        val modelLimits = vendor?.models?.get(modelId)?.limits
+        val observedTpm = modelLimits?.freeTpm ?: vendor?.limits?.freeTpm
+        return ProviderBudget(
+            tokensPerMinute = ProviderBudgetStore.read(context, instance.id, observedTpm),
+            maxOutputTokens = modelLimits?.maxOutput ?: vendor?.limits?.maxOutput,
+        )
+    }
+
+    private fun nmBudgetFor(provider: LLMProvider): ProviderBudget =
+        if (this.currentProvider === provider) _activeEntryId.value?.let { nmBudgetForEntry(it, provider.model.id) }
+            ?: ProviderBudget() else ProviderBudget()
+
+    /** Unknown/one-off routes cannot assert compatibility of opaque history. */
+    private fun nmRouteFingerprint(provider: LLMProvider): String? = nmProviderRoutes[provider]
+
+    /** A temporary auto failover must not become the person's fixed manual choice. */
+    private fun nmRestorePreferredForManualSend(): Boolean {
+        val preferredId = nmPreferredAutoEntryId ?: return true
+        if (_activeEntryId.value == preferredId) return true
+        val groupId = _selectedGroupId.value
+        if (groupId != null) return resolveProviderFromGroup(groupId, preferredId)
+        val config = providerRepository.config.value
+        val entry = config.modelEntries.find { it.id == preferredId } ?: return false
+        val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return false
+        if (entry.isHidden || !instance.isEnabled || !instance.providerType.isUsable ||
+            !providerRepository.hasAnyCredential(instance)) return false
+        val client = runCatching {
+            nmCreateProvider(instance, providerRepository.usableApiKey(instance).orEmpty(), entry.model)
+        }.getOrNull() ?: return false
+        currentProvider = client
+        currentModel = entry.model
+        _activeEntryId.value = entry.id
+        _modelName.value = entry.model.displayName
+        _providerName.value = instance.label.ifEmpty { entry.model.provider }
+        return true
+    }
 
     // nanoMuse: model-scoped calibration survives Continue and process restart. The request
     // budget below is refreshed before each provider call, including model-group fallback.
     private val nmCalibrationStore by lazy { ContextCalibrationStore(context) }
+    // nanoMuse: remember a provider's confirmed smaller output cap by route and model.
+    private val nmOutputLimitStore by lazy { ai.tama.net.OutputLimitStore(context) }
     private var nmHistoryBudget: ContextBudget.Plan? = null
     private var nmHistoryCalibration = ContextEstimate.Calibration()
 
@@ -1224,8 +1460,8 @@ class ChatViewModel(
      * The cost is negligible — [AgentTools.makeAgentTools] just builds a
      * fixed list of definition objects, no I/O.
      */
-    private val agentTools: List<AgentToolDefinition>
-        get() = io.github.nanomuse.chat.PromptDiet.tools(AgentTools.makeAgentTools( // nanoMuse: browser_use worded densely (PromptDiet)
+    // nanoMuse: keep the original definitions available for count-only before/after diagnostics.
+    private fun originalAgentTools(model: LLMModel? = currentModel): List<AgentToolDefinition> = AgentTools.makeAgentTools(
             // [T-android-vision-group / GH#182] The main model's own vision
             // capability. When false but a Vision Group is configured, read_image
             // is still exposed and routes through the group (see
@@ -1234,12 +1470,16 @@ class ChatViewModel(
             // threading the real flag lets a text-only model without a Vision
             // Group correctly LOSE the tool (iOS parity), while a configured
             // Vision Group keeps it.
-            supportsImageInput = currentModelHasNativeVision,
+            supportsImageInput = model?.hasImageInput == true,
             visionGroupConfigured = com.openminis.app.tools.VisionGroupResolver.isConfigured(
                 providerRepository, context,
             ),
             memoryEnabled = _memoryEnabled.value,
-        ))
+        )
+
+    // nanoMuse: preserve the existing diet for all non-streaming callers, too.
+    private val agentTools: List<AgentToolDefinition>
+        get() = io.github.nanomuse.chat.PromptDiet.tools(originalAgentTools())
 
     /**
      * Per-session loop detector. Reset alongside [agentHistory] whenever the
@@ -1810,6 +2050,19 @@ class ChatViewModel(
             title = "Thinking",
             subtitle = "",
         ),
+        // nanoMuse: local profile commands change only subsequent request shapes.
+        SlashCommand(id = "leve", icon = Icons.Outlined.Build, title = "leve", subtitle = ""),
+        SlashCommand(id = "agente", icon = Icons.Outlined.Build, title = "agente", subtitle = ""),
+        SlashCommand(id = "auto", icon = Icons.Outlined.Build, title = "auto", subtitle = ""),
+        // nanoMuse: this opens a local preview, it never sends a chat turn.
+        SlashCommand(id = "diagnostico", icon = Icons.Outlined.Build, title = "diagnostico", subtitle = ""),
+        // nanoMuse: a local, zero-request measurement of the current prompt and tools.
+        SlashCommand(
+            id = "prompt-size",
+            icon = Icons.Outlined.Build,
+            title = "prompt-size",
+            subtitle = "",
+        ),
     )
 
     // [T-android-split-chat] filteredSlashCommands / updateSlashMenuState /
@@ -1871,6 +2124,11 @@ class ChatViewModel(
             "memory" -> toggleMemoryEnabled()
             "thinking" -> toggleThinking()
             "clear" -> _clearChatConfirmRequested.value = true
+            "leve" -> nmSetProfileOverride(Profile.LEAN) // nanoMuse: local, no model request
+            "agente" -> nmSetProfileOverride(Profile.BASIC)
+            "auto" -> nmSetProfileOverride(null)
+            "diagnostico" -> _nmDiagnosticOpen.value = true // nanoMuse: preview only, no model call.
+            "prompt-size" -> nmShowPromptSize() // nanoMuse: no model call, private text stays local.
             else -> AppLogger.info(TAG, "[Slash] unrecognized id=${cmd.id} — no dispatch")
         }
         // [T-android-slash-menu-align-ios-prepend] Action command: restore the
@@ -1966,6 +2224,11 @@ class ChatViewModel(
      * `/` while a CJK keyboard layout is active. We treat them identically.
      */
     fun tryExecuteInputAsSlashCommand(text: String): Boolean {
+        // nanoMuse: the exact local diagnostic command never enters the normal send path.
+        if (ai.tama.diagnostics.DiagnosticCommand.matches(text)) {
+            executeSlashCommand(availableSlashCommands.first { it.id == "diagnostico" })
+            return true
+        }
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return false
         val first = trimmed[0]
@@ -1999,6 +2262,68 @@ class ChatViewModel(
             content = "",
             toolBlocks = listOf(block),
         )
+    }
+
+    // nanoMuse: /prompt-size is a local snapshot, not a message to the model or a general log.
+    private fun nmShowPromptSize() {
+        if (_isStreaming.value || _isCompacting.value) {
+            appendSystemInfo(context.getString(R.string.nm_prompt_size_busy), "info")
+            return
+        }
+        val requestedSession = activeSessionId
+        viewModelScope.launch(Dispatchers.IO) {
+            val report = runCatching {
+                var sections: List<PromptSize.Measure<PromptSize.Section>>? = null
+                var input: PromptProfiles.Input? = null
+                var imageReady: Boolean? = null
+                buildSystemPrompt(
+                    onSnapshot = { input = it },
+                    onMeasured = { measured, image -> sections = measured; imageReady = image },
+                )
+                val before = originalAgentTools()
+                val tools = PromptSize.tools(before, io.github.nanomuse.chat.PromptDiet.tools(before))
+                val names = context.getString(R.string.nm_prompt_size_section_names).split('|')
+                buildString {
+                    appendLine(context.getString(R.string.nm_prompt_size_explanation))
+                    appendLine()
+                    appendLine(context.getString(R.string.nm_prompt_size_system))
+                    for (row in checkNotNull(sections)) {
+                        val label = names.getOrElse(row.label.ordinal) { row.label.name }
+                        appendLine("$label: ${row.beforeChars} → ${row.afterChars} (~${row.beforeTokens} → ~${row.afterTokens})")
+                    }
+                    appendLine()
+                    appendLine(context.getString(R.string.nm_prompt_size_tools))
+                    for (row in tools) {
+                        val label = row.label.name.lowercase(java.util.Locale.ROOT)
+                        appendLine("$label: ${row.beforeChars} → ${row.afterChars} (~${row.beforeTokens} → ~${row.afterTokens})")
+                    }
+                    // nanoMuse: profile totals use the current snapshot and last turn's hints;
+                    // they are estimates only and do not include history, images or output.
+                    appendLine()
+                    appendLine(context.getString(R.string.nm_router_profile_totals))
+                    for (profile in Profile.entries) {
+                        val hints = nmPreviousRoute.previousHints
+                        val built = PromptProfiles.build(profile, checkNotNull(input), hints)
+                        val schemas = PromptProfiles.tools(profile, before, hints)
+                        val chars = built.prompt.length + PromptSize.tools(emptyList(), schemas).last().afterChars
+                        appendLine("${profile.name}: $chars (~${PromptSize.estimateTokens(chars)})")
+                    }
+                    appendLine()
+                    append(context.getString(when (imageReady) {
+                        true -> R.string.nm_prompt_size_image_yes
+                        false -> R.string.nm_prompt_size_image_no
+                        null -> R.string.nm_prompt_size_image_unknown
+                    }))
+                }
+            }
+            withContext(Dispatchers.Main) {
+                if (activeSessionId != requestedSession) return@withContext
+                report.fold(
+                    onSuccess = { appendSystemInfo(context.getString(R.string.nm_prompt_size_title), "prompt_size", payload = it) },
+                    onFailure = { appendSystemInfo(context.getString(R.string.nm_prompt_size_failed), "info") },
+                )
+            }
+        }
     }
 
     /**
@@ -2100,6 +2425,11 @@ class ChatViewModel(
         markStarted: () -> Unit,
     ) {
         AppLogger.info(TAG, "[Compact] compactAll() invoked streaming=${_isStreaming.value} compacting=${_isCompacting.value} historySize=${agentHistory.size} anchorOverride=$anchorIdxOverride inLoop=$allowDuringProcessing")
+        // nanoMuse: implicit in-loop summaries are separate billable requests.
+        if (allowDuringProcessing && !ai.tama.router.AutomaticCostGuard.permits(context)) {
+            appendSystemInfo(context.getString(R.string.nm_auto_reason_unverified_cost), "compact")
+            return
+        }
         if (_isStreaming.value && !allowDuringProcessing) {
             AppLogger.info(TAG, "[Compact] aborted: stream in progress")
             appendSystemInfo(
@@ -2250,6 +2580,8 @@ class ChatViewModel(
                         previousSummary = existing,
                         depth = 0,
                         summaryProvider = provider,
+                        // nanoMuse: revalidate the cost guard before every implicit leaf call.
+                        automaticCostGuarded = allowDuringProcessing,
                         // nanoMuse: Continue reminders carry no new task and cannot replace
                         // the actual latest user request when constructing a checkpoint.
                         activeTask = if (allowDuringProcessing) history.lastOrNull(ContextTurns::isUserRequest)
@@ -2398,6 +2730,16 @@ class ChatViewModel(
                     )
                 }
                 compactSucceeded = true
+            } catch (_: AutomaticCompactionCostBlocked) {
+                // nanoMuse: do not split or retry when the person restored the cost guard.
+                withContext(Dispatchers.Main) {
+                    appendSystemInfo(context.getString(R.string.nm_auto_reason_unverified_cost), "compact")
+                }
+            } catch (_: ai.tama.pricing.ModelCostGuard.Blocked) {
+                // nanoMuse: manual summaries are separate model calls too.
+                withContext(Dispatchers.Main) {
+                    appendSystemInfo(context.getString(R.string.nm_model_cost_blocked), "compact")
+                }
             } catch (e: CompactSummaryIdleTimeoutException) {
                 // nanoMuse: distinguish a silent stream from the absolute run deadline.
                 timedOut = true
@@ -2449,10 +2791,13 @@ class ChatViewModel(
                 }
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Compact failed", e)
+                // nanoMuse: a provider exception can echo chat text or credentials.
+                val parallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+                if (parallel) Log.w(TAG, "Compaction failed") else Log.w(TAG, "Compact failed", e)
                 withContext(Dispatchers.Main) {
                     appendSystemInfo(
-                        text = "Compaction failed: ${e.message ?: e.javaClass.simpleName}",
+                        text = if (parallel) context.getString(R.string.nm_error_private_generic)
+                            else "Compaction failed: ${e.message ?: e.javaClass.simpleName}",
                         iconKind = "compact",
                     )
                 }
@@ -3103,12 +3448,16 @@ class ChatViewModel(
      * for why the extra round-trip was removed. Both platforms must keep this
      * the same, or the summary a session carries differs by device.
      */
+    // nanoMuse: a policy refusal is not a provider-size error and must never split.
+    private class AutomaticCompactionCostBlocked : Exception()
+
     private suspend fun generateCompactSummaryWithSplitting(
         messages: List<LLMMessage>,
         previousSummary: String? = null,
         depth: Int = 0,
         summaryProvider: LLMProvider,
         activeTask: String?,
+        automaticCostGuarded: Boolean,
     ): String {
         // nanoMuse: keep the previous checkpoint and current task explicit at every split.
         val conversationText = CompactSummary.userMessage(
@@ -3131,10 +3480,17 @@ class ChatViewModel(
             callsIssued = spent,
         )
         return try {
-            generateCompactSummary(conversationText, summaryProvider, activeTask != null)
+            generateCompactSummary(conversationText, summaryProvider, activeTask != null, automaticCostGuarded)
         } catch (e: CancellationException) {
+            // nanoMuse: preserve caller cancellation; otherwise unwrap a local flow refusal.
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            ai.tama.pricing.ModelCostGuard.blockedCause(e)?.let { throw it }
+            throw e
+        } catch (e: AutomaticCompactionCostBlocked) {
             throw e
         } catch (e: Exception) {
+            // nanoMuse: do not split a locally blocked cost into more requests.
+            ai.tama.pricing.ModelCostGuard.blockedCause(e)?.let { throw it }
             if (!isSegmentRetryableError(e) || messages.size < 2 || depth >= 3) {
                 throw e
             }
@@ -3158,10 +3514,10 @@ class ChatViewModel(
             // nanoMuse: feed the first checkpoint into the second segment, preserving
             // previous summaries without duplicating them or spending an extra merge call.
             val summary1 = generateCompactSummaryWithSplitting(
-                firstHalf, previousSummary, depth + 1, summaryProvider, activeTask,
+                firstHalf, previousSummary, depth + 1, summaryProvider, activeTask, automaticCostGuarded,
             )
             generateCompactSummaryWithSplitting(
-                secondHalf, summary1, depth + 1, summaryProvider, activeTask,
+                secondHalf, summary1, depth + 1, summaryProvider, activeTask, automaticCostGuarded,
             )
         }
     }
@@ -3176,6 +3532,7 @@ class ChatViewModel(
         userMessage: String,
         provider: LLMProvider,
         hasActiveTask: Boolean,
+        automaticCostGuarded: Boolean,
     ): String {
         val prompt = CompactSummary.systemPrompt(hasActiveTask)
         val messages = listOf(LLMMessage(LLMMessage.Role.USER, userMessage))
@@ -3185,6 +3542,9 @@ class ChatViewModel(
         val maxOut = io.github.nanomuse.chat.CompactSummaryBudget.outputTokens(
             input, window, provider.effectiveMaxOutputTokens(provider.model),
         )
+        // nanoMuse: policy may change after preparing or between split summaries.
+        if (automaticCostGuarded && !ai.tama.router.AutomaticCostGuard.permits(context))
+            throw AutomaticCompactionCostBlocked()
         return CompactSummary.collect(provider.streamMessage(
             messages = messages,
             systemPrompt = prompt,
@@ -3308,6 +3668,7 @@ class ChatViewModel(
      * up. Mirrors iOS `pendingSendText` / `pendingSendAttachments`.
      */
     private var pendingSendText: String? = null
+    private var pendingSendPetGeneration: Long? = null // nanoMuse: keep the submitting Pet through compaction.
 
     private val _showCompactBeforeSendPrompt = MutableStateFlow(false)
     val showCompactBeforeSendPrompt: StateFlow<Boolean> = _showCompactBeforeSendPrompt.asStateFlow()
@@ -3322,9 +3683,11 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         val text = pendingSendText ?: return
         pendingSendText = null
+        val petGeneration = pendingSendPetGeneration // nanoMuse: retain the original Pet across compaction.
+        pendingSendPetGeneration = null // nanoMuse
         // nanoMuse: the outgoing-request guard performs one bounded attempt after the new
         // message is saved. A pre-send failure must not start the same attempt again (#719).
-        sendMessage(text, skipContextCheck = true)
+        sendMessage(text, skipContextCheck = true, petGeneration = petGeneration)
     }
 
     /** Dialog action: send without compacting. */
@@ -3332,7 +3695,9 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         val text = pendingSendText ?: return
         pendingSendText = null
-        sendMessage(text, skipContextCheck = true)
+        val petGeneration = pendingSendPetGeneration // nanoMuse
+        pendingSendPetGeneration = null // nanoMuse
+        sendMessage(text, skipContextCheck = true, petGeneration = petGeneration)
     }
 
     /** Dialog dismissed — restore the text to the composer so it isn't lost. */
@@ -3340,6 +3705,7 @@ class ChatViewModel(
         _showCompactBeforeSendPrompt.value = false
         pendingSendText?.let { _inputText.value = it }
         pendingSendText = null
+        pendingSendPetGeneration = null // nanoMuse
     }
 
     // nanoMuse: local trims precede summaries, and an early failure can still leave room.
@@ -3349,9 +3715,17 @@ class ChatViewModel(
         measureContextTokens: () -> Int,
         measureRawTokens: () -> Int,
         prepareAfterSummary: suspend () -> Unit,
+        allowAutomaticCompaction: Boolean = true,
     ): ContextMaintenance.Action {
         val wasDeferred = maintenance.softDeferred
         val action = maintenance.check(budget, measureContextTokens, measureRawTokens) { tokens, attempt ->
+            // Compaction has its own provider call and has not yet been wired to the
+            // auto-mode consent/reservation gate. Defer instead of making an untracked call.
+            if (!allowAutomaticCompaction) return@check false
+            if (!ai.tama.router.AutomaticCostGuard.permits(context)) {
+                if (attempt == 1) appendSystemInfo(context.getString(R.string.nm_auto_reason_unverified_cost), "compact")
+                return@check false
+            }
             AppLogger.info(TAG, "[AutoCompact] attempt=$attempt estimated=$tokens " +
                 "window=${budget.window} hardLimit=${budget.hardLimit}")
             appendSystemInfo(
@@ -3457,6 +3831,23 @@ class ChatViewModel(
 
     init {
         loadSession()
+        // Wait until restored rows are installed, then drain for publications and
+        // draft promotion. These local notices never enter the model's history.
+        viewModelScope.launch {
+            sessionLoaded.first { it }
+            ai.tama.media.AutoImageNotices.forSessions(nmDisplayedSessionId).collect { notices ->
+                notices.forEach { notice ->
+                    val id = "nm_auto_image_${java.util.UUID.randomUUID()}"
+                    val block = AssistantBlock(
+                        id = id, kind = "info", toolName = "info",
+                        content = context.getString(R.string.nm_auto_image_used, notice.model, notice.provider),
+                    )
+                    _messages.value = _messages.value + ChatMessage(
+                        id = id, role = "system", content = "", toolBlocks = listOf(block),
+                    )
+                }
+            }
+        }
         // nanoMuse: rows synced from the account's other devices land in this chat while it is
         // open — reloaded from the database between turns, never under a running one; what
         // arrives during a turn is shown the moment the turn ends (C8: no reload by hand).
@@ -3476,7 +3867,7 @@ class ChatViewModel(
                 if (!streaming) io.github.nanomuse.sync.ConversationSync.turnEnded(realSessionId.ifEmpty { sessionId })
                 // …and the record hears how it ended, when it ended short (TurnFeedback: a Stop was told at the Stop);
                 // only a turn that ran here counts, not the flag's first value when the chat opens
-                if (!streaming && nmWasStreaming) io.github.nanomuse.ui.feedback.TurnFeedback.turnEnded(realSessionId.ifEmpty { sessionId }, errored = _messages.value.lastOrNull()?.let { it.role == "assistant" && !it.error.isNullOrBlank() } == true)
+                if (!streaming && nmWasStreaming) io.github.nanomuse.ui.feedback.TurnFeedback.turnEnded(realSessionId.ifEmpty { sessionId }, errored = _messages.value.lastOrNull { !it.id.startsWith("nm_auto_image_") }?.let { it.role == "assistant" && !it.error.isNullOrBlank() } == true)
                 nmWasStreaming = streaming
                 if (!streaming && nmPulledWhileStreaming) {
                     // a breath after the end: the turn's last rows are still being written
@@ -3624,6 +4015,9 @@ class ChatViewModel(
                 // untouched (it has no in-group alternative to fall back to).
                 val groupBound = _selectedGroupId.value
                 val activeEntry = _activeEntryId.value
+                // An automatic turn may temporarily use an approved entry outside the
+                // group; the per-dispatch router rechecks availability and consent.
+                val autoSelectionEnabled = AutoModelStore.enabled(context)
                 // nanoMuse: a member taken out of the bound group reaches the chats already
                 // open, too. Upstream re-resolved only when the member's provider was
                 // disabled; a group edited in Settings (the Cloud card's "Change": the
@@ -3633,7 +4027,7 @@ class ChatViewModel(
                 // deepseek-v4.1-flash kept talking to qwen3.8-27b and could not tell why.
                 val leftGroup = groupBound != null && activeEntry != null &&
                     config.modelGroups.firstOrNull { it.id == groupBound }?.memberEntryIds?.contains(activeEntry) == false
-                if (currentProvider != null && groupBound != null && activeEntry != null &&
+                if (!autoSelectionEnabled && currentProvider != null && groupBound != null && activeEntry != null &&
                     config.modelEntries.isNotEmpty() &&
                     (leftGroup || !providerRepository.isEntryProviderEnabled(activeEntry))
                 ) {
@@ -3672,10 +4066,10 @@ class ChatViewModel(
                 } else {
                     null
                 }
-                if (pinned != null && io.github.nanomuse.cloud.NanoMuseCloud.owns(context, pinned)) {
+                if (!autoSelectionEnabled && pinned != null && io.github.nanomuse.cloud.NanoMuseCloud.owns(context, pinned)) {
                     val cloudGroup = providerRepository.defaultPrimaryGroupId
                         ?.let { id -> config.modelGroups.firstOrNull { it.id == id } }
-                        ?.takeIf { it.name == io.github.nanomuse.cloud.NanoMuseCloud.LABEL && pinned.id !in it.memberEntryIds }
+                        ?.takeIf { io.github.nanomuse.cloud.NanoMuseCloud.ownsGroup(it.name) && pinned.id !in it.memberEntryIds }
                     if (cloudGroup != null && resolveProviderFromGroup(cloudGroup.id)) {
                         _selectedGroupId.value = cloudGroup.id
                         AppLogger.info(
@@ -3692,7 +4086,7 @@ class ChatViewModel(
                 // and spending, on it; upstream re-resolves group bindings only. Drop the
                 // provider so the default chain below runs; restoreFromBinding refuses the
                 // pin too, so a reload cannot bring it back.
-                if (pinned != null && currentProvider != null && !providerRepository.isEntryProviderEnabled(pinned.id)) {
+                if (!autoSelectionEnabled && pinned != null && currentProvider != null && !providerRepository.isEntryProviderEnabled(pinned.id)) {
                     AppLogger.info(TAG, "🔀RESOLVE pinned entry=${pinned.id} provider disabled — falling back to the default")
                     currentProvider = null
                 }
@@ -3772,8 +4166,20 @@ class ChatViewModel(
     // nanoMuse: called only after device authentication, never persist protection against a draft key.
     suspend fun ensureSessionForProtection(): String = ensureSession()
 
-    private suspend fun ensureSession(): String {
-        if (realSessionId.isNotEmpty()) return realSessionId
+    // nanoMuse: bind the generated id before insertion, not after all draft migration work.
+    private fun nmBindPromotedSession(id: String, owner: Job?) {
+        if (owner != null) {
+            if (!ai.tama.chat.ChatSessionJobs.bindPromoted(id, owner)) throw CancellationException("Chat session was cleared")
+            owner.ensureActive()
+        }
+    }
+
+    private suspend fun ensureSession(promotionOwner: Job? = null): String {
+        val existingId = realSessionId
+        if (existingId.isNotEmpty()) {
+            nmBindPromotedSession(existingId, promotionOwner) // nanoMuse
+            return existingId
+        }
         val modelId = currentModel?.id ?: providerRepository.allVisibleEntries().firstOrNull()?.model?.id ?: "unknown"
         // [T-memory-global-toggle-settings-ui-android] Snapshot the
         // current in-memory `_memoryEnabled` into the new row. For a
@@ -3783,7 +4189,9 @@ class ChatViewModel(
         val session = chatRepository.createSession(
             modelId = modelId,
             memoryEnabled = _memoryEnabled.value,
+            beforeInsert = if (promotionOwner == null) null else { id -> nmBindPromotedSession(id, promotionOwner) }, // nanoMuse
         )
+        if (promotionOwner != null) promotionOwner.ensureActive() // nanoMuse: insertion may have suspended.
         realSessionId = session.id
         // "New Chat in Group": file the just-promoted draft into its folder.
         // Unconditional (vs iOS setFolderIfUnfiled) — the session is seconds
@@ -4005,7 +4413,7 @@ class ChatViewModel(
                         // nanoMuse: `&& instance.isEnabled`, so a remembered model on a provider
                         // switched off since (the Cloud instance) falls back to the default.
                         if (providerRepository.hasAnyCredential(instance) && instance.isEnabled) {
-                            currentProvider = ProviderFactory.create(instance, apiKey, entry.model, context)
+                            currentProvider = nmCreateProvider(instance, apiKey, entry.model)
                             _providerName.value = instance.label.ifEmpty { entry.model.provider }
                             resolved = true
                             // No binding row (e.g. a synced session that only
@@ -4196,7 +4604,8 @@ class ChatViewModel(
             // out every UI message that falls before the marker's boundary —
             // mirrors iOS Phase 2.5 restore (AIChatViewModel.swift:3360+).
             val marker = runCatching { chatRepository.dao.latestCompactMarker(sessionId) }
-                .onFailure { Log.w(TAG, "latestCompactMarker failed: ${it.message}") }
+                // nanoMuse: database errors may include stored text or paths.
+                .onFailure { nmLogPrivateFailure("latestCompactMarker failed", it) }
                 .getOrNull()
             _compactSummary.value = marker?.summary
             _cachedLatestMarker = marker
@@ -4212,7 +4621,7 @@ class ChatViewModel(
             // session's enlarged cap (set via loadOlderMessages), defeating
             // the windowing intent on the first paint of every new session.
             _visibleMessageCap.value = INITIAL_VISIBLE_MESSAGE_CAP
-            _messages.value = if (marker == null) {
+            val restoredMessages = if (marker == null) {
                 ordered
             } else {
                 // Phase 2.5: build the historyDbIds set used by the
@@ -4226,6 +4635,9 @@ class ChatViewModel(
                 }
                 applyCompactMarkerGraying(ordered, marker, loaded.messages, historyDbIds)
             }
+            // A remote-row refresh or compact reload must not erase an image
+            // attribution that was already drained from the in-memory queue.
+            _messages.value = restoredMessages + _messages.value.filter { it.id.startsWith("nm_auto_image_") }
             nmSeedFirstConversation() // nanoMuse: re-seat the virtual opening in the session it belongs to
 
             // Cold-start interrupt detection: an agent loop that was killed by
@@ -4510,7 +4922,8 @@ class ChatViewModel(
         // renders against the in-memory healed pointer.
         if (healedMarker != null) {
             runCatching { chatRepository.dao.updateCompactMarker(healedMarker) }
-                .onFailure { Log.w(TAG, "updateCompactMarker (self-heal) failed: ${it.message}") }
+                // nanoMuse: database errors may include stored text or paths.
+                .onFailure { nmLogPrivateFailure("updateCompactMarker (self-heal) failed", it) }
             // Refresh in-memory cache so effectiveAgentHistory and the
             // next compact pass see the upgraded marker. The caller
             // (loadSession) sets _cachedLatestMarker = marker BEFORE
@@ -4610,6 +5023,30 @@ class ChatViewModel(
         )
     }
 
+    /** Restore a previously successful automatic route without losing the preferred group. */
+    private fun restoreAutomaticOutsideGroup(groupId: String, entryId: String): Boolean {
+        if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test" ||
+            !AutoModelStore.enabled(context) || !ai.tama.router.AutomaticCostGuard.permits(context)) return false
+        val config = providerRepository.config.value
+        val group = config.modelGroups.find { it.id == groupId } ?: return false
+        if (entryId in group.memberEntryIds) return false
+        val entry = config.modelEntries.find { it.id == entryId } ?: return false
+        val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return false
+        if (!ai.tama.router.GroupFallback.eligible(entry.isHidden, instance.isEnabled,
+                instance.providerType.isUsable, providerRepository.hasAnyCredential(instance),
+                AutoModelStore.approved(context, AutoModelStore.identity(entry, instance)))) return false
+        val client = runCatching {
+            nmCreateProvider(instance, providerRepository.usableApiKey(instance).orEmpty(), entry.model)
+        }.getOrNull() ?: return false
+        currentProvider = client
+        currentModel = entry.model
+        _activeEntryId.value = entry.id
+        _modelName.value = entry.model.displayName
+        _providerName.value = instance.label.ifEmpty { entry.model.provider }
+        _selectedGroupName.value = group.name
+        return true
+    }
+
     /** Restore provider state from a JSON binding string. Returns true if successfully resolved. */
     private fun restoreFromBinding(bindingJson: String?): Boolean {
         bindingJson ?: return false
@@ -4619,8 +5056,20 @@ class ChatViewModel(
                 "group" -> {
                     val groupId = obj.optString("groupId").takeIf { it.isNotEmpty() } ?: return false
                     val lastEntryId = obj.optString("lastEntryId").takeIf { it.isNotEmpty() }
-                    val resolved = resolveProviderFromGroup(groupId, lastEntryId)
-                    if (resolved) _selectedGroupId.value = groupId
+                    val parallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+                    val outside = parallel && obj.optBoolean("autoFallback", false) && lastEntryId != null &&
+                        restoreAutomaticOutsideGroup(groupId, lastEntryId)
+                    val resolved = outside || resolveProviderFromGroup(groupId, lastEntryId)
+                    if (resolved) {
+                        _selectedGroupId.value = groupId
+                        if (parallel) {
+                            val group = providerRepository.group(groupId)
+                            nmPreferredAutoEntryId = obj.optString("preferredEntryId").takeIf {
+                                it.isNotBlank() && it in group?.memberEntryIds.orEmpty()
+                            } ?: _activeEntryId.value?.takeIf { it in group?.memberEntryIds.orEmpty() }
+                                ?: group?.memberEntryIds?.firstOrNull()
+                        }
+                    }
                     resolved
                 }
                 "entry" -> {
@@ -4641,7 +5090,10 @@ class ChatViewModel(
                     _selectedGroupId.value = null
                     _selectedGroupName.value = ""
                     _activeEntryId.value = entry.id
-                    currentProvider = ProviderFactory.create(instance, apiKey, entry.model, context)
+                    if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                        nmPreferredAutoEntryId = entry.id
+                    }
+                    currentProvider = nmCreateProvider(instance, apiKey, entry.model)
                     true
                 }
                 else -> false
@@ -4710,7 +5162,7 @@ class ChatViewModel(
         _providerName.value = instance.label.ifEmpty { targetEntry.model.provider }
         _selectedGroupName.value = group.name
         _activeEntryId.value = targetEntry.id
-        currentProvider = ProviderFactory.create(instance, apiKey, targetEntry.model, context)
+        currentProvider = nmCreateProvider(instance, apiKey, targetEntry.model)
         return true
     }
 
@@ -4719,6 +5171,7 @@ class ChatViewModel(
         _selectedGroupName.value = providerRepository.group(groupId)?.name ?: ""
         val resolved = resolveProviderFromGroup(groupId)
         if (resolved) {
+            nmPreferredAutoEntryId = _activeEntryId.value
             persistBinding("""{"type":"group","groupId":"$groupId"}""")
             applyGroupSessionDefaults(groupId)
         }
@@ -4730,6 +5183,7 @@ class ChatViewModel(
         _selectedGroupName.value = providerRepository.group(groupId)?.name ?: ""
         val resolved = resolveProviderFromGroup(groupId, entryId)
         if (resolved) {
+            nmPreferredAutoEntryId = _activeEntryId.value
             persistBinding("""{"type":"group","groupId":"$groupId","lastEntryId":"$entryId"}""")
             applyGroupSessionDefaults(groupId)
             // [T-newchat-default-model-fallback-android] Record the actually-
@@ -4794,7 +5248,7 @@ class ChatViewModel(
         // UI but left currentProvider null, and the first send failed.
         if (providerRepository.hasAnyCredential(instance)) {
             val apiKey = providerRepository.usableApiKey(instance) ?: ""
-            currentProvider = ProviderFactory.create(instance, apiKey, entry.model, context)
+            currentProvider = nmCreateProvider(instance, apiKey, entry.model)
         }
         return true
     }
@@ -4816,7 +5270,8 @@ class ChatViewModel(
         _selectedGroupId.value = null
         _selectedGroupName.value = ""
         _activeEntryId.value = entry.id
-        currentProvider = ProviderFactory.create(instance, apiKey, entry.model, context)
+        nmPreferredAutoEntryId = entry.id
+        currentProvider = nmCreateProvider(instance, apiKey, entry.model)
         persistBinding("""{"type":"entry","entryId":"$entryId"}""")
         // [T-newchat-default-model-fallback-android] Remember this as the
         // global last-used model so the NEXT new chat (when no default group
@@ -4828,7 +5283,12 @@ class ChatViewModel(
     private fun persistBinding(bindingJson: String) {
         val sid = realSessionId.takeIf { it.isNotEmpty() } ?: return
         val modelId = currentModel?.id ?: return
-        viewModelScope.launch {
+        // nanoMuse: register the parallel write now, rather than when a launched coroutine runs.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            chatRepository.nmEnqueueSessionBinding(sid, bindingJson, modelId).invokeOnCompletion { error ->
+                if (error != null && error !is CancellationException) Log.w(TAG, "Model selection could not be saved")
+            }
+        } else viewModelScope.launch {
             chatRepository.updateSessionBinding(sid, bindingJson, modelId)
         }
     }
@@ -4857,6 +5317,9 @@ class ChatViewModel(
     private data class FallbackCandidate(
         val provider: LLMProvider,
         val entryId: String,
+        // nanoMuse: these snapshots are populated only for the parallel build.
+        val groupId: String? = null,
+        val accountVersion: Long? = null,
     )
 
     private fun buildFallbackProviders(primaryProvider: LLMProvider): List<FallbackCandidate> {
@@ -4874,25 +5337,62 @@ class ChatViewModel(
                 config.modelEntries.find { it.id == entryId }?.model?.id == primaryProvider.model.id
             }
         val result = mutableListOf<FallbackCandidate>()
-        // Iterate starting from the entry AFTER the primary, cycling around
-        for (offset in 1 until members.size) {
+        val parallelTest = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        val legacyOrder = (1 until members.size).map { offset ->
             val idx = if (currentIdx >= 0) (currentIdx + offset) % members.size else offset
-            val entryId = members[idx]
+            members[idx]
+        }
+        val orderedIds = if (parallelTest) {
+            // nanoMuse: use entry identity, not model ID, even when the active entry
+            // is outside the group. Every candidate still requires cost consent below.
+            ai.tama.router.GroupFallback.candidates(members, activeEntry)
+        } else legacyOrder
+        for (entryId in orderedIds) {
             val entry = config.modelEntries.find { it.id == entryId } ?: continue
             val instance = config.instances.find { it.id == entry.providerInstanceId } ?: continue
-            if (!instance.isEnabled) continue
-            // [T-android-group-resolve-skip-uncredentialed] Credential test via
-            // hasAnyCredential so an OAuth-logged-in provider is kept as a
-            // fallback candidate; usableApiKey alone reads only the API-key
-            // slot and dropped every OAuth member from the chain.
-            if (!providerRepository.hasAnyCredential(instance)) continue
+            // Credential test via hasAnyCredential also preserves OAuth members.
+            val credentialed = providerRepository.hasAnyCredential(instance)
+            if (parallelTest) {
+                // nanoMuse: membership in a group is not permission to incur an
+                // unknown or paid charge. The existing confirmation is per route.
+                val approved = AutoModelStore.approved(context, AutoModelStore.identity(entry, instance))
+                if (!ai.tama.router.GroupFallback.eligible(entry.isHidden, instance.isEnabled,
+                        instance.providerType.isUsable, credentialed, approved) ||
+                    !ai.tama.router.AutomaticCostGuard.permits(context)) continue
+            } else if (!instance.isEnabled || !credentialed) continue
+            val accountVersion = if (parallelTest) AutoModelRuntime.accountVersion(instance.id) else null
             val apiKey = providerRepository.usableApiKey(instance) ?: ""
             val p = try {
-                ProviderFactory.create(instance, apiKey, entry.model, context)
+                nmCreateProvider(instance, apiKey, entry.model)
             } catch (_: Exception) { continue }
-            result.add(FallbackCandidate(provider = p, entryId = entry.id))
+            result.add(FallbackCandidate(provider = p, entryId = entry.id,
+                groupId = if (parallelTest) groupId else null, accountVersion = accountVersion))
         }
         return result
+    }
+
+    /** A group can be edited while a failed request is waiting to retry. */
+    private fun nmFallbackStillEligible(candidate: FallbackCandidate): Boolean {
+        // nanoMuse: a previously approved group member is not price evidence;
+        // the person may also have restored the automatic-cost guard meanwhile.
+        if (!ai.tama.router.AutomaticCostGuard.permits(context)) return false
+        val config = providerRepository.config.value
+        val groupId = _selectedGroupId.value ?: return false
+        if (candidate.groupId != groupId) return false
+        val group = config.modelGroups.find { it.id == groupId } ?: return false
+        val entry = config.modelEntries.find { it.id == candidate.entryId } ?: return false
+        val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return false
+        return ai.tama.router.GroupFallback.eligible(
+            hidden = entry.isHidden,
+            enabled = instance.isEnabled,
+            usable = instance.providerType.isUsable,
+            credentialed = providerRepository.hasAnyCredential(instance),
+            authorized = AutoModelStore.approved(context, AutoModelStore.identity(entry, instance)),
+            stillMember = entry.id in group.memberEntryIds,
+            sameModel = entry.model == candidate.provider.model,
+            sameRoute = nmRouteFingerprint(candidate.provider) == AutoModelStore.historyFingerprint(context, instance),
+            sameAccount = candidate.accountVersion == AutoModelRuntime.accountVersion(instance.id),
+        )
     }
 
     /**
@@ -4919,6 +5419,13 @@ class ChatViewModel(
                 // routing filter, or a provider the user IS signed into gets
                 // reported as "Not logged in".
                 !providerRepository.hasAnyCredential(instance) -> "Not logged in"
+                // nanoMuse: explain why the parallel fallback skipped a configured member.
+                com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+                    !AutoModelStore.approved(context, AutoModelStore.identity(entry, instance)) ->
+                    context.getString(R.string.nm_auto_reason_consent)
+                com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+                    !ai.tama.router.AutomaticCostGuard.permits(context) ->
+                    context.getString(R.string.nm_auto_reason_unverified_cost)
                 else -> continue
             }
             result.add("⚠️ ${entry.model.displayName} ($label): $reason")
@@ -4955,7 +5462,7 @@ class ChatViewModel(
             currentModel = entry.model
             _modelName.value = entry.model.displayName
             _activeEntryId.value = entry.id
-            val provider = ProviderFactory.create(instance, apiKey, entry.model, context)
+            val provider = nmCreateProvider(instance, apiKey, entry.model)
             currentProvider = provider
             return provider
         }
@@ -4976,6 +5483,8 @@ class ChatViewModel(
     fun clearChat() {
         if (_isStreaming.value) cancelStream()
         val sid = activeSessionId
+        // End both kinds of session approval before erasing the conversation.
+        OffloadPermissionManager.clearSessionGrants(sid)
         io.github.nanomuse.guard.Grants.clearSession(sid) // nanoMuse: "allow for this chat" ends with the chat
         // T-streaming-side-channel: ensure no stale stream delta survives a
         // session wipe; the messages list is about to be cleared, so any
@@ -4987,6 +5496,10 @@ class ChatViewModel(
         // Memory state — match iOS clearChat() field list one-for-one.
         _messages.value = emptyList()
         agentHistory.clear()
+        nmPreviousRoute = SessionState() // nanoMuse: a cleared chat has no prior tool turn
+        _nmActiveProfile.value = null
+        _nmDiagnosticFailure.value = null // nanoMuse: forget the classified failure with the chat.
+        _nmDiagnosticOpen.value = false
         _error.value = null
         _cachedLatestMarker = null
         toolLoopDetector.reset()
@@ -5197,9 +5710,15 @@ class ChatViewModel(
         AppLogger.info(TAG_STREAM, "rerunFromToolBlock _isStreaming=true (sync, sid=$activeSessionId)")
         _isStreaming.value = true
 
-        viewModelScope.launch {
+        // nanoMuse: reserve setup before dispatch, so Stop/deletion can retire it before a slot exists.
+        ai.tama.chat.ChatSetupLaunch.launch(
+            viewModelScope, activeSessionId,
+            enabled = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+            onOwner = { streamJob = it }, onNeverStarted = ::nmIdleWhenOwnerEnds,
+        ) {
             var streamLaunched = false
             try {
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") coroutineContext.ensureActive()
                 val sid = realSessionId.takeIf { it.isNotEmpty() } ?: sessionId
 
                 // Locate the DB assistant row holding the target tool_use, and
@@ -5311,7 +5830,7 @@ class ChatViewModel(
 
                 streamLaunched = runRerunStreamTail(initialProvider, "rerunFromToolBlock")
             } finally {
-                if (!streamLaunched) {
+                if (!streamLaunched && nmMayFinishSetup(coroutineContext[Job])) { // nanoMuse: do not clear a newer job.
                     AppLogger.info(TAG_STREAM, "rerunFromToolBlock _isStreaming=false (setup aborted)")
                     _isStreaming.value = false
                 }
@@ -5385,12 +5904,18 @@ class ChatViewModel(
         AppLogger.info(TAG_STREAM, "retry _isStreaming=true (sync, sid=$activeSessionId)")
         _isStreaming.value = true
 
-        viewModelScope.launch {
+        // nanoMuse: deletion and Stop own the retry setup, not only its later stream.
+        ai.tama.chat.ChatSetupLaunch.launch(
+            viewModelScope, activeSessionId,
+            enabled = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+            onOwner = { streamJob = it }, onNeverStarted = ::nmIdleWhenOwnerEnds,
+        ) {
             // If setup throws before the inner streamJob is launched, the
             // streaming flag would be stuck true forever. Reset on the
             // unhappy paths; happy path resets in the streamJob's tail.
             var streamLaunched = false
             try {
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") coroutineContext.ensureActive()
             val sid = realSessionId.takeIf { it.isNotEmpty() } ?: sessionId
 
             // Find the DB sort_order cutoff for this user message.
@@ -5442,7 +5967,7 @@ class ChatViewModel(
 
             streamLaunched = runRerunStreamTail(provider, "retryFromMessage")
             } finally {
-                if (!streamLaunched) {
+                if (!streamLaunched && nmMayFinishSetup(coroutineContext[Job])) { // nanoMuse
                     AppLogger.info(TAG_STREAM, "retry _isStreaming=false (setup aborted)")
                     _isStreaming.value = false
                 }
@@ -5608,7 +6133,10 @@ class ChatViewModel(
     ): Boolean {
         var provider = initialProvider
         // Refresh OAuth token if needed
-        if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            if (!AutoModelStore.enabled(context))
+                provider = nmRefreshSelectedOAuth(provider) ?: run { nmOAuthChangedMessage(); return false }
+        } else if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
             try {
                 val activeEntryId = _activeEntryId.value
                 val entry = activeEntryId?.let { id -> providerRepository.config.value.modelEntries.find { it.id == id } }
@@ -5619,60 +6147,71 @@ class ChatViewModel(
                     if (freshToken != null) {
                         val storedKey = providerRepository.loadApiKey(instance.id)
                         if (freshToken != storedKey) {
-                            providerRepository.saveApiKey(instance.id, freshToken)
-                            provider = com.openminis.app.provider.ProviderFactory.create(
-                                instance, freshToken, currentModel ?: provider.model, context
-                            )
+                            providerRepository.saveApiKey(instance.id, freshToken, oauthRefresh = true)
+                            provider = nmCreateProvider(instance, freshToken, currentModel ?: provider.model)
                             currentProvider = provider
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "OAuth token refresh failed: ${e.message}")
+                nmLogPrivateFailure("OAuth token refresh failed", e)
             }
         }
 
-        val baseSystemPrompt = buildSystemPrompt()
-        val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-            val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-            if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-            else "$prefix\n\n${baseSystemPrompt ?: ""}"
-        } else baseSystemPrompt
+        // nanoMuse: rebuild the provider-specific prefix for each actual request.
+        val nmPromptInput = nmCapturePromptInput()
 
         // _isStreaming was already set synchronously by the caller.
         val launchedProvider = provider
-        streamJob = viewModelScope.launch(Dispatchers.IO) {
+        // nanoMuse: in the parallel app the stream remains a child of the
+        // registered setup; cleanup cannot leave an independent rerun behind.
+        val streamScope = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            kotlinx.coroutines.CoroutineScope(kotlin.coroutines.coroutineContext) else viewModelScope
+        nmLaunchStream(streamScope) {
             AppLogger.info(TAG_STREAM, "$label streamJob ENTER sid=$activeSessionId")
             try {
-                SessionConcurrencyManager.acquireSlot(activeSessionId)
-                AppLogger.debug(TAG_STREAM, "$label streamJob slot acquired")
-                SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-                val activeFallbackStrategy = run {
-                    val groupId = _selectedGroupId.value
-                    groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                        ?: com.openminis.app.data.model.FallbackStrategy.default
+                val trackedSessionId = activeSessionId
+                val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                    AppLogger.debug(TAG_STREAM, "$label streamJob slot acquired")
+                    beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                } catch (e: Throwable) {
+                    SessionConcurrencyManager.releaseSlot(trackedSlot)
+                    throw e
                 }
-                val fallbackProviders = buildFallbackProviders(launchedProvider)
                 try {
+                    val activeFallbackStrategy = run {
+                        val groupId = _selectedGroupId.value
+                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                            ?: com.openminis.app.data.model.FallbackStrategy.default
+                    }
+                    val fallbackProviders = buildFallbackProviders(launchedProvider)
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop CALL")
-                    runAgentLoop(
+                    val completedImageShortcut = runAgentLoop(
                         provider = launchedProvider,
-                        systemPrompt = systemPrompt,
+                        promptInput = nmPromptInput,
                         fallbackProviders = fallbackProviders,
                         fallbackStrategy = activeFallbackStrategy,
+                        onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                     )
+                    // A prompt may have arrived while the queued shortcut waited
+                    // for approval. Do not leave it stranded after a rerun.
+                    if (completedImageShortcut) drainQueuedPrompts(launchedProvider, activeFallbackStrategy) {
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                    }
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop RETURN normal")
                 } catch (e: CancellationException) {
+                    SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                     AppLogger.info(TAG_STREAM, "$label runAgentLoop CANCELLED")
                     Log.d(TAG, "Agent loop cancelled")
                 } catch (e: Exception) {
-                    AppLogger.error(TAG_STREAM, "$label runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
-                    Log.e(TAG, "Agent loop error ($label)", e)
-                    setInlineError(e.message ?: "Unknown error")
+                    logTurnFailure("$label runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}",
+                        "Agent loop error ($label)", e)
+                    setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                     // T298: flag the upcoming setInactive() so the
                     // background completion notifier renders the ❌
                     // variant instead of a clean success.
-                    SessionActivityTracker.markStreamError(activeSessionId)
+                    SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                 } finally {
                     AppLogger.info(TAG_STREAM, "$label streamJob FINALLY enter")
                     // [T-android-overlay-reply-status-34599] Surface
@@ -5683,8 +6222,11 @@ class ChatViewModel(
                     // we're in the finally block of the agent loop and
                     // the stream has already flushed its last delta.
 
-                    finishTrackedReply(activeSessionId)
-                    SessionConcurrencyManager.releaseSlot(activeSessionId)
+                    try {
+                        finishTrackedReply(trackedSessionId, trackedTurnId)
+                    } finally {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                    }
                     AppLogger.info(TAG_STREAM, "$label streamJob FINALLY exit")
                 }
             } catch (e: CancellationException) {
@@ -5932,7 +6474,10 @@ class ChatViewModel(
      * current agent loop finishes, drainQueuedPrompts() consumes the queue.
      * Mirrors iOS AIChatViewModel.enqueuePrompt().
      */
-    fun enqueuePrompt(text: String) {
+    // nanoMuse: a queued line keeps its original Pet even when sent again after a remote task.
+    fun enqueuePrompt(text: String) = nmEnqueuePrompt(text, io.github.nanomuse.pet.PetEvents.generation(context))
+
+    private fun nmEnqueuePrompt(text: String, petGeneration: Long?) {
         val trimmed = text.trim()
         val pendingAttachments = _attachments.value
         if ((trimmed.isBlank() && pendingAttachments.isEmpty()) || !_isStreaming.value) return
@@ -5941,6 +6486,7 @@ class ChatViewModel(
             id = "queued_${System.currentTimeMillis()}_${(Math.random() * 1_000_000).toInt()}",
             text = trimmed,
             attachments = pendingAttachments,
+            petGeneration = petGeneration, // nanoMuse: null means this is an automated prompt.
         )
         _promptQueue.value = _promptQueue.value + prompt
 
@@ -5999,7 +6545,11 @@ class ChatViewModel(
      * entry — its sole purpose is to break up the consecutive-user run for
      * the next API call; chat history reconstruction would just hide it.
      */
-    private data class InjectedTurn(val newAssistantId: String)
+    private data class InjectedTurn(
+        val newAssistantId: String,
+        val explicitImageRequest: Boolean,
+        val imageShortcut: ai.tama.router.Shortcut.Image?,
+    )
 
     private suspend fun injectQueuedPromptsAsNewTurn(
         finishedAssistantId: String,
@@ -6093,6 +6643,10 @@ class ChatViewModel(
             bodyPartsJson = queuedPaste?.partsJson,
         )
         val userEntity = chatRepository.appendMessage(sid, "user", userPartsJson)
+        // nanoMuse: one saved row can contain several queued person messages and routine prompts.
+        io.github.nanomuse.pet.PetEvents.queuedChats(context, userEntity.id, queued.map {
+            io.github.nanomuse.pet.PetQueuedOrigin(it.id, it.petGeneration)
+        })
         io.github.nanomuse.sync.ConversationSync.sent(sid) // nanoMuse: pushed at send (C8), then "working" (C9)
         agentHistory.add(
             LLMMessage(
@@ -6167,7 +6721,20 @@ class ChatViewModel(
             "injectQueuedPromptsAsNewTurn: injected ${queued.size} queued prompt(s) as new turn, " +
                 "finishedId=$finishedAssistantId newId=$newAssistantId",
         )
-        return InjectedTurn(newAssistantId)
+        val person = queued.singleOrNull()
+        val personWithoutMedia = person != null && person.petGeneration != null && person.attachments.isEmpty() && queuedPaste == null
+        val explicitImageRequest = personWithoutMedia && nmExplicitImageRequest(person!!.text)
+        val imageShortcut = person?.let {
+            ai.tama.router.ImageShortcutEligibility.select(
+                it.text, ai.tama.router.ImageShortcutContext(
+                    person = it.petGeneration != null, batchSize = queued.size,
+                    hasAttachments = it.attachments.isNotEmpty(), hasPastedContent = queuedPaste != null,
+                    editing = _editingMessageId.value != null, sharedContent = _hasInjectedShareContent.value,
+                    portugueseMake = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+                ),
+            )
+        }
+        return InjectedTurn(newAssistantId, explicitImageRequest, imageShortcut)
     }
 
     /**
@@ -6177,15 +6744,14 @@ class ChatViewModel(
      */
     private suspend fun drainQueuedPrompts(
         provider: LLMProvider,
-        systemPrompt: String?,
-        fallbackProviders: List<FallbackCandidate>,
         fallbackStrategy: com.openminis.app.data.model.FallbackStrategy,
+        onTerminalFailure: () -> Unit,
     ) {
         while (_promptQueue.value.isNotEmpty()) {
             val queued = _promptQueue.value
             _promptQueue.value = emptyList()
             Log.i(TAG, "📨[DRAIN] Draining ${queued.size} queued prompt(s): " +
-                queued.joinToString(", ") { "${it.id}=\"${it.text.take(20)}...\"" })
+                queued.joinToString(", ") { "${it.id}=${it.text.length}ch" })
 
             // Flip isQueued=false on corresponding chat messages so they render as sent.
             // T189: also clear queuedPromptId so a later retry of this bubble
@@ -6239,7 +6805,11 @@ class ChatViewModel(
                 prepared.attachedFilesXml,
                 bodyPartsJson = drainPaste?.partsJson,
             )
-            chatRepository.appendMessage(sid, "user", userPartsJson)
+            val queuedRow = chatRepository.appendMessage(sid, "user", userPartsJson) // nanoMuse: identify the saved batch.
+            // nanoMuse: count only queued person messages, after persistence, without their text.
+            io.github.nanomuse.pet.PetEvents.queuedChats(context, queuedRow.id, queued.map {
+                io.github.nanomuse.pet.PetQueuedOrigin(it.id, it.petGeneration)
+            })
             io.github.nanomuse.sync.ConversationSync.sent(sid) // nanoMuse: pushed at send (C8), then "working" (C9)
 
             agentHistory.add(LLMMessage(
@@ -6250,16 +6820,47 @@ class ChatViewModel(
                     val bodyCount = combinedParts.takeWhile { it is AgentContentPart.Text }.size
                     listOf(AgentContentPart.Text(p.modelText)) + combinedParts.drop(bodyCount)
                 } ?: combinedParts,
+                dbMessageId = queuedRow.id,
             ))
 
             try {
-                runAgentLoop(
-                    provider = provider,
-                    systemPrompt = systemPrompt,
-                    fallbackProviders = fallbackProviders,
-                    fallbackStrategy = fallbackStrategy,
-                )
-                nmAfterTurn() // nanoMuse: queued prompts complete turns too
+                val person = queued.singleOrNull()
+                val personWithoutMedia = person != null && person.petGeneration != null &&
+                    person.attachments.isEmpty() && drainPaste == null
+                val shortcut = person?.let {
+                    ai.tama.router.ImageShortcutEligibility.select(
+                        it.text, ai.tama.router.ImageShortcutContext(
+                            person = it.petGeneration != null, batchSize = queued.size,
+                            hasAttachments = it.attachments.isNotEmpty(), hasPastedContent = drainPaste != null,
+                            editing = _editingMessageId.value != null, sharedContent = _hasInjectedShareContent.value,
+                            portugueseMake = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+                        ),
+                    )
+                }
+                if (shortcut != null) {
+                    // One standalone person request remains a zero-chat-model shortcut,
+                    // even when it waited behind another turn. Replace its temporary UI
+                    // id with the persisted id so later edits/retries address the right row.
+                    val queuedUiId = "queued_msg_${person!!.id}"
+                    withContext(Dispatchers.Main) {
+                        _messages.value = _messages.value.map { if (it.id == queuedUiId) it.copy(id = queuedRow.id) else it }
+                    }
+                    nmRunImageShortcut(sid, shortcut) { reply ->
+                        if (!reply.success) onTerminalFailure()
+                        withContext(Dispatchers.Main) { nmAppendAssistantLine(sid, reply.text) }
+                    }
+                } else {
+                    val imageRequested = personWithoutMedia && nmExplicitImageRequest(person!!.text)
+                    val completedImageShortcut = runAgentLoop(
+                        provider = this@ChatViewModel.currentProvider ?: provider,
+                        promptInput = nmCapturePromptInput(),
+                        fallbackProviders = buildFallbackProviders(this@ChatViewModel.currentProvider ?: provider),
+                        fallbackStrategy = fallbackStrategy,
+                        explicitImageRequest = imageRequested,
+                        onTerminalFailure = onTerminalFailure,
+                    )
+                    if (!completedImageShortcut) nmAfterTurn() // model turns only
+                }
             } catch (e: CancellationException) {
                 Log.d(TAG, "Agent loop (queued-drain) cancelled")
                 // Cancel mid-drain: cancelStream() will check _promptQueue
@@ -6267,8 +6868,9 @@ class ChatViewModel(
                 // so just propagate.
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Agent loop (queued-drain) error", e)
-                setInlineError(e.message ?: "Unknown error")
+                logTurnFailure(null, "Agent loop (queued-drain) error", e)
+                setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
+                onTerminalFailure()
                 break
             }
         }
@@ -6295,9 +6897,16 @@ class ChatViewModel(
     // nanoMuse: cancellation targets the receipt belonging to the current stream.
     private var nmHeadlessReceipt: io.github.nanomuse.hub.HeadlessTurn.Receipt? = null
 
+    // nanoMuse: a remote prompt must not consume a person's unsent media, paste or edit.
+    private fun nmHeadlessHasLocalComposerState(): Boolean =
+        com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+            (_attachments.value.isNotEmpty() || _pastedTexts.value.isNotEmpty() ||
+                _editingMessageId.value != null || _hasInjectedShareContent.value)
+
     // nanoMuse: persistent remote turns must start now and own their saved user row.
     internal fun nmSendHeadless(text: String, receipt: io.github.nanomuse.hub.HeadlessTurn.Receipt) {
-        if (_isStreaming.value || _isCompacting.value || nmHeadlessReceipt?.pending == true || text.isBlank()) return
+        if (_isStreaming.value || _isCompacting.value || nmHeadlessReceipt?.pending == true ||
+            text.isBlank() || nmHeadlessHasLocalComposerState()) return
         if (checkContextBeforeSend() == PreSendContextAction.ASK_USER) return
         // Auto-compaction still runs in the normal outgoing-request guard. Do not
         // enqueue or leave a prompt for a later dialog after reporting refusal.
@@ -6313,18 +6922,175 @@ class ChatViewModel(
     internal fun nmCancelHeadless(turnId: String): Boolean =
         io.github.nanomuse.hub.HeadlessTurn.stop(nmHeadlessReceipt, turnId) { cancelStream() }
 
-    fun sendMessage(text: String) {
+    fun sendMessage(text: String) = nmSendMessage(text, io.github.nanomuse.pet.PetEvents.generation(context)) // nanoMuse: capture at submission.
+
+    internal fun nmSendAutomatedMessage(text: String) = nmSendMessage(text, null) // nanoMuse: routines and RPCs are not typed on this phone.
+
+    private fun nmSendMessage(text: String, petGeneration: Long?) { // nanoMuse: null is an automated prompt.
         // nanoMuse: explicit device work is routed before any local model or avatar action.
         if (nmRemoteBridge.send(text, io.github.nanomuse.hub.Hub.others(context),
-                _attachments.value.isNotEmpty() || _pastedTexts.value.isNotEmpty(), _isCompacting.value)) return
-        if (_isStreaming.value) { enqueuePrompt(text); return }
-        if (nmInterceptAvatar(text)) { nmCountableTurn = false; return }
-        sendMessage(text, skipContextCheck = false)
+                _attachments.value.isNotEmpty() || _pastedTexts.value.isNotEmpty(), _isCompacting.value,
+                onUserSaved = { id -> petGeneration?.let { io.github.nanomuse.pet.PetEvents.chat(context, id, it) } })) return
+        if (_isStreaming.value) { nmEnqueuePrompt(text, petGeneration); return }
+        // nanoMuse: an automated prompt must not trigger a paid avatar request on its own.
+        if (petGeneration != null && nmInterceptAvatar(text, petGeneration)) { nmCountableTurn = false; return }
+        // Both branches are explicit so the same decision can be tested with a
+        // fake chat client; automated, busy or media-bearing turns fall through.
+        ai.tama.router.ImageShortcutEligibility.dispatch(
+            text, ai.tama.router.ImageShortcutContext(
+                person = petGeneration != null, hasAttachments = _attachments.value.isNotEmpty(),
+                hasPastedContent = _pastedTexts.value.isNotEmpty(), editing = _editingMessageId.value != null,
+                sharedContent = _hasInjectedShareContent.value, busy = _isStreaming.value || _isCompacting.value,
+                portugueseMake = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+            ),
+            image = { image -> nmStartImageShortcut(text, requireNotNull(petGeneration), image) },
+            chat = { sendMessage(text, skipContextCheck = false, petGeneration = petGeneration) },
+        )
+    }
+
+    /** Runs the native tool and retains Stop ownership until its reply is saved. */
+    private suspend fun nmRunImageShortcut(
+        sid: String,
+        image: ai.tama.router.Shortcut.Image,
+        commit: suspend (ai.tama.media.ImageShortcutRunner.Reply) -> Unit,
+    ) {
+        val owner = kotlin.coroutines.coroutineContext[Job]
+        nmActiveImageShortcutCall = owner
+        try {
+            val reply = ai.tama.media.ImageShortcutRunner.run(
+                prompt = image.prompt,
+                failureMessage = context.getString(R.string.nm_image_request_failed),
+                settingsLabel = context.getString(R.string.nm_drawer_settings),
+                safeFailureMessages = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    ai.tama.tools.ImageGenerationTool.failureMessages(context) else null,
+            ) { prompt ->
+                ai.tama.tools.ImageGenerationTool.execute(
+                    JSONObject().put("prompt", prompt).toString(), sid, context,
+                )
+            }
+            kotlin.coroutines.coroutineContext.ensureActive()
+            commit(reply)
+        } finally {
+            if (nmActiveImageShortcutCall === owner) nmActiveImageShortcutCall = null
+        }
+    }
+
+    /** Starts a classified standalone person request without a chat-model call. */
+    private fun nmStartImageShortcut(text: String, petGeneration: Long, image: ai.tama.router.Shortcut.Image) {
+        _error.value = null
+        _canResume.value = false
+        _nmContinueAsk.value = null
+        nmHeadlessReceipt = null
+        _isStreaming.value = true // claim synchronously; later sends enter the queue
+        val placeholderId = "assistant_image_${java.util.UUID.randomUUID()}"
+        // nanoMuse: reserve the setup before dispatch, even before its image attempt exists.
+        ai.tama.chat.ChatSetupLaunch.launch(
+            viewModelScope, activeSessionId,
+            enabled = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+            onOwner = { owner ->
+                nmImageShortcutJob = owner
+                nmImageShortcutPlaceholderId = placeholderId
+                streamJob = owner
+            },
+            onNeverStarted = { owner -> viewModelScope.launch {
+                if (nmImageShortcutJob === owner) {
+                    nmImageShortcutJob = null
+                    nmImageShortcutPlaceholderId = null
+                }
+                if (streamJob === owner) {
+                    if (_inputText.value.isEmpty()) _inputText.value = text
+                    _isStreaming.value = false
+                }
+            } },
+            lazyInNormal = true,
+            watchPromotion = true,
+        ) {
+            val ownJob = requireNotNull(coroutineContext[Job])
+            var userRowSaved = false
+            var finished = false
+            try {
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") coroutineContext.ensureActive()
+                // Do not race a pending reload or draft promotion.
+                sessionLoaded.first { it }
+                // nanoMuse: own the real id before a newly allocated row is visible.
+                val promotionOwner = ownJob.takeIf { com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" }
+                val sid = ensureSession(promotionOwner)
+                if (promotionOwner != null) coroutineContext.ensureActive()
+                val rowId = nmAppendUserLine(sid, text.trim(), petGeneration)
+                userRowSaved = true
+                io.github.nanomuse.sync.ConversationSync.sent(sid)
+                io.github.nanomuse.chat.RoutineWakes.claim(sid, rowId)
+                _messages.value = _messages.value + ChatMessage(
+                    id = placeholderId, role = "assistant", content = "",
+                    isStreaming = true, isAwaitingModelResponse = true,
+                )
+                val slot = SessionConcurrencyManager.acquireSlot(sid)
+                val turnId = try {
+                    beginTrackedReply(sid, ownJob)
+                } catch (e: Throwable) {
+                    SessionConcurrencyManager.releaseSlot(slot)
+                    throw e
+                }
+                try {
+                    nmRunImageShortcut(sid, image) { reply ->
+                        if (!reply.success) SessionActivityTracker.markStreamError(sid, turnId)
+                        _messages.value = _messages.value.filterNot { it.id == placeholderId }
+                        nmAppendAssistantLine(sid, reply.text)
+                        finished = true
+                    }
+                } catch (e: CancellationException) {
+                    SessionActivityTracker.markReplyIncomplete(sid, turnId)
+                    throw e
+                } catch (e: Exception) {
+                    SessionActivityTracker.markStreamError(sid, turnId)
+                    throw e
+                } finally {
+                    try { finishTrackedReply(sid, turnId) } finally { SessionConcurrencyManager.releaseSlot(slot) }
+                }
+            } catch (e: CancellationException) {
+                if (!userRowSaved && nmMayFinishSetup(ownJob) && _inputText.value.isEmpty()) _inputText.value = text // nanoMuse: never overwrite a newer setup.
+                throw e
+            } catch (e: Exception) {
+                // No provider detail or image prompt is written to the log.
+                AppLogger.warning(TAG, "Image shortcut failed before it could be completed")
+                if (!userRowSaved && nmMayFinishSetup(ownJob) && _inputText.value.isEmpty()) _inputText.value = text // nanoMuse
+                if (streamJob === ownJob) _error.value = context.getString(R.string.nm_image_request_failed)
+            } finally {
+                if (!finished) _messages.value = _messages.value.filterNot { it.id == placeholderId }
+                if (nmImageShortcutJob === ownJob) {
+                    nmImageShortcutJob = null
+                    nmImageShortcutPlaceholderId = null
+                }
+                if (streamJob === ownJob) {
+                    _isStreaming.value = false
+                    // Stop owns the delayed queue restart; starting a new job inside
+                    // cancellation could let Stop's remaining cleanup target it.
+                    if (ownJob.isActive) nmContinueShortcutQueue()
+                }
+            }
+        }
+    }
+
+    /** Do not discard queued text when a local image turn has no chat provider. */
+    private fun nmContinueShortcutQueue() {
+        if (_isStreaming.value || _isCompacting.value) return
+        val next = _promptQueue.value.firstOrNull() ?: return
+        val localImage = ai.tama.router.ImageShortcutEligibility.select(
+            next.text, ai.tama.router.ImageShortcutContext(
+                person = next.petGeneration != null, hasAttachments = next.attachments.isNotEmpty(),
+                hasPastedContent = _pastedTexts.value.isNotEmpty(), editing = _editingMessageId.value != null,
+                sharedContent = _hasInjectedShareContent.value,
+                portugueseMake = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+            ),
+        ) != null
+        if (localImage || currentProvider != null || AutoModelStore.enabled(context)) nmSendNextQueued()
+        else _error.value = context.getString(R.string.nm_chat_no_model)
     }
 
     // nanoMuse: only the adapter touches upstream state; the lifecycle lives in RemoteChatBridge.
     private val nmRemoteBridge: io.github.nanomuse.sync.RemoteChatBridge by lazy {
         val host = object : io.github.nanomuse.sync.RemoteChatBridge.Host {
+            private var trackedTurnId: String? = null
             override val busy: Boolean get() = _isStreaming.value
             override fun setBusy(value: Boolean) { _isStreaming.value = value }
             override fun error(issue: io.github.nanomuse.sync.RemoteChatBridge.Issue, device: String) {
@@ -6344,12 +7110,16 @@ class ChatViewModel(
             override suspend fun session(): String = ensureSession()
             override suspend fun user(sessionId: String, text: String) = nmAppendUserLine(sessionId, text)
             override fun started(sessionId: String) {
-                SessionActivityTracker.setActive(sessionId) { nmRemoteBridge.cancel() }
+                trackedTurnId = SessionActivityTracker.setActive(sessionId) { nmRemoteBridge.cancel() }
             }
-            override fun ended(sessionId: String, completed: Boolean) {
-                if (!completed) SessionActivityTracker.markReplyIncomplete(sessionId)
+            override fun ended(sessionId: String, completed: Boolean, failed: Boolean) {
+                val turnId = trackedTurnId ?: return
+                trackedTurnId = null
+                if (!SessionActivityTracker.isCurrentRun(sessionId, turnId)) return
+                if (failed) SessionActivityTracker.markStreamError(sessionId, turnId)
+                else if (!completed) SessionActivityTracker.markReplyIncomplete(sessionId, turnId)
                 publishOverlayReplyExcerpt(sessionId)
-                SessionActivityTracker.setInactive(sessionId)
+                SessionActivityTracker.setInactive(sessionId, turnId)
             }
             override fun show(id: String, task: io.github.nanomuse.sync.RemoteChatBridge.Task) {
                 val message = ChatMessage(id = "nm_remote_$id", role = "assistant", content = task.text,
@@ -6378,7 +7148,7 @@ class ChatViewModel(
         val draft = _inputText.value
         val draftAttachments = _attachments.value
         _attachments.value = next.attachments
-        sendMessage(next.text)
+        nmSendMessage(next.text, next.petGeneration) // nanoMuse: retain queued person/routine identity and generation.
         if (_inputText.value.isEmpty() || _inputText.value == draft) {
             _inputText.value = draft
             _attachments.value = draftAttachments
@@ -6401,7 +7171,7 @@ class ChatViewModel(
     private class NmPendingFace(val sid: String, val desc: String, val reference: android.graphics.Bitmap?, val blocked: Boolean)
     private var nmPendingFace: NmPendingFace? = null
 
-    private fun nmInterceptAvatar(text: String): Boolean {
+    private fun nmInterceptAvatar(text: String, petGeneration: Long?): Boolean { // nanoMuse: saved requests retain their submitting Pet.
         val flow = io.github.nanomuse.avatar.AvatarFlow
         val sid = realSessionId.ifEmpty { sessionId }
         // A pick or "again" while the options are up in this chat.
@@ -6410,7 +7180,7 @@ class ChatViewModel(
                 is io.github.nanomuse.avatar.AvatarFlow.Choice.Index -> {
                     if (io.github.nanomuse.avatar.AvatarStudio.slots.value.getOrNull(c.index) is io.github.nanomuse.avatar.AvatarStudio.Slot.Ready) {
                         viewModelScope.launch {
-                            nmAppendUserLine(sid, text)
+                            nmAppendUserLine(sid, text, petGeneration)
                             nmChooseAvatarInternal(sid, c.index)
                         }
                         return true
@@ -6419,7 +7189,7 @@ class ChatViewModel(
                 io.github.nanomuse.avatar.AvatarFlow.Choice.Regenerate -> {
                     val desc = (flow.stage.value as? io.github.nanomuse.avatar.AvatarFlow.Stage.Choosing)?.description.orEmpty()
                     viewModelScope.launch {
-                        nmAppendUserLine(sid, text)
+                        nmAppendUserLine(sid, text, petGeneration)
                         if (flow.regenerate(context)) {
                             nmAppendAssistantLine(sid, context.getString(R.string.nm_avatar_drawing_again))
                             nmAnnounceWhenDrawn(sid, desc)
@@ -6450,7 +7220,7 @@ class ChatViewModel(
             // A draft main chat gets its session row first, so the request and the
             // reply persist like any other turn.
             val realSid = ensureSession()
-            nmAppendUserLine(realSid, text)
+            nmAppendUserLine(realSid, text, petGeneration)
             val reference = withContext(Dispatchers.IO) { flow.loadReference(context, referenceUri) }
             // Pictures paid from the Cloud allowance are priced first: the card says what
             // this face costs and what is left today, and nothing is drawn until the yes.
@@ -6513,9 +7283,9 @@ class ChatViewModel(
 
     // ─── nanoMuse: the free allowance is spent ──────────────────────────────
     // The relay's 429 arrives through the model client as "rate limited"; the
-    // structured body was kept aside by AllowanceSignal. When the error is about
-    // to be shown, the card with the two ways on (own key, invite)
-    // is added under it — virtual, never persisted.
+    // structured body belongs to that exception. When the error is shown, the
+    // card with the two ways on (own key, invite) is added under it — virtual,
+    // never persisted.
 
     private val nmAllowanceCardId = "nm_allowance_card"
     private val _nmAllowance = kotlinx.coroutines.flow.MutableStateFlow<io.github.nanomuse.cloud.AllowanceSignal.Exhausted?>(null)
@@ -6525,21 +7295,33 @@ class ChatViewModel(
      * The error text to show for a failed turn — the allowance sentence when the relay said so
      * (with the ways-on card under it), the relay's other refusals as a canonical line the chat
      * renders as one sentence and a button (`RelayRefusal`: 413 → *New chat*, 401 → *Sign in*,
-     * busy → *Try again* …), the reach card's canonical line when a provider's 401/403/429 was
-     * kept aside by `ReachSignal`, [fallback] otherwise.
+     * busy → *Try again* …), or the diagnostic attached to this provider exception, [fallback]
+     * otherwise. Neither diagnostic is taken from another request's last-error slot.
      */
-    private fun nmAllowanceErrorText(fallback: String): String {
-        val info = io.github.nanomuse.cloud.AllowanceSignal.takeFresh()
+    private fun nmAllowanceErrorText(
+        fallback: String,
+        reach: io.github.nanomuse.net.ProviderReach.Reach? = null,
+        relayError: io.github.nanomuse.cloud.AllowanceSignal.HttpError? = null,
+    ): String {
+        if (reach != null) {
+            // nanoMuse: provider text can echo prompts, not just the captured key. Keep
+            // only a fixed recognized marker in the parallel build's persisted error.
+            val stored = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                ai.tama.net.ProviderErrorPrivacy.forStorage(reach) else reach
+            return io.github.nanomuse.net.ProviderReach.canonical(stored)
+        }
+        relayError ?: return fallback
+        val info = relayError.exhausted
         if (info == null) {
-            io.github.nanomuse.cloud.AllowanceSignal.takeFreshRefusal()?.let { refusal ->
-                // a key the relay no longer takes: the account's state follows (contract C12)
-                if (refusal.kind == io.github.nanomuse.cloud.RelayRefusal.Kind.SIGNED_OUT) {
-                    viewModelScope.launch { runCatching { io.github.nanomuse.cloud.NanoMuseCloud.refresh(context) } }
-                }
-                return io.github.nanomuse.cloud.RelayRefusal.canonical(refusal)
+            val refusal = relayError.refusal
+            // a key the relay no longer takes: the account's state follows (contract C12)
+            if (refusal.kind == io.github.nanomuse.cloud.RelayRefusal.Kind.SIGNED_OUT) {
+                viewModelScope.launch { runCatching { io.github.nanomuse.cloud.NanoMuseCloud.refresh(context) } }
             }
-            val reach = io.github.nanomuse.net.ReachSignal.takeFresh() ?: return fallback
-            return io.github.nanomuse.net.ProviderReach.canonical(reach)
+            // nanoMuse: the relay can echo private input in both message and an unknown code.
+            val stored = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                ai.tama.net.ProviderErrorPrivacy.forStorage(refusal) else refusal
+            return io.github.nanomuse.cloud.RelayRefusal.canonical(stored)
         }
         _nmAllowance.value = info
         _messages.value = _messages.value.filterNot { it.id == nmAllowanceCardId } + ChatMessage(
@@ -6624,8 +7406,9 @@ class ChatViewModel(
         val sid = realSessionId.ifEmpty { sessionId }
         val flow = io.github.nanomuse.avatar.AvatarFlow
         if (!flow.isActiveIn(sid)) return
+        val petGeneration = io.github.nanomuse.pet.PetEvents.generation(context) // nanoMuse: this choice is the person's saved chat line.
         viewModelScope.launch {
-            nmAppendUserLine(sid, context.getString(R.string.nm_avatar_pick_line, index + 1))
+            nmAppendUserLine(sid, context.getString(R.string.nm_avatar_pick_line, index + 1), petGeneration)
             nmChooseAvatarInternal(sid, index)
         }
     }
@@ -6658,33 +7441,44 @@ class ChatViewModel(
         val desc = (flow.stage.value as? io.github.nanomuse.avatar.AvatarFlow.Stage.Choosing)?.description ?: return
         val files = flow.choose(context, index) ?: return
         _messages.value = _messages.value.filterNot { it.id == nmAvatarCardId }
-        // Muse announces the new face at once; the poses land in the header as they finish.
-        val clipsNote = if (io.github.nanomuse.avatar.AvatarMotion.enabled(context)) " " + context.getString(R.string.nm_avatar_clips_coming) else ""
+        // nanoMuse: the parallel build does not silently start separate pose or clip batches.
+        val parallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        val clipsNote = when {
+            parallel -> " " + context.getString(R.string.nm_avatar_background_paused)
+            io.github.nanomuse.avatar.AvatarMotion.enabled(context) -> " " + context.getString(R.string.nm_avatar_clips_coming)
+            else -> ""
+        }
         nmAppendAssistantLine(sid, flow.adoptedText(context, desc) + clipsNote + "\n\n" + flow.optionsFence(desc, index, files))
-        viewModelScope.launch {
-            val done = flow.done.first { it.sessionId == sid }
+        fun publishShare(description: String) {
             if (_messages.value.none { it.id == nmAvatarShareId }) {
                 _messages.value = _messages.value + ChatMessage(
                     id = nmAvatarShareId,
                     role = "system",
                     content = "", // the description travels in the block; text here would render as a bubble
-                    toolBlocks = listOf(AssistantBlock(id = "${nmAvatarShareId}_block", kind = "nm_avatar_share", content = done.description)),
+                    toolBlocks = listOf(AssistantBlock(id = "${nmAvatarShareId}_block", kind = "nm_avatar_share", content = description)),
                 )
             }
         }
+        // A no-work completion can happen before a SharedFlow subscriber starts.
+        if (parallel) publishShare(desc) else viewModelScope.launch {
+            publishShare(flow.done.first { it.sessionId == sid }.description)
+        }
     }
 
-    private suspend fun nmAppendUserLine(sid: String, text: String) {
+    // nanoMuse: return the saved row and credit only the Pet present when the person submitted it.
+    private suspend fun nmAppendUserLine(sid: String, text: String, petGeneration: Long? = null): String {
         val partsJson = """[{"type":"text","value":${escapeJson(text)}}]"""
         val entity = chatRepository.appendMessage(sid, "user", partsJson)
-        agentHistory.add(LLMMessage(role = LLMMessage.Role.USER, content = text))
+        petGeneration?.let { io.github.nanomuse.pet.PetEvents.chat(context, entity.id, it) }
+        agentHistory.add(LLMMessage(role = LLMMessage.Role.USER, content = text, dbMessageId = entity.id))
         _messages.value = _messages.value + ChatMessage(id = entity.id, role = "user", content = text)
+        return entity.id
     }
 
     private suspend fun nmAppendAssistantLine(sid: String, text: String) {
         val parts = listOf<AgentContentPart>(AgentContentPart.Text(text))
         val entity = chatRepository.appendMessage(sid, "assistant", buildAssistantPartsJson(parts))
-        agentHistory.add(LLMMessage(role = LLMMessage.Role.ASSISTANT, content = text, contentParts = parts))
+        agentHistory.add(LLMMessage(role = LLMMessage.Role.ASSISTANT, content = text, contentParts = parts, dbMessageId = entity.id))
         // The transcript now ends on a reply, so a stale "interrupted" banner no longer applies.
         _canResume.value = false
         _messages.value = _messages.value + ChatMessage(
@@ -6738,10 +7532,12 @@ class ChatViewModel(
     /** A suggestion chip was tapped: name the agent and send the name as the user's message. */
     fun nmPickName(name: String) {
         nmFirstConversation.pick(name)
-        sendMessage(name, skipContextCheck = false)
+        sendMessage(name, skipContextCheck = false, petGeneration = io.github.nanomuse.pet.PetEvents.generation(context)) // nanoMuse
     }
 
-    private fun nmAfterTurn() {
+    // nanoMuse: the result's goal event belongs to this exact tracker job, not a replacement.
+    private suspend fun nmAfterTurn() {
+        val petGeneration = nmPetGenerationForJob(kotlin.coroutines.coroutineContext[Job])
         val sid = realSessionId.ifEmpty { sessionId }
         // Goal blocks in the reply just finished, and the turn budget of any
         // prompt addendum, are settled first — they apply to every session.
@@ -6754,7 +7550,7 @@ class ChatViewModel(
         // no error.
         val reply = nmReplyOfThisTurn()
         reply?.let { text ->
-            io.github.nanomuse.goals.GoalFlow.afterTurn(context, sid, text)
+            io.github.nanomuse.goals.GoalFlow.afterTurn(context, sid, text, petGeneration) // nanoMuse: bind the completed goal to this run.
             io.github.nanomuse.feed.FeedFlow.afterTurn(context, sid, text)
         }
         val fc = nmFirstConversation
@@ -6791,7 +7587,12 @@ class ChatViewModel(
      *   re-entry with `skipCompactCheck`.
      */
     // nanoMuse: the optional receipt identifies the exact headless invocation's user row.
-    private fun sendMessage(text: String, skipContextCheck: Boolean, headless: io.github.nanomuse.hub.HeadlessTurn.Receipt? = null) {
+    private fun sendMessage(
+        text: String,
+        skipContextCheck: Boolean,
+        headless: io.github.nanomuse.hub.HeadlessTurn.Receipt? = null,
+        petGeneration: Long? = null, // nanoMuse: null means an automated prompt, not a person.
+    ) {
         // [T-android-paste-mediaref] `[Pasted#N]` markers are NOT expanded here
         // any more.
         //
@@ -6809,11 +7610,19 @@ class ChatViewModel(
         // here — clearing at this point would strip the content out from under
         // a send that then bails on the context-check paths below.
         val trimmed = text.trim()
+        val parallelHeadless = headless != null &&
+            com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
         // While streaming, enqueue instead of silently dropping (iOS: send vs enqueuePrompt).
         if (_isStreaming.value) {
-            enqueuePrompt(text)
+            // A persistent remote caller needs an immediate receipt. If the
+            // chat became busy since its first check, refuse rather than enqueue
+            // work that would later run without that caller's receipt.
+            if (!parallelHeadless) nmEnqueuePrompt(text, petGeneration)
             return
         }
+        // A composer change since the first headless check must not be consumed
+        // or used as an edit by this remote turn.
+        if (parallelHeadless && nmHeadlessHasLocalComposerState()) return
         // T180: allow attachments-only sends (no caption). Mirrors iOS, where
         // an empty text + non-empty attachments still produces a valid user
         // message. Without this an image-only "look at this" send dropped.
@@ -6825,15 +7634,20 @@ class ChatViewModel(
             )
             return
         }
+        if (!AutoModelStore.enabled(context) && !nmRestorePreferredForManualSend()) {
+            _error.value = context.getString(R.string.nm_chat_no_model)
+            return
+        }
         // Context pressure check. Unlike before, needsCompact now HOLDS the
         // send: either compact silently (auto-compact on) or ask first. The
         // whole point is that the request which tripped the threshold must not
         // be the one that goes out over-length.
-        if (!skipContextCheck) {
+        if (!skipContextCheck && !AutoModelStore.enabled(context)) {
             when (checkContextBeforeSend()) {
                 PreSendContextAction.PROCEED -> {}
                 PreSendContextAction.COMPACT_THEN_SEND -> {
                     pendingSendText = text
+                    pendingSendPetGeneration = petGeneration // nanoMuse
                     _inputText.value = ""
                     compactAndSendPending()
                     return
@@ -6842,6 +7656,7 @@ class ChatViewModel(
                     // Park the text on the VM (not the composer) so the dialog
                     // owns it; cancelCompactBeforeSend puts it back.
                     pendingSendText = text
+                    pendingSendPetGeneration = petGeneration // nanoMuse
                     _inputText.value = ""
                     _showCompactBeforeSendPrompt.value = true
                     return
@@ -6860,19 +7675,40 @@ class ChatViewModel(
         // "image attachment shows up as Move to" symptom in T185. Mirrors
         // iOS AIChatView.swift:2255 (`hasInjectedShareContent = false`
         // inside the send button's tap closure).
-        if (_hasInjectedShareContent.value) _hasInjectedShareContent.value = false
+        if (!parallelHeadless && _hasInjectedShareContent.value) _hasInjectedShareContent.value = false
 
-        val initialProvider = currentProvider
+        // Bootstrap an approved client when no manual route was resolved. It cannot
+        // dispatch: the router still qualifies the actual request and reserves quota.
+        val initialProvider = currentProvider ?: if (AutoModelStore.enabled(context)) {
+            val config = providerRepository.config.value
+            config.modelEntries.firstNotNullOfOrNull { entry ->
+                val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return@firstNotNullOfOrNull null
+                if (entry.isHidden || !instance.isEnabled || !instance.providerType.isUsable ||
+                    !providerRepository.hasAnyCredential(instance) ||
+                    !AutoModelStore.approved(context, AutoModelStore.identity(entry, instance))) return@firstNotNullOfOrNull null
+                runCatching {
+                    nmCreateProvider(instance, providerRepository.usableApiKey(instance).orEmpty(), entry.model).also { client ->
+                        currentProvider = client
+                        currentModel = entry.model
+                        _activeEntryId.value = entry.id
+                        _modelName.value = entry.model.displayName
+                        _providerName.value = instance.label.ifEmpty { entry.model.provider }
+                    }
+                }.getOrNull()
+            }
+        } else null
         if (initialProvider == null) {
-            _error.value = context.getString(R.string.nm_chat_no_model) // nanoMuse: where to fix it, in the person's language
+            _error.value = context.getString(if (AutoModelStore.enabled(context)) R.string.nm_auto_none else R.string.nm_chat_no_model)
             return
         }
         var provider: LLMProvider = initialProvider
 
         _error.value = null
 
-        val currentAttachments = _attachments.value
-        clearAttachments()
+        // Even if a local composer changes immediately after the guard above,
+        // a parallel remote turn must not consume its attachments.
+        val currentAttachments = if (parallelHeadless) emptyList() else _attachments.value
+        if (!parallelHeadless) clearAttachments()
 
         // T145: claim _isStreaming synchronously so a rapid second tap can't
         // slip past the entry guard during DB/OAuth setup. See retryFromMessage.
@@ -6901,30 +7737,69 @@ class ChatViewModel(
         // edited text as a fresh user turn. Snapshot + clear the id here so
         // any error in the truncate path doesn't leave the composer stuck
         // in edit mode.
-        val editingId = _editingMessageId.value
+        val editingId = if (parallelHeadless) null else _editingMessageId.value
         if (editingId != null) _editingMessageId.value = null
 
-        val headlessJob = viewModelScope.launch { // nanoMuse: retain the parent job that owns setup and streaming.
-            streamJob = coroutineContext[Job] // nanoMuse: Stop during the setup (session, attachments, the user row) cancels it too, not only the agent loop launched below (#340)
+        // nanoMuse: do not credit a later generation for a row saved after this send began.
+        val petChatGeneration = if (headless == null) petGeneration else null
+        // nanoMuse: publish and reserve the setup before its dispatcher can run or deletion can race it.
+        val headlessJob = ai.tama.chat.ChatSetupLaunch.launch(
+            viewModelScope, activeSessionId,
+            enabled = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test",
+            onOwner = { streamJob = it },
+            onNeverStarted = { owner -> viewModelScope.launch {
+                if (streamJob === owner) {
+                    if (headless == null && _inputText.value.isEmpty()) _inputText.value = text // nanoMuse: a remote prompt is not the person's draft.
+                    if (!parallelHeadless && _attachments.value.isEmpty()) _attachments.value = currentAttachments
+                    if (editingId != null && _editingMessageId.value == null && _messages.value.any { it.id == editingId }) _editingMessageId.value = editingId
+                    _isStreaming.value = false
+                }
+            } },
+            watchPromotion = true,
+        ) { // nanoMuse: retain the parent job that owns setup and streaming.
+            streamJob = coroutineContext[Job] // nanoMuse: Stop during setup cancels it too (#340).
             var streamLaunched = false
             var userRowShown = false // nanoMuse: set once the person's line is on screen; a Stop before that gives the composer its text back (#340)
             try {
-            // Ensure session exists in DB (creates on first message for draft sessions)
-            val activeSessionId = ensureSession()
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") coroutineContext.ensureActive()
+            // nanoMuse: reserve the generated real id before the draft row becomes visible.
+            val promotionOwner = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                requireNotNull(coroutineContext[Job]) else null
+            val activeSessionId = ensureSession(promotionOwner)
+            if (promotionOwner != null) coroutineContext.ensureActive()
 
+            // nanoMuse: refuse a stale manual OAuth client before truncating an edit,
+            // consuming attachments or writing the person's message. Automatic mode
+            // refreshes the actual candidate later, after it has been selected.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" && !AutoModelStore.enabled(context)) {
+                val refreshed = nmRefreshSelectedOAuth(provider)
+                coroutineContext.ensureActive() // nanoMuse: a completed refresh is not a cancellation barrier.
+                if (refreshed == null) {
+                    nmOAuthChangedMessage()
+                    if (headless == null && _inputText.value.isEmpty()) _inputText.value = text
+                    if (!parallelHeadless && _attachments.value.isEmpty()) _attachments.value = currentAttachments
+                    if (editingId != null && _editingMessageId.value == null) _editingMessageId.value = editingId
+                    return@launch
+                }
+                provider = refreshed
+            }
+
+            if (promotionOwner != null) coroutineContext.ensureActive()
             if (editingId != null) {
                 truncateBeforeEdit(editingId)
             }
+            if (promotionOwner != null) coroutineContext.ensureActive()
 
             val prepared = prepareUserAttachments(currentAttachments, activeSessionId)
+            if (promotionOwner != null) coroutineContext.ensureActive()
 
             // [T-android-paste-mediaref] Fold `[Pasted#N]` markers out to disk
             // BEFORE persisting, so the stored message carries a mediaRef per
             // paste instead of one huge text part.
-            val pasted = buildPastedParts(trimmed, activeSessionId)
-            if (pasted != null) {
-                // Safe to clear now: the content is on disk and the parts JSON
-                // below references it, so nothing depends on the buffer any more.
+            val pasted = if (parallelHeadless) null else buildPastedParts(trimmed, activeSessionId)
+            if (pasted != null && promotionOwner == null) {
+                // Preserve normal-package timing. The parallel setup keeps its
+                // buffer until the row has returned and cancellation is checked.
                 _pastedTexts.value = _pastedTexts.value.filterNot { it.id in pasted.consumedIds }
             }
 
@@ -6937,10 +7812,19 @@ class ChatViewModel(
                 prepared.attachedFilesXml,
                 bodyPartsJson = pasted?.partsJson,
             )
+            if (promotionOwner != null) coroutineContext.ensureActive()
             val persistedUser = chatRepository.appendMessage(activeSessionId, "user", userPartsJson)
+            if (promotionOwner != null) coroutineContext.ensureActive()
+            if (pasted != null && promotionOwner != null) {
+                _pastedTexts.value = _pastedTexts.value.filterNot { it.id in pasted.consumedIds }
+            }
             headless?.saved(persistedUser.id) // nanoMuse: publish identity only after persistence.
             io.github.nanomuse.sync.ConversationSync.sent(activeSessionId) // nanoMuse: the person's line reaches the other devices at send (C8), then "working" (C9)
             io.github.nanomuse.chat.RoutineWakes.claim(activeSessionId, persistedUser.id) // nanoMuse: a routine's prompt is marked as such on its row
+            // nanoMuse: only a person's saved line counts, not a scheduled or headless prompt.
+            petChatGeneration?.let { generation ->
+                io.github.nanomuse.pet.PetEvents.chat(context, persistedUser.id, generation)
+            }
 
             val userMsg = ChatMessage(
                 id = persistedUser.id,
@@ -7003,8 +7887,10 @@ class ChatViewModel(
                 dbMessageId = persistedUser.id,
             ))
 
-            // Refresh OAuth token if needed before sending (mirrors iOS validAccessToken)
-            if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
+            // nanoMuse: the parallel build refreshed before writing the user row.
+            // Normal-build refresh remains here, matching upstream behavior.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test" &&
+                (provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
                 try {
                     val activeEntryId = _activeEntryId.value
                     val entry = activeEntryId?.let { id -> providerRepository.config.value.modelEntries.find { it.id == id } }
@@ -7015,33 +7901,26 @@ class ChatViewModel(
                         if (freshToken != null) {
                             val storedKey = providerRepository.loadApiKey(instance.id)
                             if (freshToken != storedKey) {
-                                providerRepository.saveApiKey(instance.id, freshToken)
+                                providerRepository.saveApiKey(instance.id, freshToken, oauthRefresh = true)
                                 // Recreate provider with fresh token
-                                provider = com.openminis.app.provider.ProviderFactory.create(
-                                    instance, freshToken, currentModel ?: provider.model, context
-                                )
+                                provider = nmCreateProvider(instance, freshToken, currentModel ?: provider.model)
                                 currentProvider = provider
                                 android.util.Log.i(TAG, "OAuth token refreshed before send")
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.w(TAG, "OAuth token refresh failed: ${e.message}")
+                    nmLogPrivateFailure("OAuth token refresh failed", e)
                 }
             }
 
-            // Build system prompt
-            // Anthropic OAuth requires the Claude Code prefix in the system prompt
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                else "$prefix\n\n${baseSystemPrompt ?: ""}"
-            } else baseSystemPrompt
+            // nanoMuse: capture the session once; prefix and profile follow the actual provider.
+            // nanoMuse: rebuild the provider-specific prefix for each actual request.
+            val nmPromptInput = nmCapturePromptInput()
 
             // Start agent loop with fallback. _isStreaming was set synchronously at top.
-            streamLaunched = true
-            streamJob = launch(Dispatchers.IO) {
+            if (promotionOwner != null) coroutineContext.ensureActive()
+            nmLaunchStream(this) { // nanoMuse: retain the setup as the child's parent.
                 AppLogger.info(TAG_STREAM, "send streamJob ENTER sid=$activeSessionId")
                 try {
                     // [T-STALL-DIAG] Snapshot BEFORE the (possibly blocking)
@@ -7054,50 +7933,77 @@ class ChatViewModel(
                             SessionConcurrencyManager.diagSnapshot(),
                     )
                     // Acquire concurrency slot (suspends if at max)
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
-                    AppLogger.debug(TAG_STREAM, "send streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-
-                    // Resolve the active group's fallback strategy
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                            ?: com.openminis.app.data.model.FallbackStrategy.default
+                    val trackedSessionId = activeSessionId
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "send streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
                     }
-
-                    // Build full fallback provider list upfront (mirrors iOS triedEntries approach)
-                    val fallbackProviders = buildFallbackProviders(provider)
-
                     try {
+
+                        // Resolve the active group's fallback strategy
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                                ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+
+                        // Build full fallback provider list upfront (mirrors iOS triedEntries approach)
+                        val fallbackProviders = buildFallbackProviders(provider)
+                        var headlessLoopFailed = false // a handled failure can still return normally.
+                        var headlessTerminal: io.github.nanomuse.hub.HeadlessTurn.TerminalAssistant? = null // nanoMuse: witness the actual terminal write.
+
                         AppLogger.info(TAG_STREAM, "send runAgentLoop CALL")
-                        runAgentLoop(
+                        val completedImageShortcut = runAgentLoop(
                             provider = provider,
-                            systemPrompt = systemPrompt,
+                            promptInput = nmPromptInput,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            explicitImageRequest = petChatGeneration != null && headless == null &&
+                                currentAttachments.isEmpty() && pasted == null &&
+                                nmExplicitImageRequest(trimmed),
+                            // A headless receipt must finish its own turn before local queued messages.
+                            allowQueuedInterruption = headless == null,
+                            onTerminalFailure = {
+                                // A handled loop failure can return normally; never
+                                // promote an earlier partial answer to a receipt.
+                                headlessLoopFailed = true
+                                SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                            },
+                            onTerminalAssistantSaved = { id, reason -> // nanoMuse: do not infer completion from another row.
+                                if (parallelHeadless) headlessTerminal = io.github.nanomuse.hub.HeadlessTurn.TerminalAssistant(id, reason)
+                            },
                         )
                         AppLogger.info(TAG_STREAM, "send runAgentLoop RETURN normal")
                         // nanoMuse: settle this turn before draining unrelated queued prompts.
                         if (headless != null) {
-                            if (_canResume.value || !_messages.value.lastOrNull { it.role == "assistant" }?.error.isNullOrBlank()) headless.fail()
-                            else headless.complete(chatRepository.dao.loadMessages(activeSessionId))
+                            val strictFailure = headlessLoopFailed &&
+                                com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+                            if (strictFailure || _canResume.value || !_messages.value.lastOrNull { it.role == "assistant" }?.error.isNullOrBlank()) headless.fail()
+                            else headless.complete(chatRepository.dao.loadMessages(activeSessionId), headlessTerminal) // nanoMuse: strict receipts require this witness.
                         }
-                        nmAfterTurn() // nanoMuse: the first conversation steps forward when a turn completes
+                        if (!completedImageShortcut) nmAfterTurn() // model-specific completion hooks
                         // Drain any prompts the user queued while this loop was running.
                         // Skipped on cancel: cancelled job won't reach here.
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy)
+                        drainQueuedPrompts(provider, activeFallbackStrategy) {
+                            SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                        }
                         AppLogger.info(TAG_STREAM, "send drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
                         headless?.requestStop() // nanoMuse: idle does not imply successful completion.
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "send runAgentLoop CANCELLED")
                         Log.d(TAG, "Agent loop cancelled")
                     } catch (e: Exception) {
                         headless?.fail() // nanoMuse: a partial reply cannot turn an error into success.
-                        AppLogger.error(TAG_STREAM, "send runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
-                        Log.e(TAG, "Agent loop error (all fallbacks exhausted)", e)
-                        setInlineError(e.message ?: "Unknown error")
+                        logTurnFailure("send runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}",
+                            "Agent loop error (all fallbacks exhausted)", e)
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // T298: completion notifier should show the ❌ variant.
-                        SessionActivityTracker.markStreamError(activeSessionId)
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "send streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -7108,8 +8014,11 @@ class ChatViewModel(
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
 
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        }
                         AppLogger.info(TAG_STREAM, "send streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -7127,20 +8036,26 @@ class ChatViewModel(
                 }
                 AppLogger.info(TAG_STREAM, "send streamJob EXIT")
             }
+            streamLaunched = true // nanoMuse: a launch failure still resets this setup.
             } catch (e: CancellationException) {
                 headless?.requestStop() // nanoMuse: setup cancellation belongs to this receipt.
                 // nanoMuse: Stop before the user row is on screen means the message was not sent; the
                 // composer gets its text and attachments back instead of losing them (#340)
-                if (!streamLaunched && !userRowShown) {
-                    if (_inputText.value.isEmpty()) _inputText.value = text
-                    if (_attachments.value.isEmpty()) _attachments.value = currentAttachments
+                if (!streamLaunched && !userRowShown && nmMayFinishSetup(coroutineContext[Job])) { // nanoMuse: an old setup cannot restore over a newer turn.
+                    val normalPackage = com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test"
+                    if ((headless == null || normalPackage) && _inputText.value.isEmpty()) _inputText.value = text
+                    if (!parallelHeadless && _attachments.value.isEmpty()) _attachments.value = currentAttachments
+                    if (!normalPackage && editingId != null && _editingMessageId.value == null &&
+                        _messages.value.any { it.id == editingId }) _editingMessageId.value = editingId
                 }
                 throw e
             } finally {
                 if (!streamLaunched) {
                     headless?.fail() // nanoMuse: setup ended without an executable turn.
-                    AppLogger.info(TAG_STREAM, "send _isStreaming=false (setup aborted)")
-                    _isStreaming.value = false
+                    if (nmMayFinishSetup(coroutineContext[Job])) { // nanoMuse: a stale setup cannot hide a newer Stop.
+                        AppLogger.info(TAG_STREAM, "send _isStreaming=false (setup aborted)")
+                        _isStreaming.value = false
+                    }
                 }
             }
         }
@@ -7150,6 +8065,31 @@ class ChatViewModel(
         }
     }
 
+    // nanoMuse: carry the diagnostic on the exception, including through wrapped Flow errors.
+    private fun setInlineError(error: Throwable) {
+        val actual = unwrapFlowException(error)
+        val llmError = actual as? LLMError
+        val parallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        val detail = when (actual) {
+            is LLMError.ProviderError -> actual.detail
+            is LLMError.TransientError -> actual.detail
+            else -> null
+        }
+        val none = context.getString(R.string.nm_auto_none)
+        val unconfirmed = context.getString(R.string.nm_stream_unconfirmed)
+        val disabled = context.getString(R.string.nm_auto_disabled_during_turn)
+        val localMessage = if (!parallel || llmError?.nmProviderReach != null || llmError?.nmRelayError != null) {
+            actual.message ?: "Unknown error"
+        } else when {
+            actual is ai.tama.pricing.ModelCostGuard.Blocked -> context.getString(R.string.nm_model_cost_blocked)
+            detail == unconfirmed -> unconfirmed
+            detail == disabled -> disabled
+            detail == none || detail?.startsWith("$none\n") == true -> none
+            else -> context.getString(R.string.nm_error_private_generic)
+        }
+        setInlineError(localMessage, llmError?.nmProviderReach, llmError?.nmRelayError)
+    }
+
     /** Set error inline on the last assistant message (iOS: message.error).
      *
      *  Also clears [ChatMessage.isAwaitingModelResponse] — without this, an
@@ -7157,7 +8097,13 @@ class ChatViewModel(
      *  true at runAgentLoop ~4015) leaves the "nanoMuse is thinking" indicator
      *  on screen even though streaming is over. The flag is per-message and
      *  is not implicitly cleared by isStreaming=false. */
-    private fun setInlineError(errorText: String) {
+    private fun setInlineError( // nanoMuse: diagnostics belong to this error
+        errorText: String,
+        reach: io.github.nanomuse.net.ProviderReach.Reach? = null,
+        relayError: io.github.nanomuse.cloud.AllowanceSignal.HttpError? = null,
+    ) {
+        // nanoMuse: retain only the error enum and bounded HTTP number, never its text or route.
+        _nmDiagnosticFailure.value = ai.tama.diagnostics.DiagnosticCapture.failure(reach?.kind, reach?.httpStatus)
         // [T-error-persist-android] Never let an empty/blank error string reach
         // the banner. The UI gate is `message.error?.let { … }` — a non-null ""
         // would render an EMPTY error banner, and (now that errors persist) it
@@ -7168,6 +8114,7 @@ class ChatViewModel(
         // a Claude sign-in on a build without its identifier gets its sentence in the person's language (#373).
         val safeError = nmAllowanceErrorText(
             io.github.nanomuse.cloud.ClaudeSignIn.userText(context, errorText).ifBlank { context.getString(R.string.error_empty_response_generic) },
+            reach, relayError, // nanoMuse
         )
         // T-streaming-side-channel: before mutating the canonical message,
         // drain any in-flight streaming delta so the error frame carries
@@ -7248,19 +8195,24 @@ class ChatViewModel(
     }
 
     /**
-     * [T-error-persist-android] Fire-and-forget: clear the persisted error
-     * sticker on the session's last assistant row. Called from the resume / retry
-     * entrypoints that drop the in-memory error but don't go through
-     * [clearInlineError], so a recovered turn can't merge-resurrect the old
-     * banner on the next reload. No-op when there's no session/row yet.
+     * [T-error-persist-android] Clear the persisted error sticker on the last
+     * assistant row from resume / retry, which do not go through [clearInlineError].
+     * This prevents an old banner from reappearing after a successful turn.
+     * The normal path is fire-and-forget; the parallel setup owns its write. // nanoMuse
      */
+    // nanoMuse: the parallel setup can own this write instead of launching it independently.
+    private suspend fun nmClearPersistedLastAssistantError(sid: String) {
+        if (sid.isEmpty()) return
+        kotlin.coroutines.coroutineContext.ensureActive() // nanoMuse: a completed suspend call is not a cancellation barrier.
+        try { chatRepository.updateLastAssistantError(sid, null) }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { Log.w(TAG, "clear error_info (persisted) failed: ${e.message}") }
+    }
+
     private fun clearPersistedLastAssistantError() {
         val sid = realSessionId.ifEmpty { sessionId }
         if (sid.isEmpty()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            try { chatRepository.updateLastAssistantError(sid, null) }
-            catch (e: Exception) { Log.w(TAG, "clear error_info (persisted) failed: ${e.message}") }
-        }
+        viewModelScope.launch(Dispatchers.IO) { nmClearPersistedLastAssistantError(sid) }
     }
 
     /** Retry the last agent turn (triggered by inline error Retry button).
@@ -7329,7 +8281,8 @@ class ChatViewModel(
         // without this clear the new successful turn would merge-resurrect the
         // old error banner on reload (msg.error ?: prev.error). Harmless in
         // Case A too — the row is deleted moments later regardless.
-        clearPersistedLastAssistantError()
+        val parallelRetry = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        if (!parallelRetry) clearPersistedLastAssistantError() // nanoMuse: parallel writes belong to the reserved setup.
 
         // 2. Pop ONLY a trailing assistant entry from agentHistory (mirrors
         //    iOS retry() :2107-2109). If the tail is already user(tool_result),
@@ -7359,7 +8312,8 @@ class ChatViewModel(
         }
 
         // nanoMuse: one turn on the relay when the card asked for it; currentProvider is untouched
-        val initialProvider = nmOneTurnProvider?.also { nmOneTurnProvider = null } ?: currentProvider ?: return
+        val oneTurnProvider = nmOneTurnProvider?.also { nmOneTurnProvider = null }
+        val initialProvider = oneTurnProvider ?: currentProvider ?: return
         var provider: LLMProvider = initialProvider
         _error.value = null
 
@@ -7367,10 +8321,20 @@ class ChatViewModel(
         AppLogger.info(TAG_STREAM, "retryLast _isStreaming=true (sync, sid=$activeSessionId)")
         _isStreaming.value = true
 
-        viewModelScope.launch {
+        // nanoMuse: reserve before DB cleanup or OAuth refresh can be dispatched.
+        ai.tama.chat.ChatSetupLaunch.launch(
+            viewModelScope, activeSessionId,
+            enabled = parallelRetry,
+            onOwner = { streamJob = it }, onNeverStarted = ::nmIdleWhenOwnerEnds,
+        ) {
             var streamLaunched = false
             try {
+            if (parallelRetry) coroutineContext.ensureActive()
             val sid = realSessionId.takeIf { it.isNotEmpty() } ?: sessionId
+            if (parallelRetry) { // nanoMuse: cancellation propagates to this auxiliary DB update too.
+                withContext(Dispatchers.IO) { nmClearPersistedLastAssistantError(sid) }
+                coroutineContext.ensureActive()
+            }
 
             // T258: only sync the DB when step 2 popped a trailing assistant
             // entry from agentHistory. In that case the persisted partial-
@@ -7399,7 +8363,12 @@ class ChatViewModel(
             }
 
             // Refresh OAuth token if needed
-            if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                // nanoMuse: the explicit one-turn relay is not the selected OAuth client;
+                // automatic mode refreshes its actual candidate later.
+                if (oneTurnProvider == null && !AutoModelStore.enabled(context))
+                    provider = nmRefreshSelectedOAuth(provider) ?: run { nmOAuthChangedMessage(); return@launch }
+            } else if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
                 try {
                     val activeEntryId = _activeEntryId.value
                     val entry = activeEntryId?.let { id -> providerRepository.config.value.modelEntries.find { it.id == id } }
@@ -7410,59 +8379,64 @@ class ChatViewModel(
                         if (freshToken != null) {
                             val storedKey = providerRepository.loadApiKey(instance.id)
                             if (freshToken != storedKey) {
-                                providerRepository.saveApiKey(instance.id, freshToken)
-                                provider = ProviderFactory.create(instance, freshToken, currentModel ?: provider.model, context)
+                                providerRepository.saveApiKey(instance.id, freshToken, oauthRefresh = true)
+                                provider = nmCreateProvider(instance, freshToken, currentModel ?: provider.model)
                                 currentProvider = provider
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "OAuth token refresh failed: ${e.message}")
+                    nmLogPrivateFailure("OAuth token refresh failed", e)
                 }
             }
 
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                else "$prefix\n\n${baseSystemPrompt ?: ""}"
-            } else baseSystemPrompt
+            // nanoMuse: rebuild the provider-specific prefix for each actual request.
+            val nmPromptInput = nmCapturePromptInput()
 
             // _isStreaming was already set synchronously at the top.
-            streamLaunched = true
-            streamJob = launch(Dispatchers.IO) {
+            nmLaunchStream(this) { // nanoMuse: setup remains the owner of this child.
                 AppLogger.info(TAG_STREAM, "retryLast streamJob ENTER sid=$activeSessionId")
                 try {
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
-                    AppLogger.debug(TAG_STREAM, "retryLast streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                            ?: com.openminis.app.data.model.FallbackStrategy.default
+                    val trackedSessionId = activeSessionId
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "retryLast streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
                     }
-                    val fallbackProviders = buildFallbackProviders(provider)
                     try {
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                                ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+                        val fallbackProviders = buildFallbackProviders(provider)
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop CALL")
-                        runAgentLoop(
+                        val completedImageShortcut = runAgentLoop(
                             provider = provider,
-                            systemPrompt = systemPrompt,
+                            promptInput = nmPromptInput,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop RETURN normal")
-                        nmAfterTurn() // nanoMuse
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy)
+                        if (!completedImageShortcut) nmAfterTurn() // model turns only
+                        drainQueuedPrompts(provider, activeFallbackStrategy) {
+                            SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                        }
                         AppLogger.info(TAG_STREAM, "retryLast drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "retryLast runAgentLoop CANCELLED")
                         Log.d(TAG, "Agent loop cancelled")
                     } catch (e: Exception) {
-                        AppLogger.error(TAG_STREAM, "retryLast runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
-                        Log.e(TAG, "Agent loop error (retryLast)", e)
-                        setInlineError(e.message ?: "Unknown error")
+                        logTurnFailure("retryLast runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}",
+                            "Agent loop error (retryLast)", e)
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
                         // T298: completion notifier should show the ❌ variant.
-                        SessionActivityTracker.markStreamError(activeSessionId)
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "retryLast streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -7473,8 +8447,11 @@ class ChatViewModel(
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
 
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        }
                         AppLogger.info(TAG_STREAM, "retryLast streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -7490,8 +8467,9 @@ class ChatViewModel(
                 }
                 AppLogger.info(TAG_STREAM, "retryLast streamJob EXIT")
             }
+            streamLaunched = true // nanoMuse: a launch failure still resets this setup.
             } finally {
-                if (!streamLaunched) {
+                if (!streamLaunched && nmMayFinishSetup(coroutineContext[Job])) { // nanoMuse
                     AppLogger.info(TAG_STREAM, "retryLast _isStreaming=false (setup aborted)")
                     _isStreaming.value = false
                 }
@@ -7584,7 +8562,27 @@ class ChatViewModel(
         }
     }
 
+    /** Provider exceptions may echo private prompts. Keep normal-app logs unchanged. */
+    private fun logTurnFailure(streamMessage: String?, logcatMessage: String, error: Exception) {
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            AppLogger.error(TAG_STREAM, "Agent turn failed (${error.javaClass.simpleName})")
+            Log.e(TAG, "Agent turn failed (${error.javaClass.simpleName})")
+        } else {
+            if (streamMessage != null) AppLogger.error(TAG_STREAM, streamMessage)
+            Log.e(TAG, logcatMessage, error)
+        }
+    }
+
+    // nanoMuse: OAuth/provider exceptions can echo a URL, credential or prompt.
+    private fun nmLogPrivateFailure(message: String, error: Throwable) {
+        Log.w(TAG, ai.tama.net.ProviderLogPrivacy.failureMessage(
+            com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test", message, error.message,
+        ))
+    }
+
     private fun unwrapFlowException(e: Throwable): Throwable {
+        // nanoMuse: a local cost refusal is not a provider failure or retry signal.
+        ai.tama.pricing.ModelCostGuard.blockedCause(e)?.let { return it }
         var cause: Throwable? = e
         while (cause != null) {
             if (cause is com.openminis.app.data.model.LLMError) return cause
@@ -7622,18 +8620,15 @@ class ChatViewModel(
         val clamped = maxOf(remaining, 1)
         val result = minOf(maxOutputCeiling, clamped)
         if (result < maxOutputCeiling) {
-            android.util.Log.i(TAG, "dynamicMaxTokens: $result (remaining=$remaining, ceiling=$maxOutputCeiling, window=$contextWindow, input=$inputTokens, model=${model.id})")
+            // nanoMuse: a custom model id is untrusted text, not a safe diagnostic field.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                android.util.Log.i(TAG, "dynamicMaxTokens: $result (remaining=$remaining, ceiling=$maxOutputCeiling, window=$contextWindow, input=$inputTokens, model=${model.id})")
         }
         return result
     }
 
-    private suspend fun runAgentLoop(
-        provider: LLMProvider,
-        systemPrompt: String?,
-        fallbackProviders: List<FallbackCandidate> = emptyList(),
-        fallbackStrategy: com.openminis.app.data.model.FallbackStrategy = com.openminis.app.data.model.FallbackStrategy.default,
-    ) {
-        AppLogger.info(TAG_STREAM, "runAgentLoop ENTER provider=${provider.javaClass.simpleName} historySize=${agentHistory.size}")
+    // nanoMuse: keep the context diagnostic outside the large coroutine method.
+    private fun nmLogAgentContextShape() {
         // [T-android-mem-probe-trust] Send-path context shape. The existing
         // `messages-shape` probe only runs on session LOAD, so the 2026-08-15
         // log described the session as it was opened, never as it was sent —
@@ -7681,6 +8676,401 @@ class ChatViewModel(
                     "${com.openminis.app.diagnostics.MemorySnapshot.capture().toLogString()}",
             )
         }
+    }
+
+    // nanoMuse: preserve the sequential dispatch and its guards in a separate
+    // method so the agent loop remains below the JVM bytecode size limit.
+    private suspend fun nmDispatchToolCalls(
+        toolCalls: List<Triple<String, String, JSONObject>>,
+        nmRequestTools: List<AgentToolDefinition>,
+        tamaV2Test: Boolean,
+        nmImageGuard: ai.tama.router.ImageTurnGuard,
+        toolInputChunkRings: MutableMap<String, MutableList<String>>,
+        allToolBlocks: MutableList<AssistantBlock>,
+        assistantId: String,
+        accumulatedText: String,
+        turn: Int,
+        petRunGeneration: Long,
+        onToolDispatched: () -> Unit,
+    ): MutableList<AgentContentPart> {
+        // Execute all tool calls
+        val resultParts = mutableListOf<AgentContentPart>()
+        for ((id, name, args) in toolCalls) {
+            // nanoMuse: an unsolicited or hallucinated tool name is never dispatched,
+            // especially after reducing to LEAN. RiskGate/OffloadGate still apply to
+            // every tool that was actually offered.
+            if (nmRequestTools.none { it.name == name }) {
+                val reason = "Error: this tool was not offered in the current request and was not executed."
+                val block = allToolBlocks.indexOfFirst { it.id == id }
+                if (block >= 0) allToolBlocks[block] = allToolBlocks[block].copy(
+                    toolStatus = ToolBlockStatus.FAILED, content = reason,
+                )
+                toolLoopDetector.record(name, parseToolParams(args.toString()),
+                    result = null, errorMessage = reason, toolCallId = id)
+                resultParts.add(AgentContentPart.ToolResult(id = id, name = name, content = reason, isError = true))
+                toolInputChunkRings.remove(id)
+                continue
+            }
+            // [T-android-overlay-tool-title] Pull tool_title uniformly
+            // from args for ALL tools — without this browser_use's
+            // tool_title never reached the overlay (only shell_execute
+            // had a per-tool status override that surfaced it). Reading
+            // it here also means new tools added later automatically
+            // get title-in-overlay behavior without per-call plumbing.
+            val isParallelImage = tamaV2Test && name == ai.tama.tools.ImageGenerationTool.NAME
+            val dispatchToolTitle = if (isParallelImage) context.getString(R.string.nm_models_image_title) else try {
+                args.optString("tool_title", "").takeIf { it.isNotBlank() }
+            } catch (_: Exception) { null }
+            SessionActivityTracker.updateToolStatus(
+                status = if (isParallelImage) context.getString(R.string.nm_image_detail_preparing) else "Running: $name",
+                toolName = name,
+                isRunning = true,
+                toolTitle = dispatchToolTitle,
+            )
+            // JSON repair (T-tool-json-repair b2c4f8a6): salvage truncated /
+            // type-mismatched / typo'd args BEFORE preflight rejects them.
+            // Mutates `args` in place; downstream argsStr and preflight see
+            // the repaired payload. Mirrors iOS repairToolArgs in
+            // AIChatViewModel.swift.
+            val repairs = com.openminis.app.provider.ToolJsonRepair.repair(
+                name, args, toolInputChunkRings[id]?.lastOrNull(), nmRequestTools, // nanoMuse: validate the schemas actually sent
+            )
+            if (repairs.isNotEmpty()) {
+                AppLogger.warning(
+                    "ToolPreflight",
+                    "[ToolRepair] REPAIRED tool=$name id=$id strategies=[${repairs.joinToString(", ")}] " +
+                        "argsKeys=[${args.keys().asSequence().toList().sorted().joinToString(",")}] " +
+                        "rawTail=<<<${if (name == ai.tama.tools.ImageGenerationTool.NAME) "<omitted>" else toolInputChunkRings[id]?.lastOrNull()?.take(500) ?: ""}>>>"
+                )
+            }
+            // [T-truncated-args-visibility #119] Non-null when THIS call's
+            // arguments arrived truncated and were auto-closed. Only the
+            // truncation strategy means the VALUE was cut short; coercion
+            // and fuzzy-name repairs fix the shape of a complete argument.
+            // Mirrors iOS truncationRepairTag.
+            val truncationRepairTag: String? = repairs.firstOrNull { it.startsWith("truncation+") }
+
+            // Repaired image arguments must not cause a billable request for
+            // a description or size the person or model did not provide intact.
+            if (repairs.isNotEmpty() && name == ai.tama.tools.ImageGenerationTool.NAME) {
+                nmImageGuard.consume(truncated = true)
+                val reason = if (tamaV2Test) context.getString(R.string.nm_image_guard_invalid)
+                    else "Image request was not sent because its arguments needed repair. Ask the user before trying again."
+                val idx = allToolBlocks.indexOfFirst { it.id == id }
+                if (idx >= 0) allToolBlocks[idx] = allToolBlocks[idx].copy(toolStatus = ToolBlockStatus.FAILED, content = reason)
+                toolLoopDetector.record(name, parseToolParams(args.toString()), result = null, errorMessage = reason, toolCallId = id)
+                resultParts.add(AgentContentPart.ToolResult(id = id, name = name, content = reason, isError = true))
+                toolInputChunkRings.remove(id)
+                continue
+            }
+
+            // [T-truncated-args-visibility #119] Refuse truncated WRITES.
+            // Auto-closing an unterminated JSON string is indistinguishable
+            // from the model ending `content` there, so a half file lands on
+            // disk while UI and tool result both report success. For writes a
+            // partial artifact is silent corruption of user data and is worse
+            // than no write at all; read-only and shell tools keep the
+            // repair-and-run behaviour. Mirrors iOS ConcurrentTools.
+            if (truncationRepairTag != null && (name == "file_write" || name == "file_edit")) {
+                val path = args.optString("path", "").ifBlank { args.optString("file_path", "") }
+                AppLogger.warning(
+                    "ToolPreflight",
+                    "[ToolRepair] REFUSED truncated write tool=$name id=$id strategy=$truncationRepairTag path=$path"
+                )
+                val modelMessage = buildString {
+                    append("Error: This call was NOT executed. Its argument stream was truncated ")
+                    append("in transit (repair strategy: $truncationRepairTag), so the `content` ")
+                    append("your client sent was cut short and would have written an incomplete file")
+                    if (path.isNotBlank()) append(" to $path")
+                    append(". Nothing was written to disk — the target file is unchanged.\n\n")
+                    append("The most likely cause is the response hitting its output-token limit ")
+                    append("mid-argument. Re-issue this write in smaller pieces: write the first ")
+                    append("part, then append the rest with follow-up calls, rather than repeating ")
+                    append("the same oversized call.")
+                }
+                val refusedIdx = allToolBlocks.indexOfFirst { it.id == id }
+                if (refusedIdx >= 0) {
+                    val elapsed = System.currentTimeMillis() - allToolBlocks[refusedIdx].startTimeMs
+                    allToolBlocks[refusedIdx] = allToolBlocks[refusedIdx].copy(
+                        toolStatus = ToolBlockStatus.FAILED,
+                        content = "Blocked: arguments were truncated in transit",
+                        durationMs = elapsed,
+                    )
+                    withContext(Dispatchers.Main) {
+                        updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
+                    }
+                }
+                toolLoopDetector.record(name, parseToolParams(args.toString()),
+                    result = null, errorMessage = modelMessage, toolCallId = id)
+                resultParts.add(AgentContentPart.ToolResult(
+                    id = id, name = name,
+                    content = modelMessage,
+                    isError = true,
+                ))
+                toolInputChunkRings.remove(id)
+                continue
+            }
+            val argsStr = args.toString()
+            val paramsMap = parseToolParams(argsStr)
+            // Flip PENDING → RUNNING right before the execute dispatch so the UI
+            // (tool pill spinner) shows the exact moment execution begins.
+            val preIdx = allToolBlocks.indexOfFirst { it.id == id }
+            if (preIdx >= 0 && allToolBlocks[preIdx].toolStatus == ToolBlockStatus.PENDING) {
+                allToolBlocks[preIdx] = allToolBlocks[preIdx].copy(toolStatus = ToolBlockStatus.RUNNING)
+                withContext(Dispatchers.Main) {
+                    updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
+                }
+            }
+
+            // Loop-detector check BEFORE execution. CRITICAL outcomes short-circuit
+            // the call: synthesize an error result so the tool_use/tool_result pair
+            // stays balanced and the LLM sees the block reason.
+            val precheck = toolLoopDetector.check(name, paramsMap)
+            if (precheck.level == Level.CRITICAL) {
+                val blockedMsg = precheck.message ?: "[LOOP BLOCKED] tool execution blocked"
+                // nanoMuse: the detector's message can repeat an argument or path.
+                if (!tamaV2Test) {
+                    android.util.Log.w("ToolChain[VM]",
+                        "[turn=$turn] tool BLOCKED by loop detector name=$name msg=$blockedMsg")
+                    AppLogger.warning("ChatViewModel",
+                        "tool blocked by loop detector name=$name reason=$blockedMsg")
+                } else AppLogger.warning("ChatViewModel", "Tool blocked by loop detector")
+                val blockIdx = allToolBlocks.indexOfFirst { it.id == id }
+                if (blockIdx >= 0) {
+                    val elapsed = System.currentTimeMillis() - allToolBlocks[blockIdx].startTimeMs
+                    allToolBlocks[blockIdx] = allToolBlocks[blockIdx].copy(
+                        toolStatus = ToolBlockStatus.FAILED,
+                        content = blockedMsg,
+                        durationMs = elapsed,
+                    )
+                }
+                // Record the blocked attempt so consecutive blocks still
+                // count toward the unknown-tool / circuit-breaker windows.
+                toolLoopDetector.record(name, paramsMap,
+                    result = null, errorMessage = blockedMsg, toolCallId = id)
+                resultParts.add(AgentContentPart.ToolResult(
+                    id = id, name = name,
+                    content = blockedMsg,
+                    isError = true,
+                ))
+                continue
+            }
+
+            // Preflight: reject empty / missing-required-field tool calls
+            // BEFORE the UI flips to RUNNING and BEFORE executeTool() does
+            // any actual work. Mirrors iOS preflightValidateToolCall in
+            // AIChatViewModel.swift. Synthesizes a tool_result error so the
+            // model can self-correct on the next turn without us spawning
+            // shells or touching the filesystem on `{}` args.
+            val preflightError = preflightValidateToolCall(name, args, nmRequestTools) // nanoMuse: the outbound schema, not a different profile
+            if (preflightError != null) {
+                val chunkRing: List<String> = toolInputChunkRings.remove(id) ?: emptyList()
+                // nanoMuse: a rejected tool's argument chunks can contain private
+                // prompts or credentials even when the tool never executed.
+                if (tamaV2Test) {
+                    AppLogger.warning("ToolPreflight", "Invalid tool call blocked")
+                } else {
+                    AppLogger.warning(
+                        "ToolPreflight",
+                        "BLOCKED tool=$name id=$id reason=\"$preflightError\" " +
+                            "argsKeys=[${args.keys().asSequence().toList().sorted().joinToString(",")}] " +
+                            "chunkCount=${chunkRing.size} " +
+                            "lastChunk=<<<${if (name == ai.tama.tools.ImageGenerationTool.NAME) "<omitted>" else chunkRing.lastOrNull()?.take(500) ?: ""}>>>"
+                    )
+                    if (name != ai.tama.tools.ImageGenerationTool.NAME) chunkRing.forEachIndexed { i, snap ->
+                        AppLogger.warning(
+                            "ToolPreflight",
+                            "  chunk[$i] bytes=${snap.toByteArray(Charsets.UTF_8).size} raw=<<<${snap.take(500)}>>>"
+                        )
+                    }
+                }
+                // English literal — string resource lookup intentionally
+                // avoided to keep this commit independent of any in-flight
+                // strings.xml refactor in other sessions. Promote to a
+                // localized R.string entry in a follow-up if needed.
+                val isolatedImageCall = tamaV2Test && name == ai.tama.tools.ImageGenerationTool.NAME
+                if (isolatedImageCall) nmImageGuard.consume(truncated = true)
+                val uiMessage = if (isolatedImageCall) context.getString(R.string.nm_image_guard_invalid)
+                    else "Blocked invalid tool call"
+                val modelMessage = if (isolatedImageCall) uiMessage else
+                    "Error: Tool call rejected before execution. $preflightError The arguments your client sent were empty or missing required fields — re-issue the call with all required parameters filled in. Do not retry with the same empty arguments."
+                val blockIdxPre = allToolBlocks.indexOfFirst { it.id == id }
+                if (blockIdxPre >= 0) {
+                    val elapsedPre = System.currentTimeMillis() - allToolBlocks[blockIdxPre].startTimeMs
+                    allToolBlocks[blockIdxPre] = allToolBlocks[blockIdxPre].copy(
+                        toolStatus = ToolBlockStatus.FAILED,
+                        content = uiMessage,
+                        durationMs = elapsedPre,
+                    )
+                }
+                toolLoopDetector.record(
+                    toolName = name, params = paramsMap,
+                    result = null, errorMessage = modelMessage, toolCallId = id
+                )
+                resultParts.add(AgentContentPart.ToolResult(
+                    id = id, name = name,
+                    content = modelMessage,
+                    isError = true,
+                ))
+                withContext(Dispatchers.Main) {
+                    updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
+                }
+                continue
+            }
+
+            if (name == ai.tama.tools.ImageGenerationTool.NAME) {
+                val decision = nmImageGuard.consume()
+                if (decision != ai.tama.router.ImageTurnGuard.Decision.ALLOW) {
+                    val reason = if (tamaV2Test) context.getString(
+                        if (decision == ai.tama.router.ImageTurnGuard.Decision.NOT_REQUESTED)
+                            R.string.nm_image_guard_ambiguous else R.string.nm_image_guard_repeat,
+                    ) else if (decision == ai.tama.router.ImageTurnGuard.Decision.NOT_REQUESTED)
+                        "Image generation was not requested explicitly by the person in this turn. Do not generate or retry."
+                    else "An image was already attempted in this turn and may have been charged. Do not retry without a new user request."
+                    val idx = allToolBlocks.indexOfFirst { it.id == id }
+                    if (idx >= 0) allToolBlocks[idx] = allToolBlocks[idx].copy(toolStatus = ToolBlockStatus.FAILED, content = reason)
+                    toolLoopDetector.record(name, paramsMap, result = null, errorMessage = reason, toolCallId = id)
+                    resultParts.add(AgentContentPart.ToolResult(id = id, name = name, content = reason, isError = true))
+                    toolInputChunkRings.remove(id)
+                    continue
+                }
+            }
+            val loggedArgs = if (name == ai.tama.tools.ImageGenerationTool.NAME) "<omitted>" else argsStr.take(200)
+            // nanoMuse: tool input can contain arbitrary private data.
+            if (!tamaV2Test) android.util.Log.d("ToolChain[VM]", "[turn=$turn] executeTool START name=$name args=$loggedArgs")
+            // nanoMuse: rejected/unoffered/preflight-blocked calls must not create tool continuity.
+            onToolDispatched()
+            val result = executeTool(name, argsStr, id, allToolBlocks, assistantId, accumulatedText)
+            // nanoMuse: only confirmed, intact writes advance the Pet bound to this tracker run.
+            if (result.success && truncationRepairTag == null) {
+                io.github.nanomuse.pet.PetEvents.tool(context, realSessionId.ifEmpty { sessionId }, id, name, petRunGeneration)
+            }
+            val loggedOutput = if (name == ai.tama.tools.ImageGenerationTool.NAME) "<omitted>" else result.output.take(200)
+            // nanoMuse: tool output and titles can repeat private data.
+            if (!tamaV2Test) android.util.Log.d("ToolChain[VM]", "[turn=$turn] executeTool END name=$name success=${result.success} title=${result.toolTitle} outputLen=${result.output.length} output=$loggedOutput")
+
+            // Record post-execution. WARNING text is appended to the tool
+            // result so the model sees it on its next turn. No block here —
+            // CRITICAL only fires from check() and we already returned above.
+            val errMsgForDetector = if (!result.success) result.output else null
+            val postRecord = toolLoopDetector.record(
+                toolName = name,
+                params = paramsMap,
+                result = if (result.success) result.output else null,
+                errorMessage = errMsgForDetector,
+                toolCallId = id,
+            )
+            val outputForLLM = if (postRecord.level == Level.WARNING && postRecord.message != null) {
+                AppLogger.debug("ChatViewModel",
+                    "appending loop-warning to tool result name=$name key=${postRecord.warningKey}")
+                "${result.output}\n\n${postRecord.message}"
+            } else {
+                result.output
+            }
+
+            val blockIdx = allToolBlocks.indexOfFirst { it.id == id }
+            if (blockIdx >= 0) {
+                val elapsed = System.currentTimeMillis() - allToolBlocks[blockIdx].startTimeMs
+                // Keep live-streamed content if it has more data than the truncated result.
+                // T263: takeLast(80) was applied uniformly, but it was sized for
+                // shell_execute (long stdout streams where the tail is what
+                // matters). For tools whose first line carries metadata —
+                // file_read's `[path | N bytes | M lines | showing A-B of M]`
+                // banner, file_write/file_edit confirmations, memory_* /
+                // browser_use structured headers — clipping the head dropped
+                // the banner entirely. iOS routes file_read through a
+                // dedicated branch (AIChatViewModel.swift:5229) and avoids
+                // this; mirror that intent by gating the trim to shell_execute.
+                val existingContent = allToolBlocks[blockIdx].content
+                val resultContent = if (name == "shell_execute") {
+                    result.output.lines().takeLast(80).joinToString("\n")
+                } else {
+                    result.output
+                }
+                val finalContent = if (existingContent.length > resultContent.length) existingContent else resultContent
+                // [T-truncated-args-visibility #119] A call built from
+                // truncated args must not render as a clean success — that
+                // silence is the reported bug. Show it with the same weight
+                // as the blocked path. Mirrors iOS ConcurrentTools.
+                val finalStatus = when {
+                    result.success && truncationRepairTag != null -> ToolBlockStatus.FAILED
+                    result.success -> ToolBlockStatus.SUCCESS
+                    result.timedOut -> ToolBlockStatus.TIMEOUT
+                    else -> ToolBlockStatus.FAILED
+                }
+                // T-bg-overlay phase 1: tool finished — drop the
+                // notification's indeterminate progress bar so the
+                // user can tell streaming has paused (LLM step) vs
+                // a tool is in flight.
+                // [T-overlay-glyph-typed-outcome] Pass the typed
+                // outcome so the bg overlay glyph reflects the real
+                // SUCCESS / TIMEOUT / FAILED result instead of
+                // text-sniffing the stale "Running: foo" status.
+                val toolOutcome = when (finalStatus) {
+                    ToolBlockStatus.SUCCESS -> com.openminis.app.service.ToolOutcome.Success
+                    ToolBlockStatus.TIMEOUT -> com.openminis.app.service.ToolOutcome.Timeout
+                    ToolBlockStatus.FAILED -> com.openminis.app.service.ToolOutcome.Error
+                    else -> com.openminis.app.service.ToolOutcome.Unknown
+                }
+                SessionActivityTracker.clearToolRunning(toolOutcome)
+                // nanoMuse: a tool title can include arguments or provider output.
+                if (!tamaV2Test) android.util.Log.d("ToolChain[VM]", "[turn=$turn] block[$blockIdx] status→$finalStatus title=${result.toolTitle} contentLen=${finalContent.length}")
+                allToolBlocks[blockIdx] = allToolBlocks[blockIdx].copy(
+                    toolStatus = finalStatus,
+                    content = finalContent,
+                    toolTitle = result.toolTitle.ifEmpty { allToolBlocks[blockIdx].toolTitle },
+                    durationMs = elapsed,
+                    browserURL = result.pageURL ?: allToolBlocks[blockIdx].browserURL,
+                    imageFilePath = result.imageFilePath ?: allToolBlocks[blockIdx].imageFilePath,
+                )
+            }
+
+            // [T-truncated-args-visibility #119] Tell the MODEL its own
+            // arguments were altered. Writes never reach here (refused
+            // above); this covers the tools we still run repaired, where the
+            // model would otherwise assume the args it emitted were the args
+            // that ran. Mirrors iOS ConcurrentTools.
+            val outputForLLMWithNote = if (truncationRepairTag != null) {
+                outputForLLM + "\n\n<system-reminder>The argument stream for this call was " +
+                    "truncated in transit and auto-closed by the client (repair strategy: " +
+                    "$truncationRepairTag) before execution. The arguments actually used may be " +
+                    "incomplete — verify the result and re-issue the call with complete " +
+                    "arguments if anything is missing.</system-reminder>"
+            } else {
+                outputForLLM
+            }
+
+            resultParts.add(AgentContentPart.ToolResult(
+                id = id,
+                name = name,
+                content = outputForLLMWithNote,
+                isError = !result.success,
+                imageData = result.imageData,
+                imageMimeType = result.imageMimeType,
+                imageLinuxPath = result.imageLinuxPath,
+            ))
+        }
+
+        return resultParts
+    }
+
+    private suspend fun runAgentLoop(
+        provider: LLMProvider,
+        promptInput: PromptProfiles.Input,
+        fallbackProviders: List<FallbackCandidate> = emptyList(),
+        fallbackStrategy: com.openminis.app.data.model.FallbackStrategy = com.openminis.app.data.model.FallbackStrategy.default,
+        explicitImageRequest: Boolean = false,
+        allowQueuedInterruption: Boolean = true,
+        onTerminalFailure: () -> Unit,
+        onTerminalAssistantSaved: (String?, String?) -> Unit = { _, _ -> }, // nanoMuse: final row and finish reason for verified receipts.
+    ): Boolean {
+        // The caller skips model-specific completion hooks when a queued shortcut
+        // itself produced the final answer.
+        var completedImageShortcut = false
+        // nanoMuse: every write in this loop belongs to the Pet present when its tracker run began.
+        val petRunGeneration = nmPetGenerationForJob(kotlin.coroutines.coroutineContext[Job])
+        AppLogger.info(TAG_STREAM, "runAgentLoop ENTER provider=${provider.javaClass.simpleName} historySize=${agentHistory.size}")
+        nmLogAgentContextShape()
         // [T-android-queued-message-interrupt-on-toolclose] `assistantId` is
         // normally a single message id for the whole agent loop (iOS-parity:
         // multiple tool/text turns folded into one bubble). It is reassigned
@@ -7749,11 +9139,84 @@ class ChatViewModel(
 
         // Fallback state — mirrors iOS streamWithGroupFallback
         var currentProvider = provider
+        val tamaV2Test = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        // In the isolated build, selecting a fallback is provisional until that route answers.
+        val nmFallbackCommit = if (tamaV2Test) ai.tama.router.FallbackCommit() else null
+        var nmManualFallback: FallbackCandidate? = null
+        val nmLoopSession = realSessionId.ifEmpty { sessionId }
+        // nanoMuse: capture the last persisted binding after prior queued selections.
+        // A later, independent DB writer must make the fallback compare-and-set fail.
+        val nmLoopJob = kotlin.coroutines.coroutineContext[Job]
+        var nmPersistedBinding = if (tamaV2Test && realSessionId.isNotEmpty()) try {
+            chatRepository.nmBindingSnapshot(nmLoopSession)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            Log.w(TAG, "Model binding could not be read")
+            null
+        } else null
+        data class ConfirmedRoute(
+            val client: LLMProvider, val entryId: String, val providerId: String,
+            val configuredModel: LLMModel, val activeModel: LLMModel?, val route: String,
+            val accountVersion: Long, val modelName: String, val providerName: String,
+            val groupId: String?, val groupName: String, val groupMember: Boolean,
+        )
+        fun captureConfirmedRoute(): ConfirmedRoute? {
+            if (this@ChatViewModel.currentProvider !== currentProvider) return null
+            val config = providerRepository.config.value
+            val entry = config.modelEntries.find { it.id == _activeEntryId.value } ?: return null
+            if (entry.model.id != currentProvider.model.id) return null
+            val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return null
+            val route = nmRouteFingerprint(currentProvider) ?: return null
+            val groupId = _selectedGroupId.value
+            val groupMember = groupId?.let { id ->
+                config.modelGroups.find { it.id == id }?.memberEntryIds?.contains(entry.id)
+            } == true
+            return ConfirmedRoute(currentProvider, entry.id, instance.id, entry.model,
+                currentModel, route, AutoModelRuntime.accountVersion(instance.id),
+                _modelName.value, _providerName.value, groupId, _selectedGroupName.value, groupMember)
+        }
+        var nmConfirmedRoute = if (tamaV2Test) captureConfirmedRoute() else null
+        fun restoreConfirmedRoute() {
+            val snapshot = nmConfirmedRoute
+            val config = providerRepository.config.value
+            val entry = snapshot?.let { saved -> config.modelEntries.find { it.id == saved.entryId } }
+            val instance = snapshot?.let { saved -> config.instances.find { it.id == saved.providerId } }
+            val valid = snapshot != null && entry != null && instance != null &&
+                entry.providerInstanceId == instance.id && entry.model == snapshot.configuredModel &&
+                !entry.isHidden && instance.isEnabled && instance.providerType.isUsable &&
+                providerRepository.hasAnyCredential(instance) &&
+                AutoModelRuntime.accountVersion(instance.id) == snapshot.accountVersion &&
+                AutoModelStore.historyFingerprint(context, instance) == snapshot.route &&
+                (snapshot.groupId == null || config.modelGroups.any {
+                    it.id == snapshot.groupId &&
+                        (if (snapshot.groupMember) entry.id in it.memberEntryIds else
+                            AutoModelStore.enabled(context) && AutoModelStore.approved(context, AutoModelStore.identity(entry, instance)))
+                })
+            if (valid && snapshot != null) {
+                this@ChatViewModel.currentProvider = snapshot.client
+                currentModel = snapshot.activeModel
+                _activeEntryId.value = snapshot.entryId
+                _modelName.value = snapshot.modelName
+                _providerName.value = snapshot.providerName
+                _selectedGroupId.value = snapshot.groupId
+                _selectedGroupName.value = snapshot.groupName
+            } else {
+                // A credential, route or group changed while waiting. Never resurrect its old client.
+                this@ChatViewModel.currentProvider = null
+                currentModel = null
+                _activeEntryId.value = null
+                _modelName.value = ""
+                _providerName.value = ""
+            }
+        }
         // nanoMuse: prepare one outbound view and use it for both measurement and sending.
         // Original messages remain intact. Rebuilding the view on Continue reuses hashed files.
         var contextEstimate = ContextEstimate.Calibration()
         val usageMeter = ContextUsageMeter()
         var calibrationKey: String? = null
+        // nanoMuse: a one-off provider may retry, but must not persist a synthetic route identity.
+        var durableOutputKey: String? = null
         var calibratedModel: String? = null
         var preparedMessages: List<LLMMessage>? = null
         var requestBudget = ContextBudget.forModel(0, 0)
@@ -7762,16 +9225,398 @@ class ChatViewModel(
         val trimStore = ContextTrimStore(java.io.File(context.filesDir,
             "minis-sessions/${realSessionId.ifEmpty { sessionId }}/offloads/tools"))
 
+        // nanoMuse: opaque reasoning and thought signatures never cross a model/instance
+        // boundary. The saved history, tool calls and completed results remain untouched.
+        fun nmRequestHistory(): List<LLMMessage> {
+            val instanceId = providerRepository.config.value.modelEntries
+                .find { it.id == _activeEntryId.value && it.model.id == currentProvider.model.id }
+                ?.takeIf { this@ChatViewModel.currentProvider === currentProvider }
+                ?.providerInstanceId
+            return ai.tama.router.ModelRouteHistory.forProvider(
+                effectiveAgentHistory(), instanceId, currentProvider.model.id, nmRouteFingerprint(currentProvider),
+            )
+        }
+
+        // nanoMuse: this state belongs to the user turn, not the provider. A fallback
+        // rebuilds prefix, tools, limits and estimates for its own actual request.
+        var nmRoute = nmRouteLatest()
+        var nmCurrentInput = promptInput
+        var nmUsedTools = false
+        // At most one native image call per explicit person turn. A failure can
+        // still have been charged, so a model's retry must not dispatch again.
+        val nmImageGuard = ai.tama.router.ImageTurnGuard(explicitImageRequest)
+        var nmWarnedWithoutTools = false
+        var nmAttempt: TurnRequestPlanner.Attempt? = null
+        // Captured at dispatch, not looked up later after a settings change.
+        var nmLastSentRoute: String? = null
+        var nmSystemPrompt: String? = null
+        var nmRequestTools: List<AgentToolDefinition> = emptyList()
+        fun nmProviderPrefix(): String =
+            if ((currentProvider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true)
+                io.github.nanomuse.cloud.ClaudeSignIn.identifier else ""
+        fun nmPlan(
+            messages: List<LLMMessage>, budget: ProviderBudget,
+            requestLimit: Long? = null, minimumProfile: Profile = Profile.LEAN,
+        ): TurnRequestPlanner.Attempt? =
+            TurnRequestPlanner.prepare(nmCurrentInput, originalAgentTools(), nmRoute, budget,
+                nmProviderPrefix(), requestLimit, minimumProfile) { prompt, tools ->
+                val raw = ContextEstimate.request(messages, prompt, tools, imageTokens = BPETokenizer::countImageTokens)
+                // Calibration can raise the estimate; never use a downward calibration as quota evidence.
+                maxOf(raw, contextEstimate.estimate(raw))
+            }
+        fun nmInstall(attempt: TurnRequestPlanner.Attempt) {
+            nmAttempt = attempt
+            nmRoute = attempt.route
+            nmSystemPrompt = attempt.system
+            nmRequestTools = attempt.tools
+            _nmActiveProfile.value = attempt.route.profile
+        }
+
+        // A deliberately supplied one-turn provider remains a manual choice. Automatic
+        // routing is opt-in and never sends to a model without per-route cost consent.
+        val nmAutoTurn = if (AutoModelStore.enabled(context) && this@ChatViewModel.currentProvider === provider)
+            AutoModelTurn(AutoModelRuntime.health, modelScopedRateLimits = tamaV2Test) else null
+        if (nmAutoTurn != null && nmPreferredAutoEntryId == null) nmPreferredAutoEntryId = _activeEntryId.value
+        var nmAutoCandidate: ModelRouter.Candidate? = null
+        var nmAutoIdentity: AutoModelStore.Identity? = null
+        var nmAutoClientAccountVersion: Long? = null
+        var nmAutoNewUserTurn = true
+        val nmAutoLocalBlocks = mutableMapOf<String, String>()
+        class AutoDispatchBlocked(val entryId: String, val explanation: String) : Exception(explanation)
+
+        data class AutoChoice(
+            val candidate: ModelRouter.Candidate,
+            val entry: ModelEntry,
+            val instance: ProviderInstance,
+            val identity: AutoModelStore.Identity,
+            val model: LLMModel,
+            val accountVersion: Long,
+            val groupId: String?,
+            val groupMembers: List<String>?,
+            val switchReason: String? = null,
+        )
+        var nmAutoActiveChoice: AutoChoice? = null
+        fun nmAutoNeeds(messages: List<LLMMessage>): Set<Need> = buildSet {
+            // Image generation is a separate endpoint, not a property required of
+            // the chat model. The media path must authorize its own image model.
+            addAll(nmRoute.needs - Need.IMAGE_GENERATION)
+            if (messages.any { message -> message.imageParts.isNotEmpty() || message.contentParts.any { part ->
+                    part is AgentContentPart.ImageData || (part is AgentContentPart.ToolResult && part.imageData != null)
+                } }) add(Need.VISION)
+        }
+        fun nmAutoCapabilities(entry: ModelEntry, instance: ProviderInstance): Set<Need> {
+            val vendor = io.github.nanomuse.cloud.ProviderCatalogue.match(
+                io.github.nanomuse.cloud.ProviderCatalogue.load(context), instance,
+            )
+            val identity = AutoModelStore.identity(entry, instance)
+            val caps = AutoModelStore.capabilities(context, identity,
+                vendor?.models?.get(entry.model.id)?.capabilities.orEmpty()).toMutableSet()
+            val auth = vendor?.let { io.github.nanomuse.cloud.ProviderCatalogue.authOf(instance, it) }
+            val authCaps = auth?.let { vendor?.authCapabilities?.get(it) }
+            if (authCaps != null) {
+                if ("chat" !in authCaps) caps.remove(Need.CHAT)
+                if ("vision" !in authCaps) caps.remove(Need.VISION)
+                if ("image" !in authCaps) caps.remove(Need.IMAGE_GENERATION)
+            }
+            return caps
+        }
+        fun nmAutoModel(entry: ModelEntry, caps: Set<Need>): LLMModel {
+            val model = entry.model
+            // The serializers consult model modalities, so confirmed vision must be
+            // reflected there rather than guessed from the model name.
+            val inputs = model.inputModalities.orEmpty().filterNot { it.normalizeModalityName() == "image" }
+            return model.copy(inputModalities = (inputs + if (Need.VISION in caps) listOf("image") else emptyList())
+                .ifEmpty { listOf("text") })
+        }
+        fun nmAutoCandidates(): List<AutoChoice> {
+            val config = providerRepository.config.value
+            val catalogue = io.github.nanomuse.cloud.ProviderCatalogue.load(context)
+            // nanoMuse: in the parallel build, try the chosen group in its given order
+            // before considering approved entries belonging to other providers.
+            val selectedGroupId = _selectedGroupId.value
+            val selectedMembers = if (tamaV2Test) selectedGroupId?.let { id ->
+                config.modelGroups.find { it.id == id }?.memberEntryIds?.toList()
+            } else null
+            val groupMembers = selectedMembers?.distinct().orEmpty()
+            return config.modelEntries.toList().mapNotNull { entry ->
+                val instance = config.instances.find { it.id == entry.providerInstanceId } ?: return@mapNotNull null
+                val identity = AutoModelStore.identity(entry, instance)
+                val caps = nmAutoCapabilities(entry, instance)
+                val model = nmAutoModel(entry, caps)
+                val credentialed = providerRepository.hasAnyCredential(instance) &&
+                    instance.providerType !in setOf(ProviderType.antigravity, ProviderType.unsupported)
+                val budget = nmBudgetForEntry(entry.id, entry.model.id)
+                val vendor = io.github.nanomuse.cloud.ProviderCatalogue.match(catalogue, instance)
+                val knownWindow = entry.model.contextWindow ?: vendor?.models?.get(entry.model.id)?.limits?.context
+                val groupWindow = _selectedGroupId.value?.let { id ->
+                    config.modelGroups.find { it.id == id }
+                        ?.takeIf { !tamaV2Test || entry.id in it.memberEntryIds }
+                        ?.contextLimitTokens?.takeIf { it > 0 }
+                }
+                val preference = if (groupMembers.isNotEmpty()) {
+                    groupMembers.indexOf(entry.id).takeIf { it >= 0 } ?: groupMembers.size
+                } else null
+                val candidate = ModelRouter.Candidate(
+                    entryId = entry.id, providerId = instance.id, capabilities = caps,
+                    profile = nmRoute.requestedProfile, inputTokens = null, outputTokens = null,
+                    contextLimit = listOfNotNull(knownWindow, groupWindow).minOrNull(),
+                    tokensPerMinute = budget.tokensPerMinute, enabled = instance.isEnabled,
+                    visible = !entry.isHidden, credentialed = credentialed,
+                    automaticApproved = AutoModelStore.approved(context, identity),
+                    automaticCostAllowed = ai.tama.router.AutomaticCostGuard.permits(context),
+                    preference = preference,
+                )
+                AutoChoice(candidate, entry, instance, identity, model, AutoModelRuntime.accountVersion(instance.id),
+                    if (tamaV2Test) selectedGroupId else null, selectedMembers)
+            }
+        }
+
+        // nanoMuse: a refresh or request preparation can suspend while settings change.
+        // Re-read the live configuration before touching consent or installing a client.
+        fun nmAutoChoiceStillEligible(choice: AutoChoice): Boolean {
+            if (!AutoModelStore.enabled(context) || _selectedGroupId.value != choice.groupId ||
+                !ai.tama.router.AutomaticCostGuard.permits(context)) return false
+            val live = providerRepository.config.value
+            if (choice.groupId != null) {
+                val group = live.modelGroups.find { it.id == choice.groupId } ?: return false
+                if (group.memberEntryIds.toList() != choice.groupMembers) return false
+            }
+            val entry = live.modelEntries.find { it.id == choice.entry.id } ?: return false
+            val instance = live.instances.find { it.id == entry.providerInstanceId } ?: return false
+            if (entry.model != choice.entry.model || entry.isHidden || !instance.isEnabled ||
+                !instance.providerType.isUsable || instance.providerType == ProviderType.antigravity ||
+                !providerRepository.hasAnyCredential(instance) || AutoModelStore.identity(entry, instance) != choice.identity ||
+                AutoModelRuntime.accountVersion(instance.id) != choice.accountVersion) return false
+            if (!AutoModelStore.approved(context, choice.identity)) return false
+            val capabilities = nmAutoCapabilities(entry, instance)
+            return capabilities == choice.candidate.capabilities && nmAutoModel(entry, capabilities) == choice.model
+        }
+
+        // Fit against the very same account snapshot the selector uses. A partial minute
+        // lowers the profile (or output) on the sticky model before considering another.
+        fun nmAutoFit(choice: AutoChoice, messages: List<LLMMessage>, snapshot: ModelHealth.Snapshot): ModelRouter.Candidate {
+            val candidate = choice.candidate
+            val needs = nmAutoNeeds(messages)
+            if (!candidate.enabled || !candidate.visible || !candidate.credentialed || !candidate.automaticApproved ||
+                !candidate.automaticCostAllowed || !candidate.capabilities.containsAll(needs) || snapshot.cooldown != null) return candidate
+            val entry = choice.entry
+            val instance = choice.instance
+            val budget = nmBudgetForEntry(entry.id, entry.model.id)
+            // Another model starts with the requested profile. On the same model retain
+            // a prior 413 downgrade instead of resending the rejected larger request.
+            val intended = if (nmAutoCandidate?.entryId == entry.id) nmRoute
+                else nmRoute.copy(profile = nmRoute.requestedProfile, budgetLimited = false)
+            val minimum = if (Need.TOOLS in needs) Profile.BASIC else Profile.LEAN
+            if (intended.profile < minimum) return candidate.copy(fitFailure = ModelRouter.Reason.PROFILE_TOO_SMALL)
+            val history = ai.tama.router.ModelRouteHistory.forProvider(
+                messages, instance.id, entry.model.id, AutoModelStore.historyFingerprint(context, instance),
+            )
+            val prefix = if (instance.providerType == ProviderType.anthropic &&
+                instance.credentialType == ProviderCredential.oauth) io.github.nanomuse.cloud.ClaudeSignIn.identifier else ""
+            val calibrationRoute = "${instance.id}|${instance.providerType}|${instance.customBaseURL.orEmpty()}|" +
+                "${instance.appendV1Suffix}|${instance.useResponsesAPI}"
+            val calibration = nmCalibrationStore.load(calibrationRoute, entry.model.id)
+            val tools = originalAgentTools(choice.model)
+            fun plan(limit: Long?): TurnRequestPlanner.Attempt? = TurnRequestPlanner.prepare(
+                nmCurrentInput, tools, intended, budget, prefix, limit, minimum,
+            ) { system, definitions ->
+                val raw = ContextEstimate.request(history, system, definitions, imageTokens = BPETokenizer::countImageTokens)
+                maxOf(raw, calibration.estimate(raw))
+            }
+            val available = TurnRequestPlanner.requestLimit(budget, snapshot.usedThisMinute, candidate.contextLimit)
+            val attempt = plan(available)
+            if (attempt == null) {
+                val failure = when {
+                    plan(null) == null -> ModelRouter.Reason.UNKNOWN_REQUEST_SIZE
+                    candidate.contextLimit != null && plan(candidate.contextLimit.toLong()) == null -> ModelRouter.Reason.CONTEXT_LIMIT
+                    else -> ModelRouter.Reason.MINUTE_LIMIT
+                }
+                return candidate.copy(profile = intended.profile, fitFailure = failure)
+            }
+            val defaultOutput = if (instance.providerType == ProviderType.anthropic) 64_000 else 16_384
+            val ceiling = minOf(GLOBAL_MAX_TOKENS_CEILING, choice.model.maxOutputTokens ?: defaultOutput)
+            val output = TurnRequestPlanner.outputLimit(ceiling, budget, attempt.inputEstimate, available)
+            return candidate.copy(profile = attempt.route.profile, inputTokens = attempt.inputEstimate,
+                outputTokens = output, fitFailure = null, tokensPerMinute = budget.tokensPerMinute)
+        }
+        fun nmAutoReason(reason: ModelRouter.Reason): String = context.getString(when (reason) {
+            ModelRouter.Reason.DISABLED -> R.string.nm_auto_reason_disabled
+            ModelRouter.Reason.HIDDEN -> R.string.nm_auto_reason_hidden
+            ModelRouter.Reason.NO_CREDENTIAL -> R.string.nm_auto_reason_credential
+            ModelRouter.Reason.NOT_APPROVED -> R.string.nm_auto_reason_consent
+            ModelRouter.Reason.UNVERIFIED_COST -> R.string.nm_auto_reason_unverified_cost
+            ModelRouter.Reason.MISSING_CAPABILITY -> R.string.nm_auto_reason_capability
+            ModelRouter.Reason.PROFILE_TOO_SMALL -> R.string.nm_auto_reason_profile
+            ModelRouter.Reason.UNKNOWN_REQUEST_SIZE -> R.string.nm_auto_reason_size
+            ModelRouter.Reason.CONTEXT_LIMIT -> R.string.nm_auto_reason_context
+            ModelRouter.Reason.MINUTE_LIMIT -> R.string.nm_auto_reason_minute
+            ModelRouter.Reason.COOLDOWN -> R.string.nm_auto_reason_cooldown
+            ModelRouter.Reason.EXCLUDED -> R.string.nm_auto_reason_excluded
+            ModelRouter.Reason.DUPLICATE_ID -> R.string.nm_auto_reason_duplicate
+        })
+        fun nmAutoFailureReason(reason: ModelHealth.Failure): String = context.getString(when (reason) {
+            ModelHealth.Failure.RATE_LIMIT -> R.string.nm_auto_failure_rate
+            ModelHealth.Failure.QUOTA -> R.string.nm_auto_failure_quota
+            ModelHealth.Failure.NO_CREDIT -> R.string.nm_auto_failure_credit
+            ModelHealth.Failure.KEY_SPEND_LIMIT -> R.string.nm_reach_key_zero_title
+            ModelHealth.Failure.AUTH -> R.string.nm_auto_failure_auth
+            ModelHealth.Failure.SERVER -> R.string.nm_auto_failure_server
+            ModelHealth.Failure.NETWORK -> R.string.nm_auto_failure_network
+            ModelHealth.Failure.REQUEST_TOO_LARGE -> R.string.nm_auto_failure_size
+        })
+        fun nmAutoWait(until: Long?): String = if (until == null) context.getString(R.string.nm_auto_wait_unknown) else {
+            val remaining = (until - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+            context.getString(R.string.nm_auto_wait_seconds, ((remaining + 999L) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        }
+        fun nmAutoNoCandidate(choices: List<AutoChoice>, none: ModelRouter.Choice.None): LLMError.ProviderError {
+            val labels = choices.associate { it.entry.id to it.entry.model.displayName }
+            val byEntry = nmAutoTurn?.failureRecords().orEmpty().associateBy { it.entryId }
+            val details = none.rejected.map { rejected ->
+                val failed = byEntry[rejected.entryId]
+                val reason = if (failed != null) "${nmAutoFailureReason(failed.reason)} · ${nmAutoWait(failed.cooldown.untilMillis)}"
+                    else if (nmAutoLocalBlocks.containsKey(rejected.entryId)) nmAutoLocalBlocks.getValue(rejected.entryId)
+                    else if (rejected.reason == ModelRouter.Reason.COOLDOWN)
+                        "${nmAutoReason(rejected.reason)} · ${nmAutoWait(rejected.untilMillis)}"
+                    else nmAutoReason(rejected.reason)
+                "• ${labels[rejected.entryId] ?: rejected.entryId}: $reason"
+            }
+            return LLMError.ProviderError((listOf(context.getString(R.string.nm_auto_none)) + details).joinToString("\n"))
+        }
+        suspend fun nmAutoSelect(stickyEntryId: String?): AutoChoice {
+            val turnState = checkNotNull(nmAutoTurn)
+            while (true) {
+                if (!AutoModelStore.enabled(context)) throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+                val messages = applyRequestImageBudget(effectiveAgentHistory(), preview = true)
+                val choices = nmAutoCandidates()
+                when (val selection = turnState.pick(choices.map { it.candidate }, nmAutoNeeds(messages), stickyEntryId) { candidate, snapshot ->
+                    nmAutoFit(choices.first { it.candidate === candidate }, messages, snapshot)
+                }) {
+                    is ModelRouter.Choice.None -> throw nmAutoNoCandidate(choices, selection)
+                    is ModelRouter.Choice.Selected -> {
+                        val selected = choices.first { it.entry.id == selection.candidate.entryId }
+                        val why = when (val cause = ai.tama.router.AutoSwitchReason.forSwitch(
+                            _activeEntryId.value, selection.candidate.entryId, turnState.failureRecords(),
+                            nmAutoLocalBlocks, selection.rejected,
+                        )) {
+                            is ai.tama.router.AutoSwitchReason.Cause.Failure -> nmAutoFailureReason(cause.reason)
+                            is ai.tama.router.AutoSwitchReason.Cause.Local -> cause.explanation
+                            is ai.tama.router.AutoSwitchReason.Cause.Rejected -> nmAutoReason(cause.reason)
+                            null -> null
+                        }
+                        // The actual reservation below checks the live ledger again atomically.
+                        return selected.copy(candidate = selection.candidate, switchReason = why)
+                    }
+                }
+            }
+        }
+        suspend fun nmAutoActivate(choice: AutoChoice) {
+            // nanoMuse: a candidate is a snapshot, not permission to use stale settings.
+            if (tamaV2Test && !nmAutoChoiceStillEligible(choice)) {
+                throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+            }
+            val config = providerRepository.config.value
+            val entry = config.modelEntries.find { it.id == choice.entry.id && it.model.id == choice.entry.model.id }
+            val instance = entry?.let { found -> config.instances.find { it.id == found.providerInstanceId } }
+            if (entry == null || instance == null || !instance.isEnabled || entry.isHidden ||
+                AutoModelStore.identity(entry, instance) != choice.identity || !providerRepository.hasAnyCredential(instance) ||
+                !AutoModelStore.approved(context, choice.identity) ||
+                AutoModelRuntime.accountVersion(instance.id) != choice.accountVersion) {
+                throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+            }
+            val priorName = currentProvider.model.displayName
+            val priorEntryId = _activeEntryId.value
+            val priorGroupId = _selectedGroupId.value
+            if (nmAutoIdentity != choice.identity || nmAutoClientAccountVersion != choice.accountVersion ||
+                currentProvider.model != choice.model || this@ChatViewModel.currentProvider !== currentProvider) {
+                var key = providerRepository.usableApiKey(instance).orEmpty()
+                if (instance.credentialType == ProviderCredential.oauth && instance.providerType == ProviderType.anthropic) {
+                    if (tamaV2Test) {
+                        val refreshed = try { nmGuardedOAuthRefresh(instance) }
+                        catch (e: CancellationException) { throw e }
+                        catch (_: Exception) { throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn)) }
+                        if (!nmAutoChoiceStillEligible(choice) || refreshed.snapshot.version != choice.accountVersion ||
+                            !providerRepository.nmOAuthKeyStillCurrent(refreshed.snapshot)) {
+                            throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+                        }
+                        key = refreshed.freshKey ?: refreshed.oldKey.orEmpty()
+                    } else {
+                        val fresh = com.openminis.app.auth.OAuthManager.forInstance(context, instance)?.validAccessToken()
+                        if (fresh != null) {
+                            key = fresh
+                            providerRepository.saveApiKey(instance.id, fresh, oauthRefresh = true)
+                        }
+                    }
+                }
+                // The account, model, group or capabilities may change during OAuth.
+                if (if (tamaV2Test) !nmAutoChoiceStillEligible(choice) else
+                        !AutoModelStore.approved(context, choice.identity) ||
+                            AutoModelRuntime.accountVersion(instance.id) != choice.accountVersion) {
+                    throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+                }
+                val client = nmCreateProvider(instance, key, choice.model)
+                if (if (tamaV2Test) !nmAutoChoiceStillEligible(choice) else
+                        AutoModelRuntime.accountVersion(instance.id) != choice.accountVersion ||
+                            !AutoModelStore.approved(context, choice.identity)) {
+                    throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+                }
+                fun installClient() {
+                    currentProvider = client
+                    this@ChatViewModel.currentProvider = client
+                    _activeEntryId.value = entry.id
+                    currentModel = choice.model
+                    _modelName.value = choice.model.displayName
+                    _providerName.value = instance.label.ifEmpty { choice.model.provider }
+                    nmAutoIdentity = choice.identity
+                    nmAutoClientAccountVersion = choice.accountVersion
+                    preparedMessages = null
+                    if (priorEntryId != entry.id) {
+                        nmFallbackCommit?.switched(entry.id, _selectedGroupId.value)
+                        nmRoute = nmRoute.copy(profile = nmRoute.requestedProfile, budgetLimited = false)
+                        _fallbackTrigger.value++
+                    }
+                }
+                if (tamaV2Test) withContext(Dispatchers.Main) {
+                    // nanoMuse: an OAuth refresh may suspend while a person changes the
+                    // model or chat. Never replace that newer choice with this old turn.
+                    val liveInstance = providerRepository.config.value.instances.find { it.id == choice.identity.providerId }
+                    if (nmLoopSession != realSessionId.ifEmpty { sessionId } ||
+                        this@ChatViewModel.currentProvider !== currentProvider ||
+                        _activeEntryId.value != priorEntryId || _selectedGroupId.value != priorGroupId ||
+                        !nmAutoChoiceStillEligible(choice) || liveInstance == null ||
+                        nmRouteFingerprint(client) != AutoModelStore.historyFingerprint(context, liveInstance)) {
+                        throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+                    }
+                    installClient()
+                } else installClient()
+                if (priorEntryId != entry.id) {
+                    withContext(Dispatchers.Main) {
+                        val notice = when {
+                            choice.switchReason != null -> context.getString(
+                                R.string.nm_auto_switch_reason, priorName, choice.switchReason, choice.model.displayName)
+                            entry.id == nmPreferredAutoEntryId -> context.getString(R.string.nm_auto_return, choice.model.displayName)
+                            else -> context.getString(R.string.nm_auto_switch, priorName, choice.model.displayName)
+                        }
+                        if (!tamaV2Test || (nmLoopSession == realSessionId.ifEmpty { sessionId } &&
+                                this@ChatViewModel.currentProvider === client)) appendSystemInfo(notice, "info")
+                    }
+                }
+            }
+            nmAutoCandidate = choice.candidate
+            nmAutoActiveChoice = choice
+        }
+
         fun alignContextEstimate() {
             val config = providerRepository.config.value
             val entry = config.modelEntries.find { it.id == _activeEntryId.value }
                 ?.takeIf { it.model.id == currentProvider.model.id }
             val instance = entry?.let { e -> config.instances.find { it.id == e.providerInstanceId } }
             // Store only the hashed identity. An unbound one-off provider gets an isolated key.
-            val key = if (instance != null && this@ChatViewModel.currentProvider === currentProvider) {
+            val boundRoute = instance != null && this@ChatViewModel.currentProvider === currentProvider
+            val key = if (boundRoute && instance != null) {
                 "${instance.id}|${instance.providerType}|${instance.customBaseURL.orEmpty()}|" +
                     "${instance.appendV1Suffix}|${instance.useResponsesAPI}"
             } else "${currentProvider.javaClass.name}|${System.identityHashCode(currentProvider)}"
+            durableOutputKey = key.takeIf { boundRoute } // nanoMuse: never retain one-off route identifiers.
             if (key != calibrationKey || calibratedModel != currentProvider.model.id) {
                 contextEstimate = nmCalibrationStore.load(key, currentProvider.model.id)
                 usageMeter.clear()
@@ -7782,24 +9627,24 @@ class ChatViewModel(
             nmHistoryCalibration = contextEstimate
             val window = effectiveContextWindowTokens(currentProvider) ?: currentProvider.model.contextWindowTokens
             val fixed = contextEstimate.estimate(ContextEstimate.request(
-                emptyList(), systemPrompt, agentTools,
+                emptyList(), nmSystemPrompt, nmRequestTools,
             ))
             requestBudget = ContextBudget.forModel(window,
                 currentProvider.effectiveMaxOutputTokens(nmResolvedModel(currentProvider)), fixed)
             nmHistoryBudget = requestBudget
         }
         fun rawTokens(messages: List<LLMMessage>): Int = ContextEstimate.request(
-            messages, systemPrompt, agentTools, imageTokens = BPETokenizer::countImageTokens,
+            messages, nmSystemPrompt, nmRequestTools, imageTokens = BPETokenizer::countImageTokens,
         )
         fun measureRawTokens(): Int = rawTokens(preparedMessages ?:
-            applyRequestImageBudget(effectiveAgentHistory(), preview = true))
+            applyRequestImageBudget(nmRequestHistory(), preview = true))
         fun usageSnapshot(messages: List<LLMMessage>) = usageMeter.snapshot(
-            calibrationKey.orEmpty(), currentProvider.model.id, messages, systemPrompt, agentTools,
+            calibrationKey.orEmpty(), currentProvider.model.id, messages, nmSystemPrompt, nmRequestTools,
             requestVariant = "${currentProvider.javaClass.name}|${_thinkingLevel.value}",
         )
         fun measureContextTokens(): Int {
             alignContextEstimate()
-            val messages = preparedMessages ?: applyRequestImageBudget(effectiveAgentHistory(), preview = true)
+            val messages = preparedMessages ?: applyRequestImageBudget(nmRequestHistory(), preview = true)
             return usageMeter.estimate(usageSnapshot(messages), rawTokens(messages), contextEstimate)
                 .also { lastContextTokens = it }
         }
@@ -7809,7 +9654,7 @@ class ChatViewModel(
         } else measureRawTokens()
         suspend fun prepareContext(force: Boolean = false) {
             alignContextEstimate()
-            val source = if (force) preparedMessages ?: effectiveAgentHistory() else effectiveAgentHistory()
+            val source = if (force) preparedMessages ?: nmRequestHistory() else nmRequestHistory()
             val messages = applyRequestImageBudget(source)
             preparedMessages = messages
             // nanoMuse: trial/pre-trim views must not invalidate known usage. Only the final
@@ -7838,6 +9683,8 @@ class ChatViewModel(
         }
         val remainingFallbacks = fallbackProviders.toMutableList()
         val fallbackReasons = mutableListOf<String>()
+        var nmGroupSwitchSource: String? = null
+        var nmGroupSwitchReason: String? = null
 
         // Accumulate tool inputs across all turns (so persist includes all, not just current turn)
         val allToolInputs = mutableMapOf<String, String>()
@@ -7965,14 +9812,30 @@ class ChatViewModel(
                 "[Compact] in-loop: sealed $sealedId, continuing in $freshAssistantId below the divider",
             )
         }
+        try {
         agentTurns@ for (turn in 0 until MAX_AGENT_TURNS) {
             // Sanitize history before each API call (mirrors iOS pre-API validation)
             sanitizeAgentHistory()
+            if (nmAutoTurn != null) {
+                // The parallel app keeps the last successful route for the next turn;
+                // manual mode may still restore the person's original preference.
+                val sticky = if (nmAutoNewUserTurn && !tamaV2Test) nmPreferredAutoEntryId else _activeEntryId.value
+                nmAutoActivate(nmAutoSelect(sticky))
+                nmAutoNewUserTurn = false
+            }
 
+            // nanoMuse: fit on the prospective request before the context guard. If the raw
+            // history is too large even for LEAN, let the existing trimming guard run first;
+            // the actual prepared request must still fit before it is sent.
+            alignContextEstimate()
+            val nmPreview = applyRequestImageBudget(nmRequestHistory(), preview = true)
+            nmInstall(nmPlan(nmPreview, nmBudgetFor(currentProvider))
+                ?: checkNotNull(nmPlan(nmPreview, ProviderBudget())))
             // nanoMuse: deterministic trimming runs first and never edits saved history.
             prepareContext()
             when (inLoopContextCheck(contextMaintenance, requestBudget,
-                ::measureContextTokens, ::measureProbeTokens, { prepareContext() })) {
+                ::measureContextTokens, ::measureProbeTokens, { prepareContext() },
+                allowAutomaticCompaction = nmAutoTurn == null)) {
                 ContextMaintenance.Action.PROCEED -> {}
                 ContextMaintenance.Action.COMPACTED -> {
                     resumeAfterCompaction()
@@ -8127,7 +9990,9 @@ class ChatViewModel(
                 dedupeStartCounts[raw] = n
                 val renamed = if (n == 1) raw else "$raw-$n"
                 if (n > 1) {
-                    AppLogger.warning(TAG_STREAM, "[ToolDedupe] duplicate tool_call id on stream start: '$raw' #$n -> renamed '$renamed'")
+                    // nanoMuse: raw ids originate at the provider and are not safe diagnostic text.
+                    if (tamaV2Test) AppLogger.warning(TAG_STREAM, "Duplicate tool call id was renamed")
+                    else AppLogger.warning(TAG_STREAM, "[ToolDedupe] duplicate tool_call id on stream start: '$raw' #$n -> renamed '$renamed'")
                 }
                 inFlightRenamedId[raw] = renamed
                 return renamed
@@ -8145,703 +10010,1258 @@ class ChatViewModel(
             // so we catch at collect level and unwrap.
             var collectDone = false
             var retryAttempt = 0  // per-turn auto-retry counter (resets on each new turn)
-            while (!collectDone) {
-                try {
-                    // [T-android-enhanced-cache] Stamp the per-turn Enhanced
-                    // Cache flag onto the active provider here — the single
-                    // choke point every turn passes through, regardless of how
-                    // currentProvider was (re)assigned by the fallback loop.
-                    // Non-Anthropic providers ignore it (cast fails silently).
-                    (currentProvider as? com.openminis.app.provider.anthropic.AnthropicProvider)
-                        ?.enhancedCache = _enhancedCacheEnabled.value
-                    // [T-STALL-DIAG] First-chunk watchdog. The reported symptom
-                    // is "new session shows thinking… forever, UI empty, stop
-                    // button still armed" — which is indistinguishable, in the
-                    // current logs, between (a) the request never left, (b) it
-                    // left and the provider never answered, and (c) it answered
-                    // and the chunks were routed to the wrong session's UI.
-                    //
-                    // Stamp the request as it goes out, then have a detached
-                    // watchdog report every 10s while NOT ONE chunk has arrived.
-                    // Silence here + no network error = the request is hung
-                    // below the provider (DNS/TCP/TLS/read), which no existing
-                    // log covers. `firstChunkSeen` is flipped in the collector.
-                    val streamStartMs = android.os.SystemClock.elapsedRealtime()
-                    val firstChunkSeen = java.util.concurrent.atomic.AtomicBoolean(false)
-                    val diagSid = activeSessionId
-                    println(
-                        "[T-STALL-DIAG] stream REQUEST-OUT sid=$diagSid turn=$turn " +
-                            "provider=${currentProvider.javaClass.simpleName} " +
-                            "historySize=${agentHistory.size}",
-                    )
-                    val firstChunkWatchdog = viewModelScope.launch(Dispatchers.IO) {
-                        var waited = 0L
-                        while (!firstChunkSeen.get()) {
-                            kotlinx.coroutines.delay(10_000L)
-                            if (firstChunkSeen.get()) break
-                            waited += 10_000L
-                            println(
-                                "[T-STALL-DIAG] stream NO-FIRST-CHUNK sid=$diagSid turn=$turn " +
-                                    "waitedMs=$waited provider=${currentProvider.javaClass.simpleName} " +
-                                    "— request sent, provider has returned NOTHING (not even message_start)",
-                            )
-                        }
-                    }
+            // nanoMuse: retry only this failed request; completed tools stay in history.
+            data class PendingOutputLimit(val provider: LLMProvider, val route: String?, val model: String, val limit: Int)
+            var pendingOutput: PendingOutputLimit? = null
+            var outputRetried = false
+            var rateRetried = false
+            var lastRequestedOutput = 0
+            // nanoMuse: run the stream state machine in the same coroutine, but
+            // in a separate JVM method. A compaction restarts the outer agent turn.
+            val nmRestartAgentTurn = ai.tama.chat.AgentStreamBlock.run streamBlock@{
+                while (!collectDone) {
+                    var nmTicket: ModelHealth.Ticket? = null
+                    var nmDispatchStarted = false
+                    var nmMeasuredInput = 0
+                    var nmMeasuredOutput = 0
+                    var nmDispatchAt = 0L
+                    var nmDispatchAccountVersion: Long? = null
                     try {
-                    // Route through effectiveAgentHistory() so a populated
-                    // [_compactSummary] is prepended as a `<context-summary>`
-                    // user message. Falls through to the raw agentHistory when
-                    // no compact has happened, so the common path stays zero-copy.
-                    // nanoMuse: pair reported usage with this request, before any later tool output (#719).
-                    // nanoMuse: a fallback provider must rebuild its own budgeted view.
-                    alignContextEstimate()
-                    if (preparedMessages == null) {
-                        prepareContext()
-                        // nanoMuse: fallback to a smaller model must pass the same guard.
-                        when (inLoopContextCheck(contextMaintenance, requestBudget,
-                            ::measureContextTokens, ::measureProbeTokens, { prepareContext() })) {
-                            ContextMaintenance.Action.PROCEED -> Unit
-                            ContextMaintenance.Action.COMPACTED -> {
-                                resumeAfterCompaction()
-                                continue@agentTurns
-                            }
-                            ContextMaintenance.Action.STOP -> throw LLMError.ProviderError(
-                                context.getString(R.string.nm_context_limit_reached))
-                        }
-                    }
-                    val requestMessages = checkNotNull(preparedMessages)
-                    val requestTools = agentTools
-                    var requestUsage: LLMUsage? = null
-                    val requestSnapshot = usageSnapshot(requestMessages)
-                    val requestEstimate = io.github.nanomuse.chat.ContextEstimate.request(
-                        requestMessages, systemPrompt, requestTools,
-                        imageTokens = BPETokenizer::countImageTokens,
-                    )
-                    alignContextEstimate()
-                    // nanoMuse: a calibration-only probe uses the raw input estimate so a
-                    // false high ratio cannot squeeze the answer to a single output token.
-                    lastContextTokens = if (contextMaintenance.calibrationProbeGranted) requestEstimate
-                        else usageMeter.estimate(requestSnapshot, requestEstimate, contextEstimate)
-                    currentProvider.streamMessage(
-                        requestMessages,
-                        systemPrompt, dynamicMaxTokens(currentProvider, lastContextTokens),
-                        tools = requestTools,
-                        thinkingLevel = if (currentModelSupportsReasoning) _thinkingLevel.value else ThinkingLevel.OFF,
-                    ).collect { chunk ->
-                // [T-STALL-DIAG] Mark first byte back from the provider and log
-                // the time-to-first-chunk once per turn.
-                if (firstChunkSeen.compareAndSet(false, true)) {
-                    println(
-                        "[T-STALL-DIAG] stream FIRST-CHUNK sid=$diagSid turn=$turn " +
-                            "ttfbMs=${android.os.SystemClock.elapsedRealtime() - streamStartMs} " +
-                            "kind=${chunk.javaClass.simpleName}",
-                    )
-                }
-                when (chunk) {
-                    is LLMStreamChunk.ThinkingDelta -> {
-                        turnThinking.append(chunk.text)
-                        // Update thinking block in UI
-                        val thinkIdx = allToolBlocks.indexOfFirst { it.kind == "thinking" && it.id == "thinking_$turn" }
-                        if (thinkIdx < 0) {
-                            allToolBlocks.add(AssistantBlock(
-                                id = "thinking_$turn",
-                                kind = "thinking",
-                                content = turnThinking.toString(),
-                                toolTitle = "Thinking",
-                            ))
-                        } else {
-                            allToolBlocks[thinkIdx] = allToolBlocks[thinkIdx].copy(content = turnThinking.toString())
-                        }
-                        withContext(Dispatchers.Main) {
-                            updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
-                        }
-                    }
-                    is LLMStreamChunk.Text -> {
-                        // [T-android-readaloud-stop-stale] First actual text of
-                        // this reply — stop the previous reply's Read Aloud so
-                        // old and new audio don't overlap. Deferred to here
-                        // rather than fired from send() on purpose: while the
-                        // model is still thinking there is nothing to supersede
-                        // the old speech with, so it keeps playing until real
-                        // new text arrives.
-                        if (!didStopStaleReadAloud) {
-                            didStopStaleReadAloud = true
-                            _stopStaleReadAloud.tryEmit(Unit)
-                        }
-                        // Mark thinking block as done when text starts flowing
-                        val thinkIdx = allToolBlocks.indexOfFirst { it.kind == "thinking" && it.id == "thinking_$turn" }
-                        if (thinkIdx >= 0 && allToolBlocks[thinkIdx].toolStatus != ToolBlockStatus.SUCCESS) {
-                            allToolBlocks[thinkIdx] = allToolBlocks[thinkIdx].copy(toolStatus = ToolBlockStatus.SUCCESS)
-                        }
-                        // T307: append-only on the StringBuilder; .toString()
-                        // is taken once below at flush time, not per delta.
-                        turnTextSb.append(chunk.text)
-                        // Append to the trailing text block — or open a new one if the last
-                        // block isn't a text block (i.e. a tool call or thinking was in between).
-                        // This preserves the chronological interleaving of text and tool calls
-                        // across a single assistant turn. The block's `content` field stays
-                        // immutable String — we keep a parallel StringBuilder for the active
-                        // block and materialise via .toString() only on flush.
-                        val lastIdx = allToolBlocks.lastIndex
-                        val monolithic = currentProvider.streamTextIsMonolithic
-                        val activeSb = if (monolithic && turnTextBlockIdx >= 0 && currentTextBlockSb != null) {
-                            // [T-android-tool-splits-reply-fix] Chat Completions
-                            // content is ONE string per response — a content
-                            // delta arriving after tool_calls deltas (qwen
-                            // chunking artifact) is still part of the same
-                            // pre-tool sentence. Merge it back instead of
-                            // fabricating a post-tool text block, which split
-                            // sentences mid-word in the chat UI. Scope: this
-                            // streamed response only (see turnTextBlockIdx).
-                            if (!loggedPostToolTextMerge &&
-                                allToolBlocks.subList(turnTextBlockIdx + 1, allToolBlocks.size).any { it.kind == "tool_use" }
-                            ) {
-                                loggedPostToolTextMerge = true
-                                AppLogger.info(
-                                    TAG_STREAM,
-                                    "[T-android-tool-splits-reply-fix] post-tool_calls content delta merged into pre-tool text block (model=${currentProvider.model.id})",
+                        // nanoMuse: a failed partial stream cannot confirm the next attempt's cap
+                        // or carry its finish reason, reasoning or usage into another provider.
+                        turnFinishReason = null
+                        turnReasoningBlob = null
+                        lastUsage = null
+                        lastRequestedOutput = 0
+                        // [T-android-enhanced-cache] Stamp the per-turn Enhanced
+                        // Cache flag onto the active provider here — the single
+                        // choke point every turn passes through, regardless of how
+                        // currentProvider was (re)assigned by the fallback loop.
+                        // Non-Anthropic providers ignore it (cast fails silently).
+                        (currentProvider as? com.openminis.app.provider.anthropic.AnthropicProvider)
+                            ?.enhancedCache = _enhancedCacheEnabled.value
+                        // [T-STALL-DIAG] First-chunk watchdog. The reported symptom
+                        // is "new session shows thinking… forever, UI empty, stop
+                        // button still armed" — which is indistinguishable, in the
+                        // current logs, between (a) the request never left, (b) it
+                        // left and the provider never answered, and (c) it answered
+                        // and the chunks were routed to the wrong session's UI.
+                        //
+                        // Stamp the request as it goes out, then have a detached
+                        // watchdog report every 10s while NOT ONE chunk has arrived.
+                        // Silence here + no network error = the request is hung
+                        // below the provider (DNS/TCP/TLS/read), which no existing
+                        // log covers. `firstChunkSeen` is flipped in the collector.
+                        val streamStartMs = android.os.SystemClock.elapsedRealtime()
+                        val firstChunkSeen = java.util.concurrent.atomic.AtomicBoolean(false)
+                        val diagSid = activeSessionId
+                        println(
+                            "[T-STALL-DIAG] stream REQUEST-OUT sid=$diagSid turn=$turn " +
+                                "provider=${currentProvider.javaClass.simpleName} " +
+                                "historySize=${agentHistory.size}",
+                        )
+                        val firstChunkWatchdog = viewModelScope.launch(Dispatchers.IO) {
+                            var waited = 0L
+                            while (!firstChunkSeen.get()) {
+                                kotlinx.coroutines.delay(10_000L)
+                                if (firstChunkSeen.get()) break
+                                waited += 10_000L
+                                println(
+                                    "[T-STALL-DIAG] stream NO-FIRST-CHUNK sid=$diagSid turn=$turn " +
+                                        "waitedMs=$waited provider=${currentProvider.javaClass.simpleName} " +
+                                        "— request sent, provider has returned NOTHING (not even message_start)",
                                 )
                             }
-                            currentTextBlockSb!!.append(chunk.text)
-                            currentTextBlockSb!!
-                        } else if (!monolithic && lastIdx >= 0 && allToolBlocks[lastIdx].kind == "text" && currentTextBlockSb != null) {
-                            currentTextBlockSb!!.append(chunk.text)
-                            currentTextBlockSb!!
-                        } else {
-                            // New text run — either first text after a tool_use/thinking
-                            // break, or first text in this turn. Open a fresh block AND
-                            // a fresh accumulator. The new block's content carries the
-                            // first delta verbatim; subsequent deltas append to the SB.
-                            val freshSb = StringBuilder(chunk.text)
-                            currentTextBlockSb = freshSb
-                            val block = AssistantBlock(
-                                id = "text_${turn}_${allToolBlocks.size}",
-                                kind = "text",
-                                content = chunk.text,
+                        }
+                        try {
+                        // Route through effectiveAgentHistory() so a populated
+                        // [_compactSummary] is prepended as a `<context-summary>`
+                        // user message. Falls through to the raw agentHistory when
+                        // no compact has happened, so the common path stays zero-copy.
+                        // nanoMuse: pair reported usage with this request, before any later tool output (#719).
+                        // nanoMuse: a fallback provider must rebuild its own budgeted view.
+                        alignContextEstimate()
+                        if (preparedMessages == null) {
+                            // nanoMuse: fallback may change provider, model vision and OAuth prefix.
+                            val preview = applyRequestImageBudget(nmRequestHistory(), preview = true)
+                            nmInstall(nmPlan(preview, nmBudgetFor(currentProvider))
+                                ?: checkNotNull(nmPlan(preview, ProviderBudget())))
+                            prepareContext()
+                            // nanoMuse: fallback to a smaller model must pass the same guard.
+                            when (inLoopContextCheck(contextMaintenance, requestBudget,
+                                ::measureContextTokens, ::measureProbeTokens, { prepareContext() },
+                                allowAutomaticCompaction = nmAutoTurn == null)) {
+                                ContextMaintenance.Action.PROCEED -> Unit
+                                ContextMaintenance.Action.COMPACTED -> {
+                                    resumeAfterCompaction()
+                                    return@streamBlock true
+                                }
+                                ContextMaintenance.Action.STOP -> throw LLMError.ProviderError(
+                                    context.getString(R.string.nm_context_limit_reached))
+                            }
+                        }
+                        val requestMessages = checkNotNull(preparedMessages)
+                        // Estimate the prepared history for each profile, including the account's
+                        // live window. A tool request may not silently fall to tool-less LEAN.
+                        val requestBudgetLimit = nmBudgetFor(currentProvider)
+                        val autoCandidate = if (nmAutoTurn != null) checkNotNull(nmAutoCandidate) else null
+                        val minimumProfile = if (autoCandidate != null && Need.TOOLS in nmAutoNeeds(requestMessages))
+                            Profile.BASIC else Profile.LEAN
+                        data class DispatchPlan(
+                            val attempt: TurnRequestPlanner.Attempt,
+                            val tools: List<AgentToolDefinition>,
+                            val snapshot: ContextUsageMeter.Request,
+                            val estimate: Int,
+                        )
+                        fun lowerForBudget(attempt: TurnRequestPlanner.Attempt): Boolean {
+                            val lower = TurnRouter.lower(attempt.route.profile) ?: return false
+                            if (lower < minimumProfile) return false
+                            nmRoute = attempt.route.copy(profile = lower, budgetLimited = true)
+                            return true
+                        }
+                        var dispatch: DispatchPlan? = null
+                        while (dispatch == null) {
+                            val health = autoCandidate?.let { AutoModelRuntime.health.snapshot(it.entryId, it.providerId) }
+                            if (health?.cooldown != null) throw AutoDispatchBlocked(checkNotNull(autoCandidate).entryId,
+                                "${context.getString(R.string.nm_auto_reason_cooldown)} · ${nmAutoWait(health.cooldown.untilMillis)}")
+                            val available = if (autoCandidate != null && health != null)
+                                TurnRequestPlanner.requestLimit(requestBudgetLimit, health.usedThisMinute, autoCandidate.contextLimit)
+                                else null
+                            val planned = nmPlan(requestMessages, requestBudgetLimit, available, minimumProfile)
+                            if (planned == null) {
+                                if (autoCandidate != null) {
+                                    val withoutWindow = nmPlan(requestMessages, requestBudgetLimit,
+                                        autoCandidate.contextLimit?.toLong(), minimumProfile)
+                                    val reason = when {
+                                        withoutWindow != null -> R.string.nm_auto_reason_minute
+                                        autoCandidate.contextLimit != null &&
+                                            nmPlan(requestMessages, requestBudgetLimit, null, minimumProfile) != null -> R.string.nm_auto_reason_context
+                                        else -> R.string.nm_auto_reason_size
+                                    }
+                                    throw AutoDispatchBlocked(autoCandidate.entryId, context.getString(reason))
+                                }
+                                throw LLMError.ProviderError(context.getString(R.string.nm_router_budget_exhausted))
+                            }
+                            nmInstall(planned)
+                            alignContextEstimate()
+                            val tools = nmRequestTools
+                            val snapshot = usageSnapshot(requestMessages)
+                            val estimate = ContextEstimate.request(requestMessages, nmSystemPrompt, tools,
+                                imageTokens = BPETokenizer::countImageTokens)
+                            // A calibration-only probe can use the raw estimate, but a live window
+                            // never treats a downward calibration as evidence of spare quota.
+                            lastContextTokens = if (contextMaintenance.calibrationProbeGranted) estimate
+                                else usageMeter.estimate(snapshot, estimate, contextEstimate)
+                            val dispatchInput = maxOf(lastContextTokens, planned.inputEstimate, estimate)
+                            val learnedLimit = durableOutputKey?.let { key ->
+                                runCatching { nmOutputLimitStore.load(key, currentProvider.model.id) }.getOrNull()
+                            }
+                            val pendingLimit = pendingOutput?.takeIf {
+                                it.provider === currentProvider && it.model == currentProvider.model.id && it.route == durableOutputKey
+                            }?.limit
+                            val proposedOutput = ai.tama.net.ProviderRecovery.clamp(
+                                ai.tama.net.ProviderRecovery.clamp(dynamicMaxTokens(currentProvider, lastContextTokens), learnedLimit),
+                                pendingLimit,
                             )
-                            if (monolithic) {
-                                // Single text block per response. If tool blocks
-                                // already arrived (content-after-tool_calls
-                                // chunking with no preface text), insert BEFORE
-                                // the first tool block of this turn so the
-                                // persisted order matches the canonical
-                                // {content, tool_calls} message shape.
-                                val firstToolIdx = (turnStartBlockIndex until allToolBlocks.size)
-                                    .firstOrNull { allToolBlocks[it].kind == "tool_use" }
-                                if (firstToolIdx != null) {
-                                    allToolBlocks.add(firstToolIdx, block)
-                                    turnTextBlockIdx = firstToolIdx
-                                } else {
-                                    allToolBlocks.add(block)
-                                    turnTextBlockIdx = allToolBlocks.lastIndex
+                            val output = TurnRequestPlanner.outputLimit(proposedOutput, requestBudgetLimit, dispatchInput, available)
+                            if (output == null) {
+                                if (autoCandidate != null && lowerForBudget(planned)) continue
+                                if (autoCandidate != null) throw AutoDispatchBlocked(autoCandidate.entryId,
+                                    context.getString(R.string.nm_auto_reason_size))
+                                throw LLMError.ProviderError(context.getString(R.string.nm_router_budget_exhausted))
+                            }
+                            lastRequestedOutput = output
+                            if (autoCandidate != null && nmAutoTurn != null) {
+                                if (!AutoModelStore.enabled(context)) throw LLMError.ProviderError(
+                                    context.getString(R.string.nm_auto_disabled_during_turn))
+                                val identity = checkNotNull(nmAutoIdentity)
+                                if (!ai.tama.router.AutomaticCostGuard.permits(context)) throw AutoDispatchBlocked(
+                                    autoCandidate.entryId, context.getString(R.string.nm_auto_reason_unverified_cost))
+                                val config = providerRepository.config.value
+                                val entry = config.modelEntries.find { it.id == autoCandidate.entryId && it.model.id == currentProvider.model.id }
+                                val instance = entry?.let { e -> config.instances.find { it.id == e.providerInstanceId } }
+                                val valid = entry != null && instance != null && instance.isEnabled && !entry.isHidden &&
+                                    AutoModelStore.identity(entry, instance) == identity && providerRepository.hasAnyCredential(instance) &&
+                                    AutoModelStore.approved(context, identity) &&
+                                    nmAutoClientAccountVersion == AutoModelRuntime.accountVersion(instance.id) &&
+                                    nmRouteFingerprint(currentProvider) == AutoModelStore.historyFingerprint(context, instance) &&
+                                    nmAutoCapabilities(entry, instance).containsAll(nmAutoNeeds(requestMessages))
+                                if (!valid) throw AutoDispatchBlocked(autoCandidate.entryId, context.getString(R.string.nm_auto_reason_consent))
+                                when (val reserved = nmAutoTurn.reserveWithOutputCap(
+                                    autoCandidate.copy(tokensPerMinute = requestBudgetLimit.tokensPerMinute), dispatchInput, output)) {
+                                    is ModelHealth.Reservation.Granted -> {
+                                        nmTicket = reserved.ticket
+                                        lastRequestedOutput = checkNotNull(reserved.outputTokens)
+                                    }
+                                    is ModelHealth.Reservation.Full -> {
+                                        // Another request consumed the remaining window after the snapshot.
+                                        // Try a genuinely lower profile before excluding this entry.
+                                        if (lowerForBudget(planned)) continue
+                                        throw AutoDispatchBlocked(autoCandidate.entryId,
+                                            "${context.getString(R.string.nm_auto_reason_minute)} · ${nmAutoWait(reserved.availableAtMillis)}")
+                                    }
+                                    is ModelHealth.Reservation.Blocked -> throw AutoDispatchBlocked(autoCandidate.entryId,
+                                        "${context.getString(R.string.nm_auto_reason_cooldown)} · ${nmAutoWait(reserved.cooldown.untilMillis)}")
                                 }
                             } else {
-                                allToolBlocks.add(block)
+                                // Count manual calls too, without applying automatic-mode gates.
+                                val config = providerRepository.config.value
+                                val entry = config.modelEntries.find { it.id == _activeEntryId.value &&
+                                    it.model.id == currentProvider.model.id && this@ChatViewModel.currentProvider === currentProvider }
+                                if (entry != null) {
+                                    nmTicket = (AutoModelRuntime.health.reserve(entry.providerInstanceId,
+                                        dispatchInput.toLong() + output.toLong(), null) as ModelHealth.Reservation.Granted).ticket
+                                }
                             }
-                            freshSb
+                            dispatch = DispatchPlan(planned, tools, snapshot, estimate)
                         }
-                        // T94 fix 2 + T256: tiered text-delta throttle. Mutate local
-                        // state every delta (above) so block boundaries stay correct
-                        // for ToolUseStart / ToolInputDelta which read allToolBlocks
-                        // directly. Only push to _messages when the length-aware gate
-                        // opens (or a newline lands during a short reply). Pending
-                        // text lives in `pendingChunkSb` so the stream-end final
-                        // flush at line ~3580 can drain it.
-                        pendingChunkSb.append(chunk.text)
-                        val len = turnTextSb.length
-                        val unflushed = len - lastFlushedLen
-                        val throttle = textDeltaThrottleMs(len)
-                        val newlineFlush = len < 5_000 && chunk.text.contains('\n') && unflushed >= 50
-                        val nowMs = System.currentTimeMillis()
-                        if (nowMs - lastUiUpdateMs >= throttle || newlineFlush) {
-                            lastUiUpdateMs = nowMs
-                            lastFlushedLen = len
-                            pendingChunkSb.setLength(0)
-                            // Materialise SB → String for both the active block's
-                            // content (so Compose sees an immutable snapshot) and
-                            // for the assistant message body. These are O(n) calls
-                            // but happen at throttled cadence, not per delta.
-                            // (activeSb === currentTextBlockSb by construction.)
-                            materializeActiveTextBlock()
-                            val turnSnap = turnTextSb.toString()
+                        val outbound = checkNotNull(dispatch)
+                        val planned = outbound.attempt
+                        val requestTools = outbound.tools
+                        val requestSnapshot = outbound.snapshot
+                        val requestEstimate = outbound.estimate
+                        if (!nmWarnedWithoutTools && Need.TOOLS in planned.route.needs && planned.route.profile == Profile.LEAN) {
+                            nmWarnedWithoutTools = true
                             withContext(Dispatchers.Main) {
-                                updateAssistantMessage(assistantId, accumulatedText + turnSnap, true, allToolBlocks)
+                                appendSystemInfo(context.getString(
+                                    if (planned.route.budgetLimited) R.string.nm_router_budget_limited
+                                    else R.string.nm_router_lean_tool_notice,
+                                ), "info")
                             }
                         }
-                    }
-                    is LLMStreamChunk.ToolUseStart -> {
-                        // [T-dedupe-toolcallid] Rewrite duplicate id ASAP — the
-                        // renamed value drives the AssistantBlock.id used by
-                        // ToolCallComplete / ToolInputDelta lookups and ends
-                        // up as the persisted tool_call_id on the next request.
-                        val toolUseId = dedupeToolStartId(chunk.id)
-                        android.util.Log.d("ToolChain[VM]", "[turn=$turn] ToolUseStart id=$toolUseId name=${chunk.name}")
-                        // Mark thinking block as done when tool use starts
-                        val thinkIdx = allToolBlocks.indexOfFirst { it.kind == "thinking" && it.id == "thinking_$turn" }
-                        if (thinkIdx >= 0 && allToolBlocks[thinkIdx].toolStatus != ToolBlockStatus.SUCCESS) {
-                            allToolBlocks[thinkIdx] = allToolBlocks[thinkIdx].copy(toolStatus = ToolBlockStatus.SUCCESS)
-                        }
-                        // T154: when the last few text deltas landed inside the 50ms throttle
-                        // window, the UI hadn't yet been pushed with the trailing text — and
-                        // adding the tool_use block before that push freezes the preceding
-                        // text fragment in StreamingMarkdownText (its `messageIsStreaming`
-                        // flag flips off the next layout pass) with chars chopped off the
-                        // end. Mirror iOS AnthropicAgentProvider.swift Step 1 / Step 2:
-                        // first push the latest accumulated text *unthrottled* so the text
-                        // block freezes at its complete value, yield to let Compose render
-                        // it, then add the tool_use block in a separate transaction. The
-                        // pendingChunkText/lastUiUpdateMs reset mirrors the throttle path
-                        // so the next text delta doesn't try to flush stale state.
-                        if (turnTextSb.isNotEmpty() && pendingChunkSb.isNotEmpty()) {
-                            pendingChunkSb.setLength(0)
-                            lastUiUpdateMs = System.currentTimeMillis()
-                            lastFlushedLen = turnTextSb.length
-                            // T307: pre-tool-use flush also materialises the
-                            // active text block + a turn-text snapshot.
-                            materializeActiveTextBlock()
-                            // [T-android-tool-splits-reply-fix] Ordered mode:
-                            // the tool block breaks the text run, so the next
-                            // text delta opens a new block. Monolithic mode
-                            // keeps the accumulator alive — same-response
-                            // content deltas arriving after tool_calls merge
-                            // back into the pre-tool text block instead.
-                            if (!currentProvider.streamTextIsMonolithic) {
-                                currentTextBlockSb = null
-                            }
-                            val turnSnap = turnTextSb.toString()
-                            withContext(Dispatchers.Main) {
-                                updateAssistantMessage(assistantId, accumulatedText + turnSnap, true, allToolBlocks)
-                            }
-                            yield()
-                        }
-                        // T256 tier 2: force the next ToolInputDelta to flush
-                        // immediately by zeroing both gate timestamps. iOS does the
-                        // same in .startToolUse (AIChatViewModel.swift:6075-6116) so
-                        // the user sees the pill name/title arrive without waiting
-                        // out the 1s/200ms gate.
-                        lastFileToolInputMs = 0L
-                        lastOtherToolInputMs = 0L
-                        // Guard: only add if not already present (prevent duplicate blocks from repeated ToolUseStart)
-                        if (allToolBlocks.none { it.id == toolUseId }) {
-                            allToolBlocks.add(AssistantBlock(
-                                id = toolUseId,
-                                kind = "tool_use",
-                                toolName = chunk.name,
-                                toolStatus = ToolBlockStatus.STREAMING,
-                                toolTitle = friendlyToolTitle(chunk.name),
-                                startTimeMs = System.currentTimeMillis(),
+                        // The debug observer sees only counts for the exact outbound view.
+                        val sizeObserver = if (com.openminis.app.BuildConfig.DEBUG) ai.tama.chat.PromptSizeTrace.observer else null
+                        if (sizeObserver != null) runCatching {
+                            val imageReady = runCatching { io.github.nanomuse.media.MediaModels.agentImageEndpoint(context) != null }.getOrNull()
+                            sizeObserver(ai.tama.chat.PromptSizeTrace.Event.System(planned.systemSizes, imageReady))
+                            sizeObserver(ai.tama.chat.PromptSizeTrace.Event.Tools(
+                                PromptSize.tools(originalAgentTools(), requestTools),
                             ))
+                            sizeObserver(ai.tama.chat.PromptSizeTrace.Event.Request(planned.system.length))
+                        }
+                        var requestUsage: LLMUsage? = null
+                        // nanoMuse: the group, credentials or cost consent may have changed
+                        // while retrying or preparing the request. Refuse stale candidates.
+                        nmManualFallback?.let { candidate ->
+                            if (nmAutoTurn == null && (candidate.provider !== currentProvider ||
+                                    this@ChatViewModel.currentProvider !== currentProvider ||
+                                    _activeEntryId.value != candidate.entryId || !nmFallbackStillEligible(candidate))) {
+                                throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+                            }
+                        }
+                        // nanoMuse: recheck after all suspending preparation and the reservation.
+                        if (tamaV2Test && nmAutoTurn != null) {
+                            val active = checkNotNull(nmAutoCandidate)
+                            if (nmLoopSession != realSessionId.ifEmpty { sessionId } ||
+                                this@ChatViewModel.currentProvider !== currentProvider || _activeEntryId.value != active.entryId) {
+                                throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+                            }
+                            if (!ai.tama.router.AutomaticCostGuard.permits(context)) {
+                                throw AutoDispatchBlocked(active.entryId, context.getString(R.string.nm_auto_reason_unverified_cost))
+                            }
+                            if (nmAutoActiveChoice?.let(::nmAutoChoiceStillEligible) != true) {
+                                throw AutoDispatchBlocked(active.entryId, context.getString(R.string.nm_auto_reason_consent))
+                            }
+                        }
+                        nmLastSentRoute = nmRouteFingerprint(currentProvider)
+                        // nanoMuse: tag the result with the version that built this client,
+                        // never a replacement account read after the final eligibility check.
+                        nmDispatchAccountVersion = if (tamaV2Test) {
+                            nmAutoActiveChoice?.accountVersion ?: nmManualFallback?.accountVersion
+                        } else nmAutoCandidate?.providerId?.let { AutoModelRuntime.accountVersion(it) }
+                        nmDispatchAt = android.os.SystemClock.elapsedRealtime()
+                        // From here on a provider may have received the request, even on cancellation.
+                        nmDispatchStarted = true
+                        currentProvider.streamMessage(
+                            requestMessages,
+                            nmSystemPrompt, lastRequestedOutput,
+                            tools = requestTools,
+                            thinkingLevel = if (currentModelSupportsReasoning) _thinkingLevel.value else ThinkingLevel.OFF,
+                        ).collect { chunk ->
+                    // [T-STALL-DIAG] Mark first byte back from the provider and log
+                    // the time-to-first-chunk once per turn.
+                    if (firstChunkSeen.compareAndSet(false, true)) {
+                        println(
+                            "[T-STALL-DIAG] stream FIRST-CHUNK sid=$diagSid turn=$turn " +
+                                "ttfbMs=${android.os.SystemClock.elapsedRealtime() - streamStartMs} " +
+                                "kind=${chunk.javaClass.simpleName}",
+                        )
+                    }
+                    when (chunk) {
+                        is LLMStreamChunk.ThinkingDelta -> {
+                            turnThinking.append(chunk.text)
+                            // Update thinking block in UI
+                            val thinkIdx = allToolBlocks.indexOfFirst { it.kind == "thinking" && it.id == "thinking_$turn" }
+                            if (thinkIdx < 0) {
+                                allToolBlocks.add(AssistantBlock(
+                                    id = "thinking_$turn",
+                                    kind = "thinking",
+                                    content = turnThinking.toString(),
+                                    toolTitle = "Thinking",
+                                ))
+                            } else {
+                                allToolBlocks[thinkIdx] = allToolBlocks[thinkIdx].copy(content = turnThinking.toString())
+                            }
                             withContext(Dispatchers.Main) {
                                 updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
                             }
                         }
-                    }
-                    is LLMStreamChunk.ToolInputDelta -> {
-                        // [T-dedupe-toolcallid] Translate to the currently-in-flight
-                        // renamed id so the per-tool ring + block lookup match
-                        // the block that ToolUseStart created.
-                        val toolInputId = dedupeToolInputId(chunk.id)
-                        android.util.Log.d("ToolChain[VM]", "[turn=$turn] ToolInputDelta id=$toolInputId len=${chunk.accumulated.length}")
-                        // Maintain a per-tool ring of the most recent `accumulated`
-                        // snapshots so the preflight validator below can dump them
-                        // when an empty/invalid call is detected. Cheap (single
-                        // append + bounded trim) and lives outside any throttle so
-                        // every delta lands here.
-                        val ring = toolInputChunkRings.getOrPut(toolInputId) { mutableListOf() }
-                        ring.add(chunk.accumulated)
-                        if (ring.size > TOOL_INPUT_CHUNK_RING_MAX) {
-                            // Drop from the front so we keep the most recent N.
-                            ring.subList(0, ring.size - TOOL_INPUT_CHUNK_RING_MAX).clear()
-                        }
-                        val idx = allToolBlocks.indexOfFirst { it.id == toolInputId }
-                        if (idx >= 0) {
-                            val prev = allToolBlocks[idx]
-                            // Stream-parse partial JSON (mirrors iOS extractPartialStringValue):
-                            //   - pull "tool_title" out early so the pill header updates live
-                            //   - keep the raw accumulated JSON in toolArgs so detail-sheet
-                            //     renderers (extractShellCommand, args.optString("command"), …)
-                            //     can pick up fields as they appear.
-                            //   - leave content empty during streaming (real output arrives
-                            //     after ToolCallComplete).
-                            val partialTitle = extractPartialStringValue("tool_title", chunk.accumulated)
-                            val liveTitle = when {
-                                !partialTitle.isNullOrEmpty() -> partialTitle
-                                prev.toolTitle.isNotEmpty() && prev.toolTitle != prev.toolName -> prev.toolTitle
-                                else -> friendlyToolTitle(prev.toolName)
+                        is LLMStreamChunk.Text -> {
+                            // [T-android-readaloud-stop-stale] First actual text of
+                            // this reply — stop the previous reply's Read Aloud so
+                            // old and new audio don't overlap. Deferred to here
+                            // rather than fired from send() on purpose: while the
+                            // model is still thinking there is nothing to supersede
+                            // the old speech with, so it keeps playing until real
+                            // new text arrives.
+                            if (!didStopStaleReadAloud) {
+                                didStopStaleReadAloud = true
+                                _stopStaleReadAloud.tryEmit(Unit)
                             }
-                            allToolBlocks[idx] = prev.copy(
-                                toolArgs = chunk.accumulated,
-                                toolTitle = liveTitle,
-                                content = "",
-                            )
-                            // nanoMuse: the words under the face follow the pill — as soon as the
-                            // model's tool_title is in, the status line says it (not only at dispatch).
-                            if (!partialTitle.isNullOrEmpty() && partialTitle != SessionActivityTracker.currentToolTitle.value) {
-                                SessionActivityTracker.updateToolStatus(
-                                    status = "Running: ${prev.toolName}",
-                                    toolName = prev.toolName,
-                                    isRunning = true,
-                                    toolTitle = partialTitle,
+                            // Mark thinking block as done when text starts flowing
+                            val thinkIdx = allToolBlocks.indexOfFirst { it.kind == "thinking" && it.id == "thinking_$turn" }
+                            if (thinkIdx >= 0 && allToolBlocks[thinkIdx].toolStatus != ToolBlockStatus.SUCCESS) {
+                                allToolBlocks[thinkIdx] = allToolBlocks[thinkIdx].copy(toolStatus = ToolBlockStatus.SUCCESS)
+                            }
+                            // T307: append-only on the StringBuilder; .toString()
+                            // is taken once below at flush time, not per delta.
+                            turnTextSb.append(chunk.text)
+                            // Append to the trailing text block — or open a new one if the last
+                            // block isn't a text block (i.e. a tool call or thinking was in between).
+                            // This preserves the chronological interleaving of text and tool calls
+                            // across a single assistant turn. The block's `content` field stays
+                            // immutable String — we keep a parallel StringBuilder for the active
+                            // block and materialise via .toString() only on flush.
+                            val lastIdx = allToolBlocks.lastIndex
+                            val monolithic = currentProvider.streamTextIsMonolithic
+                            val activeSb = if (monolithic && turnTextBlockIdx >= 0 && currentTextBlockSb != null) {
+                                // [T-android-tool-splits-reply-fix] Chat Completions
+                                // content is ONE string per response — a content
+                                // delta arriving after tool_calls deltas (qwen
+                                // chunking artifact) is still part of the same
+                                // pre-tool sentence. Merge it back instead of
+                                // fabricating a post-tool text block, which split
+                                // sentences mid-word in the chat UI. Scope: this
+                                // streamed response only (see turnTextBlockIdx).
+                                if (!loggedPostToolTextMerge &&
+                                    allToolBlocks.subList(turnTextBlockIdx + 1, allToolBlocks.size).any { it.kind == "tool_use" }
+                                ) {
+                                    loggedPostToolTextMerge = true
+                                    AppLogger.info(
+                                        TAG_STREAM,
+                                        "[T-android-tool-splits-reply-fix] post-tool_calls content delta merged into pre-tool text block (model=${currentProvider.model.id})",
+                                    )
+                                }
+                                currentTextBlockSb!!.append(chunk.text)
+                                currentTextBlockSb!!
+                            } else if (!monolithic && lastIdx >= 0 && allToolBlocks[lastIdx].kind == "text" && currentTextBlockSb != null) {
+                                currentTextBlockSb!!.append(chunk.text)
+                                currentTextBlockSb!!
+                            } else {
+                                // New text run — either first text after a tool_use/thinking
+                                // break, or first text in this turn. Open a fresh block AND
+                                // a fresh accumulator. The new block's content carries the
+                                // first delta verbatim; subsequent deltas append to the SB.
+                                val freshSb = StringBuilder(chunk.text)
+                                currentTextBlockSb = freshSb
+                                val block = AssistantBlock(
+                                    id = "text_${turn}_${allToolBlocks.size}",
+                                    kind = "text",
+                                    content = chunk.text,
                                 )
+                                if (monolithic) {
+                                    // Single text block per response. If tool blocks
+                                    // already arrived (content-after-tool_calls
+                                    // chunking with no preface text), insert BEFORE
+                                    // the first tool block of this turn so the
+                                    // persisted order matches the canonical
+                                    // {content, tool_calls} message shape.
+                                    val firstToolIdx = (turnStartBlockIndex until allToolBlocks.size)
+                                        .firstOrNull { allToolBlocks[it].kind == "tool_use" }
+                                    if (firstToolIdx != null) {
+                                        allToolBlocks.add(firstToolIdx, block)
+                                        turnTextBlockIdx = firstToolIdx
+                                    } else {
+                                        allToolBlocks.add(block)
+                                        turnTextBlockIdx = allToolBlocks.lastIndex
+                                    }
+                                } else {
+                                    allToolBlocks.add(block)
+                                }
+                                freshSb
                             }
-                            // T256 tier 2: gate UI push by tool kind. file_write/file_edit
-                            // pump multi-KB JSON through the SSE — pushing every delta
-                            // pegs the UI thread for no readable benefit (the user can't
-                            // skim a partial JSON blob anyway). Mirrors iOS
-                            // AIChatViewModel.swift:6229-6259 (1s file / 200ms other).
-                            // Local state above is mutated unconditionally so when the
-                            // gate eventually opens — or ToolCallComplete force-flushes —
-                            // the latest accumulated args are pushed.
-                            val toolName = prev.toolName
-                            val isHeavyFileTool = toolName == "file_write" || toolName == "file_edit"
-                            val gateMs = if (isHeavyFileTool) 1_000L else 200L
+                            // T94 fix 2 + T256: tiered text-delta throttle. Mutate local
+                            // state every delta (above) so block boundaries stay correct
+                            // for ToolUseStart / ToolInputDelta which read allToolBlocks
+                            // directly. Only push to _messages when the length-aware gate
+                            // opens (or a newline lands during a short reply). Pending
+                            // text lives in `pendingChunkSb` so the stream-end final
+                            // flush at line ~3580 can drain it.
+                            pendingChunkSb.append(chunk.text)
+                            val len = turnTextSb.length
+                            val unflushed = len - lastFlushedLen
+                            val throttle = textDeltaThrottleMs(len)
+                            val newlineFlush = len < 5_000 && chunk.text.contains('\n') && unflushed >= 50
                             val nowMs = System.currentTimeMillis()
-                            val lastTs = if (isHeavyFileTool) lastFileToolInputMs else lastOtherToolInputMs
-                            if (nowMs - lastTs >= gateMs) {
-                                if (isHeavyFileTool) lastFileToolInputMs = nowMs
-                                else lastOtherToolInputMs = nowMs
+                            if (nowMs - lastUiUpdateMs >= throttle || newlineFlush) {
+                                lastUiUpdateMs = nowMs
+                                lastFlushedLen = len
+                                pendingChunkSb.setLength(0)
+                                // Materialise SB → String for both the active block's
+                                // content (so Compose sees an immutable snapshot) and
+                                // for the assistant message body. These are O(n) calls
+                                // but happen at throttled cadence, not per delta.
+                                // (activeSb === currentTextBlockSb by construction.)
+                                materializeActiveTextBlock()
+                                val turnSnap = turnTextSb.toString()
+                                withContext(Dispatchers.Main) {
+                                    updateAssistantMessage(assistantId, accumulatedText + turnSnap, true, allToolBlocks)
+                                }
+                            }
+                        }
+                        is LLMStreamChunk.ToolUseStart -> {
+                            // [T-dedupe-toolcallid] Rewrite duplicate id ASAP — the
+                            // renamed value drives the AssistantBlock.id used by
+                            // ToolCallComplete / ToolInputDelta lookups and ends
+                            // up as the persisted tool_call_id on the next request.
+                            val toolUseId = dedupeToolStartId(chunk.id)
+                            // nanoMuse: tool ids and names are supplied by the provider.
+                            if (!tamaV2Test) android.util.Log.d("ToolChain[VM]", "[turn=$turn] ToolUseStart id=$toolUseId name=${chunk.name}")
+                            // Mark thinking block as done when tool use starts
+                            val thinkIdx = allToolBlocks.indexOfFirst { it.kind == "thinking" && it.id == "thinking_$turn" }
+                            if (thinkIdx >= 0 && allToolBlocks[thinkIdx].toolStatus != ToolBlockStatus.SUCCESS) {
+                                allToolBlocks[thinkIdx] = allToolBlocks[thinkIdx].copy(toolStatus = ToolBlockStatus.SUCCESS)
+                            }
+                            // T154: when the last few text deltas landed inside the 50ms throttle
+                            // window, the UI hadn't yet been pushed with the trailing text — and
+                            // adding the tool_use block before that push freezes the preceding
+                            // text fragment in StreamingMarkdownText (its `messageIsStreaming`
+                            // flag flips off the next layout pass) with chars chopped off the
+                            // end. Mirror iOS AnthropicAgentProvider.swift Step 1 / Step 2:
+                            // first push the latest accumulated text *unthrottled* so the text
+                            // block freezes at its complete value, yield to let Compose render
+                            // it, then add the tool_use block in a separate transaction. The
+                            // pendingChunkText/lastUiUpdateMs reset mirrors the throttle path
+                            // so the next text delta doesn't try to flush stale state.
+                            if (turnTextSb.isNotEmpty() && pendingChunkSb.isNotEmpty()) {
+                                pendingChunkSb.setLength(0)
+                                lastUiUpdateMs = System.currentTimeMillis()
+                                lastFlushedLen = turnTextSb.length
+                                // T307: pre-tool-use flush also materialises the
+                                // active text block + a turn-text snapshot.
+                                materializeActiveTextBlock()
+                                // [T-android-tool-splits-reply-fix] Ordered mode:
+                                // the tool block breaks the text run, so the next
+                                // text delta opens a new block. Monolithic mode
+                                // keeps the accumulator alive — same-response
+                                // content deltas arriving after tool_calls merge
+                                // back into the pre-tool text block instead.
+                                if (!currentProvider.streamTextIsMonolithic) {
+                                    currentTextBlockSb = null
+                                }
+                                val turnSnap = turnTextSb.toString()
+                                withContext(Dispatchers.Main) {
+                                    updateAssistantMessage(assistantId, accumulatedText + turnSnap, true, allToolBlocks)
+                                }
+                                yield()
+                            }
+                            // T256 tier 2: force the next ToolInputDelta to flush
+                            // immediately by zeroing both gate timestamps. iOS does the
+                            // same in .startToolUse (AIChatViewModel.swift:6075-6116) so
+                            // the user sees the pill name/title arrive without waiting
+                            // out the 1s/200ms gate.
+                            lastFileToolInputMs = 0L
+                            lastOtherToolInputMs = 0L
+                            // Guard: only add if not already present (prevent duplicate blocks from repeated ToolUseStart)
+                            if (allToolBlocks.none { it.id == toolUseId }) {
+                                allToolBlocks.add(AssistantBlock(
+                                    id = toolUseId,
+                                    kind = "tool_use",
+                                    toolName = chunk.name,
+                                    toolStatus = ToolBlockStatus.STREAMING,
+                                    toolTitle = friendlyToolTitle(chunk.name),
+                                    startTimeMs = System.currentTimeMillis(),
+                                ))
                                 withContext(Dispatchers.Main) {
                                     updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
                                 }
                             }
                         }
+                        is LLMStreamChunk.ToolInputDelta -> {
+                            // [T-dedupe-toolcallid] Translate to the currently-in-flight
+                            // renamed id so the per-tool ring + block lookup match
+                            // the block that ToolUseStart created.
+                            val toolInputId = dedupeToolInputId(chunk.id)
+                            // nanoMuse: a tool id can itself contain private provider text.
+                            if (!tamaV2Test) android.util.Log.d("ToolChain[VM]", "[turn=$turn] ToolInputDelta id=$toolInputId len=${chunk.accumulated.length}")
+                            // Maintain a per-tool ring of the most recent `accumulated`
+                            // snapshots so the preflight validator below can dump them
+                            // when an empty/invalid call is detected. Cheap (single
+                            // append + bounded trim) and lives outside any throttle so
+                            // every delta lands here.
+                            val ring = toolInputChunkRings.getOrPut(toolInputId) { mutableListOf() }
+                            ring.add(chunk.accumulated)
+                            if (ring.size > TOOL_INPUT_CHUNK_RING_MAX) {
+                                // Drop from the front so we keep the most recent N.
+                                ring.subList(0, ring.size - TOOL_INPUT_CHUNK_RING_MAX).clear()
+                            }
+                            val idx = allToolBlocks.indexOfFirst { it.id == toolInputId }
+                            if (idx >= 0) {
+                                val prev = allToolBlocks[idx]
+                                // Stream-parse partial JSON (mirrors iOS extractPartialStringValue):
+                                //   - pull "tool_title" out early so the pill header updates live
+                                //   - keep the raw accumulated JSON in toolArgs so detail-sheet
+                                //     renderers (extractShellCommand, args.optString("command"), …)
+                                //     can pick up fields as they appear.
+                                //   - leave content empty during streaming (real output arrives
+                                //     after ToolCallComplete).
+                                val partialTitle = if (tamaV2Test && prev.toolName == ai.tama.tools.ImageGenerationTool.NAME) null
+                                    else extractPartialStringValue("tool_title", chunk.accumulated)
+                                val liveTitle = when {
+                                    !partialTitle.isNullOrEmpty() -> partialTitle
+                                    prev.toolTitle.isNotEmpty() && prev.toolTitle != prev.toolName -> prev.toolTitle
+                                    else -> friendlyToolTitle(prev.toolName)
+                                }
+                                allToolBlocks[idx] = prev.copy(
+                                    toolArgs = chunk.accumulated,
+                                    toolTitle = liveTitle,
+                                    content = "",
+                                )
+                                // nanoMuse: the words under the face follow the pill — as soon as the
+                                // model's tool_title is in, the status line says it (not only at dispatch).
+                                if (!partialTitle.isNullOrEmpty() && partialTitle != SessionActivityTracker.currentToolTitle.value) {
+                                    SessionActivityTracker.updateToolStatus(
+                                        status = "Running: ${prev.toolName}",
+                                        toolName = prev.toolName,
+                                        isRunning = true,
+                                        toolTitle = partialTitle,
+                                    )
+                                }
+                                // T256 tier 2: gate UI push by tool kind. file_write/file_edit
+                                // pump multi-KB JSON through the SSE — pushing every delta
+                                // pegs the UI thread for no readable benefit (the user can't
+                                // skim a partial JSON blob anyway). Mirrors iOS
+                                // AIChatViewModel.swift:6229-6259 (1s file / 200ms other).
+                                // Local state above is mutated unconditionally so when the
+                                // gate eventually opens — or ToolCallComplete force-flushes —
+                                // the latest accumulated args are pushed.
+                                val toolName = prev.toolName
+                                val isHeavyFileTool = toolName == "file_write" || toolName == "file_edit"
+                                val gateMs = if (isHeavyFileTool) 1_000L else 200L
+                                val nowMs = System.currentTimeMillis()
+                                val lastTs = if (isHeavyFileTool) lastFileToolInputMs else lastOtherToolInputMs
+                                if (nowMs - lastTs >= gateMs) {
+                                    if (isHeavyFileTool) lastFileToolInputMs = nowMs
+                                    else lastOtherToolInputMs = nowMs
+                                    withContext(Dispatchers.Main) {
+                                        updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
+                                    }
+                                }
+                            }
+                        }
+                        is LLMStreamChunk.ToolCallComplete -> {
+                            // [T-dedupe-toolcallid] Rewrite duplicate id so the
+                            // persisted tool_calls list, the block lookup, and
+                            // the downstream tool-result join all key on the
+                            // same value (matches the rename applied at start).
+                            val toolCompleteId = dedupeToolCompleteId(chunk.id)
+                            val loggedToolArgs = if (chunk.name == ai.tama.tools.ImageGenerationTool.NAME) "<omitted>" else chunk.args.toString().take(300)
+                            // nanoMuse: no tool arguments or provider-supplied identifiers in parallel logcat.
+                            if (!tamaV2Test) android.util.Log.d("ToolChain[VM]", "[turn=$turn] ToolCallComplete id=$toolCompleteId name=${chunk.name} args=$loggedToolArgs")
+                            toolCalls.add(Triple(toolCompleteId, chunk.name, chunk.args))
+                            // [T-android-gemini3-thoughtsig / #179] Stash the Gemini
+                            // 3.x thought signature keyed by the (deduped) tool call id.
+                            chunk.thoughtSignature?.let { toolCallSignatures[toolCompleteId] = it }
+                            val idx = allToolBlocks.indexOfFirst { it.id == toolCompleteId }
+                            if (idx >= 0) {
+                                val providedTitle = if (tamaV2Test && chunk.name == ai.tama.tools.ImageGenerationTool.NAME) null
+                                    else chunk.args.optString("tool_title", "").takeIf { it.isNotEmpty() }
+                                val title = providedTitle ?: friendlyToolTitle(chunk.name)
+                                // PENDING — JSON params fully received, waiting for execution
+                                // dispatcher to invoke the tool. executeTool() flips to RUNNING.
+                                allToolBlocks[idx] = allToolBlocks[idx].copy(
+                                    toolStatus = ToolBlockStatus.PENDING,
+                                    toolTitle = title,
+                                    toolArgs = chunk.args.toString(),
+                                    content = "", // Clear ToolInputDelta JSON accumulation before real output arrives
+                                    // [T-android-gemini3-thoughtsig / #179] Persist the
+                                    // signature onto the block so buildTurnParts (the DB
+                                    // path) round-trips it. Preserve any prior value if
+                                    // this chunk lacked one.
+                                    thoughtSignature = chunk.thoughtSignature ?: allToolBlocks[idx].thoughtSignature,
+                                )
+                                withContext(Dispatchers.Main) {
+                                    updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
+                                }
+                            }
+                        }
+                        is LLMStreamChunk.Usage -> {
+                            lastUsage = chunk.usage
+                            // Usage chunks may split input and output; retain the largest observed
+                            // values even if the stream is cancelled or later fails.
+                            nmMeasuredInput = maxOf(nmMeasuredInput, ContextEstimate.inputTokens(chunk.usage))
+                            nmMeasuredOutput = maxOf(nmMeasuredOutput, chunk.usage.outputTokens.coerceAtLeast(0))
+                            // nanoMuse: retain the last nonempty input count and observe it once.
+                            if (ContextEstimate.inputTokens(chunk.usage) > 0) requestUsage = chunk.usage
+                            // Update context token count for next turn's dynamicMaxTokens()
+                            // and publish to _lastTurnContextTokens so the ContextPolicy
+                            // gate in [checkContextBeforeSend] can see the latest pressure
+                            // without a DB round-trip.
+                            // nanoMuse: calibrate only input actually reported by this chunk (#719).
+                            val actualContextTokens =
+                                io.github.nanomuse.chat.ContextEstimate.inputTokens(chunk.usage)
+                            if (actualContextTokens > 0) {
+                                lastContextTokens = actualContextTokens
+                                _lastTurnContextTokens.value = lastContextTokens
+                            }
+                        }
+                        is LLMStreamChunk.ReasoningContent -> {
+                            // Opaque reasoning blob (DeepSeek/Kimi reasoning_content) — record
+                            // on the last assistant turn so it echoes back on the next request.
+                            // Empty strings are preserved (DeepSeek V4 emits "" on non-thinking
+                            // turns and we must round-trip exactly that). No live UI surface;
+                            // the thinking panel is driven by ThinkingDelta events above.
+                            turnReasoningBlob = chunk.content
+                        }
+                        is LLMStreamChunk.Finished -> {
+                            // T321: stash for empty-turn diagnostic logging below.
+                            turnFinishReason = chunk.stopReason
+                        }
+                        is LLMStreamChunk.Started -> { /* no-op */ }
+                        is LLMStreamChunk.MediaAttachment -> {
+                            // [T-codex-gpt-image2-oauth-android] Model-generated
+                            // media (gpt-image-2 image). Inline chat display is out
+                            // of scope for this change — the image is delivered via
+                            // sendMessage→LLMResponse.mediaAttachments for the
+                            // minis-model-use CLI path. No-op here so the chat agent
+                            // loop compiles with the new chunk variant.
+                        }
                     }
-                    is LLMStreamChunk.ToolCallComplete -> {
-                        // [T-dedupe-toolcallid] Rewrite duplicate id so the
-                        // persisted tool_calls list, the block lookup, and
-                        // the downstream tool-result join all key on the
-                        // same value (matches the rename applied at start).
-                        val toolCompleteId = dedupeToolCompleteId(chunk.id)
-                        android.util.Log.d("ToolChain[VM]", "[turn=$turn] ToolCallComplete id=$toolCompleteId name=${chunk.name} args=${chunk.args.toString().take(300)}")
-                        toolCalls.add(Triple(toolCompleteId, chunk.name, chunk.args))
-                        // [T-android-gemini3-thoughtsig / #179] Stash the Gemini
-                        // 3.x thought signature keyed by the (deduped) tool call id.
-                        chunk.thoughtSignature?.let { toolCallSignatures[toolCompleteId] = it }
-                        val idx = allToolBlocks.indexOfFirst { it.id == toolCompleteId }
-                        if (idx >= 0) {
-                            val providedTitle = chunk.args.optString("tool_title", "").takeIf { it.isNotEmpty() }
-                            val title = providedTitle ?: friendlyToolTitle(chunk.name)
-                            // PENDING — JSON params fully received, waiting for execution
-                            // dispatcher to invoke the tool. executeTool() flips to RUNNING.
-                            allToolBlocks[idx] = allToolBlocks[idx].copy(
-                                toolStatus = ToolBlockStatus.PENDING,
-                                toolTitle = title,
-                                toolArgs = chunk.args.toString(),
-                                content = "", // Clear ToolInputDelta JSON accumulation before real output arrives
-                                // [T-android-gemini3-thoughtsig / #179] Persist the
-                                // signature onto the block so buildTurnParts (the DB
-                                // path) round-trips it. Preserve any prior value if
-                                // this chunk lacked one.
-                                thoughtSignature = chunk.thoughtSignature ?: allToolBlocks[idx].thoughtSignature,
+                        }  // end collect
+                        if (tamaV2Test && (turnFinishReason == null ||
+                                (toolCalls.isNotEmpty() && !ai.tama.router.GroupFallback.mayExecuteTools(turnFinishReason)))) {
+                            // nanoMuse: do not execute a tool assembled from a dropped, truncated
+                            // or refused response. A partial image call also consumes this turn's
+                            // image attempt so a retry cannot turn it into an unexpected POST.
+                            if (toolCalls.any { it.second == ai.tama.tools.ImageGenerationTool.NAME }) {
+                                nmImageGuard.consume(truncated = true)
+                            }
+                            val message = context.getString(R.string.nm_stream_unconfirmed)
+                            if (turnFinishReason == null) throw LLMError.TransientError(message)
+                            else throw LLMError.ProviderError(message)
+                        }
+                        val nmCleanCompletion = ai.tama.router.GroupFallback.completed(
+                            turnFinishReason, turnTextSb.isNotBlank(), toolCalls.isNotEmpty(),
+                        )
+                        if (nmTicket != null && (if (tamaV2Test) nmCleanCompletion else turnFinishReason != null)) {
+                            val config = providerRepository.config.value
+                            val entry = config.modelEntries.find { it.id == _activeEntryId.value && it.model.id == currentProvider.model.id }
+                            if (entry != null) {
+                                val latency = (android.os.SystemClock.elapsedRealtime() - nmDispatchAt).coerceAtLeast(0L)
+                                // nanoMuse: generation check and health update must be atomic with
+                                // account invalidation; the selected client supplied the version.
+                                if (tamaV2Test && (nmAutoTurn != null || nmManualFallback != null)) {
+                                    AutoModelRuntime.runIfCurrent(entry.providerInstanceId, nmDispatchAccountVersion) {
+                                        AutoModelRuntime.health.success(entry.id, entry.providerInstanceId, latency)
+                                    }
+                                } else if (nmAutoTurn == null ||
+                                    nmDispatchAccountVersion == AutoModelRuntime.accountVersion(entry.providerInstanceId)) {
+                                    AutoModelRuntime.health.success(entry.id, entry.providerInstanceId, latency)
+                                }
+                            }
+                        }
+                        // nanoMuse: a clean tool request is intermediate. Persist only a final,
+                        // nonempty answer, and compare against the original DB binding atomically.
+                        if (nmFallbackCommit != null && ai.tama.router.GroupFallback.confirmsRoute(
+                                turnFinishReason, turnTextSb.isNotBlank(), toolCalls.isNotEmpty(),
+                            )) withContext(NonCancellable + Dispatchers.Main) {
+                            fun routeStillValid(): Boolean {
+                                val live = providerRepository.config.value
+                                val entry = live.modelEntries.find { it.id == _activeEntryId.value && it.model.id == currentProvider.model.id }
+                                val instance = entry?.let { found -> live.instances.find { it.id == found.providerInstanceId } }
+                                val selectedGroup = _selectedGroupId.value
+                                return entry != null && instance != null &&
+                                    ai.tama.router.GroupFallback.eligible(entry.isHidden, instance.isEnabled,
+                                        instance.providerType.isUsable, providerRepository.hasAnyCredential(instance),
+                                        AutoModelStore.approved(context, AutoModelStore.identity(entry, instance))) &&
+                                    (selectedGroup == null || live.modelGroups.any { it.id == selectedGroup }) &&
+                                    nmRouteFingerprint(currentProvider) == AutoModelStore.historyFingerprint(context, instance) &&
+                                    (nmAutoTurn == null || (nmDispatchAccountVersion == AutoModelRuntime.accountVersion(instance.id) &&
+                                        nmAutoActiveChoice?.let(::nmAutoChoiceStillEligible) == true)) &&
+                                    (nmManualFallback == null || nmFallbackStillEligible(checkNotNull(nmManualFallback)))
+                            }
+                            fun stillSelected() = nmFallbackCommit.shouldRestore(
+                                _activeEntryId.value, _selectedGroupId.value,
+                                sameClient = this@ChatViewModel.currentProvider === currentProvider,
+                                sameSession = nmLoopSession == realSessionId.ifEmpty { sessionId },
                             )
-                            withContext(Dispatchers.Main) {
-                                updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
+                            val expected = nmPersistedBinding
+                            val config = providerRepository.config.value
+                            val entry = config.modelEntries.find { it.id == _activeEntryId.value && it.model.id == currentProvider.model.id }
+                            val selectedGroup = _selectedGroupId.value
+                            val group = selectedGroup?.let { id -> config.modelGroups.find { it.id == id } }
+                            if (expected != null && entry != null && nmLoopJob?.isActive == true &&
+                                stillSelected() && routeStillValid()) {
+                                val keepGroup = group != null && (entry.id in group.memberEntryIds || nmAutoTurn != null)
+                                val binding = if (keepGroup && group != null) {
+                                    JSONObject().put("type", "group").put("groupId", group.id).put("lastEntryId", entry.id).apply {
+                                        // Keep the preferred group member when an automatic route is outside it.
+                                        if (nmAutoTurn != null) {
+                                            nmPreferredAutoEntryId?.takeIf { it in group.memberEntryIds }
+                                                ?.let { put("preferredEntryId", it) }
+                                            if (entry.id !in group.memberEntryIds) put("autoFallback", true)
+                                        }
+                                    }
+                                } else JSONObject().put("type", "entry").put("entryId", entry.id)
+                                val replacement = ai.tama.chat.SessionBindingSnapshot(binding.toString(), entry.model.id)
+                                // nanoMuse: compensate even after cancellation or navigation, unless a newer write won.
+                                val confirmation = ai.tama.chat.FallbackBindingConfirmation.confirm(
+                                    isCurrent = { nmLoopJob?.isActive == true && stillSelected() && routeStillValid() },
+                                    write = {
+                                        try { chatRepository.nmTryFallbackBinding(nmLoopSession, expected, replacement) }
+                                        catch (_: Exception) { Log.w(TAG, "Fallback binding could not be saved"); null }
+                                    },
+                                    accept = {
+                                        nmFallbackCommit.confirmed(
+                                            finished = true, activeEntryId = _activeEntryId.value, activeGroupId = _selectedGroupId.value,
+                                            sameClient = this@ChatViewModel.currentProvider === currentProvider, sameRoute = true,
+                                            sameSession = nmLoopSession == realSessionId.ifEmpty { sessionId },
+                                        ) != null
+                                    },
+                                    restore = { version ->
+                                        try { chatRepository.nmRestoreFallbackBinding(nmLoopSession, version, replacement, expected) }
+                                        catch (_: Exception) { Log.w(TAG, "Fallback binding could not be restored"); false }
+                                    },
+                                )
+                                if (confirmation == ai.tama.chat.FallbackBindingConfirmation.Outcome.CONFIRMED) {
+                                    nmPersistedBinding = replacement
+                                    if (!keepGroup) {
+                                        _selectedGroupId.value = null
+                                        _selectedGroupName.value = ""
+                                    }
+                                    if (nmAutoTurn == null) {
+                                        nmPreferredAutoEntryId = entry.id
+                                        val infoIndex = allToolBlocks.indexOfFirst { it.id == "fallback_info_$turn" }
+                                        val source = nmGroupSwitchSource
+                                        val reason = nmGroupSwitchReason
+                                        if (infoIndex >= 0 && source != null && reason != null) {
+                                            allToolBlocks[infoIndex] = allToolBlocks[infoIndex].copy(content = context.getString(
+                                                R.string.nm_auto_switch_reason, source, reason, entry.model.displayName,
+                                            ))
+                                        }
+                                    }
+                                    providerRepository.lastUsedEntryId = entry.id
+                                    nmConfirmedRoute = captureConfirmedRoute()
+                                }
                             }
                         }
-                    }
-                    is LLMStreamChunk.Usage -> {
-                        lastUsage = chunk.usage
-                        // nanoMuse: retain the last nonempty input count and observe it once.
-                        if (ContextEstimate.inputTokens(chunk.usage) > 0) requestUsage = chunk.usage
-                        // Update context token count for next turn's dynamicMaxTokens()
-                        // and publish to _lastTurnContextTokens so the ContextPolicy
-                        // gate in [checkContextBeforeSend] can see the latest pressure
-                        // without a DB round-trip.
-                        // nanoMuse: calibrate only input actually reported by this chunk (#719).
-                        val actualContextTokens =
-                            io.github.nanomuse.chat.ContextEstimate.inputTokens(chunk.usage)
-                        if (actualContextTokens > 0) {
-                            lastContextTokens = actualContextTokens
-                            _lastTurnContextTokens.value = lastContextTokens
-                        }
-                    }
-                    is LLMStreamChunk.ReasoningContent -> {
-                        // Opaque reasoning blob (DeepSeek/Kimi reasoning_content) — record
-                        // on the last assistant turn so it echoes back on the next request.
-                        // Empty strings are preserved (DeepSeek V4 emits "" on non-thinking
-                        // turns and we must round-trip exactly that). No live UI surface;
-                        // the thinking panel is driven by ThinkingDelta events above.
-                        turnReasoningBlob = chunk.content
-                    }
-                    is LLMStreamChunk.Finished -> {
-                        // T321: stash for empty-turn diagnostic logging below.
-                        turnFinishReason = chunk.stopReason
-                    }
-                    is LLMStreamChunk.Started -> { /* no-op */ }
-                    is LLMStreamChunk.MediaAttachment -> {
-                        // [T-codex-gpt-image2-oauth-android] Model-generated
-                        // media (gpt-image-2 image). Inline chat display is out
-                        // of scope for this change — the image is delivered via
-                        // sendMessage→LLMResponse.mediaAttachments for the
-                        // minis-model-use CLI path. No-op here so the chat agent
-                        // loop compiles with the new chunk variant.
-                    }
-                }
-                    }  // end collect
-                    // nanoMuse: persist one final input sample, never partial or failed requests.
-                    requestUsage?.let { usage ->
-                        usageMeter.observe(requestSnapshot, ContextEstimate.inputTokens(usage), requestEstimate)
-                        if (contextEstimate.observe(ContextEstimate.inputTokens(usage), requestEstimate)) {
-                            calibrationKey?.let { key ->
-                                nmCalibrationStore.save(key, currentProvider.model.id, contextEstimate)
-                            }
-                        }
-                    }
-                    // T94 fix 2: flush any text that landed in the throttle
-                    // window after the last UI tick. The retry-rollback /
-                    // turn-finalize paths below assume _messages reflects all
-                    // accumulated text-deltas, so we must not leave the last
-                    // 0-50ms worth on the floor.
-                    if (pendingChunkSb.isNotEmpty()) {
-                        pendingChunkSb.setLength(0)
-                        // T307: also flush the active text block's pending
-                        // tail and snapshot turnText.
-                        materializeActiveTextBlock()
-                        val turnSnap = turnTextSb.toString()
-                        withContext(Dispatchers.Main) {
-                            updateAssistantMessage(assistantId, accumulatedText + turnSnap, true, allToolBlocks)
-                        }
-                    }
-                    // T256: reset throttle bookkeeping for the next turn so the
-                    // first delta of the next assistant message fires immediately
-                    // rather than coalescing against this turn's stale baseline.
-                    lastFlushedLen = 0
-                    lastUiUpdateMs = 0L
-                    lastFileToolInputMs = 0L
-                    lastOtherToolInputMs = 0L
-                    collectDone = true
-                    // Stream completed without error — clear any lingering retry UI state.
-                    if (_autoRetryAttempt.value != 0 || _autoRetryCountdown.value != 0) {
-                        _autoRetryAttempt.value = 0
-                        _autoRetryCountdown.value = 0
-                    }
-                    } finally {
-                        // [T-STALL-DIAG] Always stop the first-chunk watchdog —
-                        // success, error, or cancellation — so it can never
-                        // outlive its turn and spam the log.
-                        firstChunkWatchdog.cancel()
-                        if (!firstChunkSeen.get()) {
-                            println(
-                                "[T-STALL-DIAG] stream ENDED-WITHOUT-CHUNK sid=$diagSid turn=$turn " +
-                                    "elapsedMs=${android.os.SystemClock.elapsedRealtime() - streamStartMs}",
+                        // nanoMuse: only the actual cap of this completed response is confirmed;
+                        // the context budget might have lowered it further during the wait.
+                        pendingOutput?.takeIf {
+                            it.provider === currentProvider && it.model == currentProvider.model.id && it.route == durableOutputKey
+                        }?.let { accepted ->
+                            val confirmed = ai.tama.net.ProviderRecovery.confirmedOutput(
+                                accepted.limit, lastRequestedOutput, if (tamaV2Test) nmCleanCompletion else turnFinishReason != null,
                             )
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (e is CancellationException && e.cause == null) throw e  // real job cancellation
-                    val actual = unwrapFlowException(e)
-                    val isRateLimit = actual is com.openminis.app.data.model.LLMError.RateLimited
-                    val is5xx = actual is com.openminis.app.data.model.LLMError.ProviderError &&
-                        actual.detail.contains(Regex("[5][0-9]{2}"))
-                    // Auto-retry on transient network/5xx/transient errors on the SAME provider
-                    // before considering a fallback (mirrors iOS streamWithAutoRetry).
-                    // Rate limits are provider-level signals that should trigger fallback immediately,
-                    // not retry on the same provider.
-                    val isTransient = actual is com.openminis.app.data.model.LLMError.NetworkError ||
-                        actual is com.openminis.app.data.model.LLMError.TransientError ||
-                        is5xx
-                    // nanoMuse: one server-overflow retry is allowed only after local work
-                    // measurably shrinks the same request. No blind resend of identical history.
-                    var recoveredContext = false
-                    if (!contextOverflowRetried && isContextTooLargeError(actual)) {
-                        contextOverflowRetried = true
-                        val before = measureRawTokens()
-                        prepareContext(force = true)
-                        recoveredContext = measureRawTokens() < before
-                    }
-                    if ((isTransient || recoveredContext) && retryAttempt < AUTO_RETRY_DELAYS_SEC.size) {
-                        val delaySec = if (recoveredContext) 0 else AUTO_RETRY_DELAYS_SEC[retryAttempt]
-                        retryAttempt += 1
-                        val errDesc = actual.message ?: actual.javaClass.simpleName
-                        Log.w(TAG, "🔁 Transient error on ${currentProvider.model.displayName}, retry $retryAttempt/${AUTO_RETRY_DELAYS_SEC.size} in ${delaySec}s: $errDesc")
-                        withContext(Dispatchers.Main) {
-                            _autoRetryAttempt.value = retryAttempt
-                            // Show the error inline on the streaming assistant message during countdown.
-                            // Keeps isStreaming=true so the UI doesn't tear down the streaming state.
-                            setTransientInlineError("$errDesc — retrying ($retryAttempt/${AUTO_RETRY_DELAYS_SEC.size})…")
-                        }
-                        try {
-                            for (remaining in delaySec downTo 1) {
-                                _autoRetryCountdown.value = remaining
-                                kotlinx.coroutines.delay(1000)
+                            if (confirmed != null) {
+                                accepted.route?.let { key ->
+                                    runCatching { nmOutputLimitStore.save(key, accepted.model, confirmed) }
+                                }
+                                withContext(Dispatchers.Main) {
+                                    appendSystemInfo(context.getString(R.string.nm_reach_output_adjusted, confirmed), "info")
+                                }
+                                pendingOutput = null
                             }
-                        } finally {
-                            _autoRetryCountdown.value = 0
                         }
-                        // Clear inline error so the retry attempt can start cleanly.
-                        withContext(Dispatchers.Main) {
-                            clearInlineError()
-                        }
-                        // Roll back partial blocks from the failed stream attempt so the retried
-                        // stream's deltas don't double-append on top of stale content. Previous
-                        // turns (everything before turnStartBlockIndex) are preserved.
-                        if (allToolBlocks.size > turnStartBlockIndex) {
-                            while (allToolBlocks.size > turnStartBlockIndex) {
-                                allToolBlocks.removeAt(allToolBlocks.size - 1)
+                        // nanoMuse: persist one final input sample, never partial or failed requests.
+                        requestUsage?.let { usage ->
+                            usageMeter.observe(requestSnapshot, ContextEstimate.inputTokens(usage), requestEstimate)
+                            if (contextEstimate.observe(ContextEstimate.inputTokens(usage), requestEstimate)) {
+                                calibrationKey?.let { key ->
+                                    nmCalibrationStore.save(key, currentProvider.model.id, contextEstimate)
+                                }
                             }
-                            // [T-android-fallback-text-rewind] Keep this turn's
-                            // already-streamed text on screen across the rollback.
-                            // `accumulatedText` only folds in `turnTextSb` after the
-                            // while loop completes successfully, so passing bare
-                            // `accumulatedText` here would visibly rewind everything
-                            // the user already read this turn. The next attempt
-                            // streams into a fresh `turnTextSb` and re-publishes
-                            // `accumulatedText + newTurnText`, so this transient
-                            // value is overwritten cleanly (no duplication).
+                        }
+                        // T94 fix 2: flush any text that landed in the throttle
+                        // window after the last UI tick. The retry-rollback /
+                        // turn-finalize paths below assume _messages reflects all
+                        // accumulated text-deltas, so we must not leave the last
+                        // 0-50ms worth on the floor.
+                        if (pendingChunkSb.isNotEmpty()) {
+                            pendingChunkSb.setLength(0)
+                            // T307: also flush the active text block's pending
+                            // tail and snapshot turnText.
+                            materializeActiveTextBlock()
+                            val turnSnap = turnTextSb.toString()
                             withContext(Dispatchers.Main) {
-                                updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
+                                updateAssistantMessage(assistantId, accumulatedText + turnSnap, true, allToolBlocks)
                             }
                         }
-                        // T307: SB-based per-turn accumulators reset.
-                        turnTextSb.setLength(0)
-                        currentTextBlockSb = null
-                        // [T-android-tool-splits-reply-fix] The tracked turn
-                        // text block was just rolled back with the rest of
-                        // this turn's partial blocks.
-                        turnTextBlockIdx = -1
-                        turnThinking.clear()
-                        toolCalls.clear()
-                        toolCallSignatures.clear()  // [T-android-gemini3-thoughtsig / #179]
-                        // T94 fix 2 + T256: throttle bookkeeping is per-stream
-                        // attempt; reset alongside the partial-block rollback so
-                        // the next attempt's first delta fires through immediately
-                        // rather than coalescing against stale baselines.
-                        pendingChunkSb.setLength(0)
-                        lastUiUpdateMs = 0L
+                        // T256: reset throttle bookkeeping for the next turn so the
+                        // first delta of the next assistant message fires immediately
+                        // rather than coalescing against this turn's stale baseline.
                         lastFlushedLen = 0
+                        lastUiUpdateMs = 0L
                         lastFileToolInputMs = 0L
                         lastOtherToolInputMs = 0L
-                        continue  // retry on same provider
-                    }
-                    // Retries exhausted or non-retryable — proceed to fallback / throw.
-                    _autoRetryAttempt.value = 0
-                    _autoRetryCountdown.value = 0
-                    // [T-android-timeout-while-running] Clear any transient
-                    // inline error from the prior retry attempts before we
-                    // either fall back (loop continues with a new provider)
-                    // or throw (terminal setInlineError below re-sets it
-                    // with the final non-retryable message). Without this,
-                    // a transient banner from the previous attempt could
-                    // linger as the new provider starts streaming — the
-                    // updateAssistantMessage(isStreaming=true) defense
-                    // catches it on the next delta, but clearing here
-                    // makes the intent explicit and avoids a one-frame
-                    // flash of the stale banner.
-                    withContext(Dispatchers.Main) { clearInlineError() }
-                    val shouldFallback = isRateLimit || is5xx ||
-                        fallbackStrategy == com.openminis.app.data.model.FallbackStrategy.always
-                    val nextCandidate = if (shouldFallback) remainingFallbacks.removeFirstOrNull() else null
-                    val next = nextCandidate?.provider
-                    if (next != null && nextCandidate != null) {
-                        val reason = when {
-                            isRateLimit -> "Rate limited"
-                            actual is com.openminis.app.data.model.LLMError.ProviderError -> actual.detail
-                            else -> actual.message ?: "Error"
+                        collectDone = true
+                        // Stream completed without error — clear any lingering retry UI state.
+                        if (_autoRetryAttempt.value != 0 || _autoRetryCountdown.value != 0) {
+                            _autoRetryAttempt.value = 0
+                            _autoRetryCountdown.value = 0
                         }
-                        // [T-android-model-indicator-flash-on-endpoint-retry]
-                        // Same-model recovery is a TRANSPARENT retry, not a real
-                        // model switch. A model group can hold several entries
-                        // for the SAME modelId behind different provider
-                        // instances/endpoints (e.g. deepseek-v4-flash via a dead
-                        // hub.oaifree.com key + via api.deepseek.com). When the
-                        // first 401s, group-fallback moves to the next instance —
-                        // same modelId, different endpoint — which should recover
-                        // silently. Only flash the model capsule when the
-                        // resolved modelId ACTUALLY changes; an endpoint/instance-
-                        // only change must not surface to the UI.
-                        val isRealModelChange = next.model.id != currentProvider.model.id
-                        fallbackReasons.add("⚠️ ${currentProvider.model.displayName}: $reason")
-                        Log.i(TAG, "🔀 $reason on ${currentProvider.model.displayName}, switching to ${next.model.displayName} (realModelChange=$isRealModelChange)")
-                        currentProvider = next
-                        // Also update class-level provider so the next sendMessage() starts from here
-                        this@ChatViewModel.currentProvider = next
-                        // Update top bar model info + active entry. (For a same-
-                        // model endpoint recovery these are no-ops on the visible
-                        // model name, but still keep activeEntryId / provider name
-                        // in sync with the instance we actually used.)
-                        _modelName.value = currentProvider.model.displayName
-                        // Update activeEntryId so model picker reflects the switch.
-                        // [T-android-fallback-entry-identity] Look the entry up by
-                        // its OWN id, carried on the candidate. The previous
-                        // `find { it.model.id == currentProvider.model.id }` was
-                        // ambiguous: two instances can expose the same model id, so
-                        // it returned whichever entry sits earlier in modelEntries.
-                        // Observed in the field — falling back onto
-                        // `deepseek-v4-flash` served by "DeekSeak" showed the
-                        // provider as "Bailian OpenAI", because Bailian also has a
-                        // `deepseek-v4-flash` entry and happened to be found first.
-                        // That also poisoned activeEntryId and the persisted
-                        // binding, so re-entering the session resumed on the WRONG
-                        // instance.
-                        val newEntry = providerRepository.config.value.modelEntries.find {
-                            it.id == nextCandidate.entryId
-                        }
-                        if (newEntry != null) {
-                            _activeEntryId.value = newEntry.id
-                            currentModel = newEntry.model
-                            val newInstance = providerRepository.instance(newEntry.providerInstanceId)
-                            if (newInstance != null) {
-                                _providerName.value = newInstance.label.ifEmpty { newEntry.model.provider }
+                        } finally {
+                            // [T-STALL-DIAG] Always stop the first-chunk watchdog —
+                            // success, error, or cancellation — so it can never
+                            // outlive its turn and spam the log.
+                            firstChunkWatchdog.cancel()
+                            if (!firstChunkSeen.get()) {
+                                println(
+                                    "[T-STALL-DIAG] stream ENDED-WITHOUT-CHUNK sid=$diagSid turn=$turn " +
+                                        "elapsedMs=${android.os.SystemClock.elapsedRealtime() - streamStartMs}",
+                                )
                             }
                         }
-                        // Flash ONLY on a genuine model switch — never on a
-                        // transparent same-model endpoint retry.
-                        if (isRealModelChange) _fallbackTrigger.value++
-                        // Persist the fallback model so re-entering the session starts from here
-                        val groupId = _selectedGroupId.value
-                        if (groupId != null && newEntry != null) {
-                            persistBinding("""{"type":"group","groupId":"$groupId","lastEntryId":"${newEntry.id}"}""")
-                        } else if (newEntry != null) {
-                            persistBinding("""{"type":"entry","entryId":"${newEntry.id}"}""")
+                    } catch (e: Exception) {
+                        // nanoMuse: a cancelled job must never start another request, even when
+                        // its CancellationException carries a cause; active flow wrappers may unwrap.
+                        if (e is CancellationException) {
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (e.cause == null) throw e
                         }
-                        val infoText = fallbackReasons.joinToString("\n") + "\n🔄 Switched to ${currentProvider.model.displayName}"
-                        allToolBlocks.removeAll { it.kind == "info" }
-                        allToolBlocks.add(0, AssistantBlock(
-                            id = "fallback_info_$turn",
-                            kind = "info",
-                            content = infoText,
-                            toolTitle = "Switched model",
-                            toolStatus = ToolBlockStatus.SUCCESS,
-                        ))
-                        // [T-android-fallback-text-rewind] Same as the retry-
-                        // rollback path above: preserve this turn's streamed text
-                        // (`turnTextSb`) on screen while we switch providers.
-                        // `accumulatedText` hasn't folded it in yet, so bare
-                        // `accumulatedText` would rewind the visible reply. The new
-                        // provider streams into a fresh `turnTextSb` (reset just
-                        // below) and re-publishes `accumulatedText + newTurnText`.
-                        withContext(Dispatchers.Main) {
-                            updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
+                        if (e is AutoDispatchBlocked && nmAutoTurn != null) {
+                            // Nothing was sent in this attempt. A concurrent chat may have
+                            // consumed the budget or the person may have revoked consent.
+                            nmAutoLocalBlocks[e.entryId] = e.explanation
+                            nmAutoTurn.exclude(e.entryId)
+                            nmAutoActivate(nmAutoSelect(null))
+                            preparedMessages = null
+                            pendingOutput = null
+                            outputRetried = false
+                            rateRetried = false
+                            retryAttempt = 0
+                            continue
                         }
-                        // Reset turn state for retry with new provider
-                        turnTextSb.setLength(0)
-                        currentTextBlockSb = null
-                        // [T-android-tool-splits-reply-fix] Fresh stream from a
-                        // different provider — and the add(0, info) above
-                        // shifted every block index anyway.
-                        turnTextBlockIdx = -1
-                        turnThinking.clear()
-                        toolCalls.clear()
-                        toolCallSignatures.clear()  // [T-android-gemini3-thoughtsig / #179]
-                        // loop continues — will retry collect with currentProvider
-                    } else {
-                        // All fallbacks exhausted. Surface the trail of tried
-                        // models AND the group members that were silently
-                        // skipped (disabled / not logged in / hidden) so the
-                        // user can see why fallback never reached them —
-                        // mirrors iOS streamWithGroupFallback exhausted path.
-                        if (shouldFallback) {
-                            val skipped = unavailableGroupMembers()
-                            if (fallbackReasons.isNotEmpty() || skipped.isNotEmpty()) {
-                                val trail = (fallbackReasons + skipped).joinToString("\n")
-                                val finalDesc = actual.message ?: actual.toString()
-                                throw com.openminis.app.data.model.LLMError.ProviderError("$trail\n$finalDesc")
+                        val actual = unwrapFlowException(e)
+                        // nanoMuse: changing the cost guard cannot trigger retries or another provider.
+                        if (actual is ai.tama.pricing.ModelCostGuard.Blocked) throw actual
+                        if (nmAutoTurn != null && !AutoModelStore.enabled(context)) throw actual
+                        val isRateLimit = actual is com.openminis.app.data.model.LLMError.RateLimited
+                        // nanoMuse: a token count such as 5000 in a 400 is not an HTTP 500.
+                        val reach = (actual as? LLMError)?.nmProviderReach
+                        val is5xx = reach?.httpStatus?.let { it in 500..599 } ?: (
+                            actual is com.openminis.app.data.model.LLMError.ProviderError &&
+                                Regex("""(?:\[5\d\d\]|\bHTTP\s+5\d\d\b)""", RegexOption.IGNORE_CASE).containsMatchIn(actual.detail)
+                        )
+                        // Auto-retry on transient network/5xx/transient errors on the SAME provider
+                        // before considering a fallback (mirrors iOS streamWithAutoRetry).
+                        val sizeRejection = reach?.kind == io.github.nanomuse.net.ProviderReach.Kind.REQUEST_TOO_LARGE ||
+                            reach?.kind == io.github.nanomuse.net.ProviderReach.Kind.RESPONSE_LIMIT
+                        val isTransient = !sizeRejection && (actual is com.openminis.app.data.model.LLMError.NetworkError ||
+                            actual is com.openminis.app.data.model.LLMError.TransientError || is5xx)
+                        // nanoMuse: a real HTTP 413 descends the profile ladder before any
+                        // fallback. Retry only if the system and schema really got smaller;
+                        // the completed tool results in history are never executed again.
+                        val smallerProfile = if (reach?.httpStatus == 413 &&
+                            reach.kind == io.github.nanomuse.net.ProviderReach.Kind.REQUEST_TOO_LARGE) {
+                            nmAttempt?.let { rejected ->
+                                val history = preparedMessages ?: applyRequestImageBudget(nmRequestHistory(), preview = true)
+                                TurnRequestPlanner.smallerAfter413(
+                                    rejected, nmCurrentInput, originalAgentTools(), nmProviderPrefix(),
+                                ) { prompt, tools ->
+                                    val raw = ContextEstimate.request(history, prompt, tools, imageTokens = BPETokenizer::countImageTokens)
+                                    maxOf(raw, contextEstimate.estimate(raw))
+                                }
+                            }
+                        } else null
+                        // nanoMuse: one server-overflow retry is allowed only after local work
+                        // measurably shrinks the same request. No blind resend of identical history.
+                        var recoveredContext = false
+                        if (smallerProfile == null && !contextOverflowRetried && isContextTooLargeError(actual)) {
+                            contextOverflowRetried = true
+                            val before = measureRawTokens()
+                            prepareContext(force = true)
+                            recoveredContext = measureRawTokens() < before
+                        }
+                        // nanoMuse: a verified upper bound changes the next request; a short 429
+                        // gets one bounded wait. Neither path repeats already executed tools.
+                        val outputRetry = ai.tama.net.ProviderRecovery.outputRetry(reach, lastRequestedOutput, outputRetried)
+                        val rateDelay = if (isRateLimit && nmAutoTurn == null)
+                            ai.tama.net.ProviderRecovery.rateDelay(reach, rateRetried) else null
+                        if (smallerProfile != null ||
+                            (((isTransient && nmAutoTurn == null) || recoveredContext || outputRetry != null || rateDelay != null) &&
+                                retryAttempt < AUTO_RETRY_DELAYS_SEC.size)) {
+                            if (smallerProfile != null) {
+                                nmInstall(smallerProfile)
+                                preparedMessages = null // recalculate the context view for this smaller shape
+                                withContext(Dispatchers.Main) {
+                                    appendSystemInfo(context.getString(R.string.nm_router_retry_smaller), "info")
+                                }
+                            }
+                            if (outputRetry != null) {
+                                outputRetried = true
+                                pendingOutput = PendingOutputLimit(currentProvider, durableOutputKey, currentProvider.model.id, outputRetry)
+                            }
+                            if (rateDelay != null) rateRetried = true
+                            val delaySec = when {
+                                smallerProfile != null || recoveredContext || outputRetry != null -> 0
+                                rateDelay != null -> rateDelay
+                                else -> AUTO_RETRY_DELAYS_SEC[retryAttempt]
+                            }
+                            // Profile steps have their own finite ladder; they must not consume
+                            // or be suppressed by the unrelated transient retry counter.
+                            if (smallerProfile == null) retryAttempt += 1
+                            val errDesc = actual.message ?: actual.javaClass.simpleName
+                            if (tamaV2Test) Log.w(TAG, "Retrying provider request after a classified failure")
+                            else Log.w(TAG, "🔁 Transient error on ${currentProvider.model.displayName}, retry $retryAttempt/${AUTO_RETRY_DELAYS_SEC.size} in ${delaySec}s: $errDesc")
+                            withContext(Dispatchers.Main) {
+                                _autoRetryAttempt.value = retryAttempt
+                                // nanoMuse: the new retry paths state only what is actually happening.
+                                val status = when {
+                                    smallerProfile != null -> context.getString(R.string.nm_router_retry_smaller)
+                                    outputRetry != null -> context.getString(R.string.nm_reach_output_retry, outputRetry)
+                                    rateDelay != null -> context.getString(R.string.nm_reach_rate_wait, delaySec)
+                                    is5xx -> context.getString(R.string.nm_reach_server_retry)
+                                    else -> "$errDesc — retrying ($retryAttempt/${AUTO_RETRY_DELAYS_SEC.size})…"
+                                }
+                                // nanoMuse: a retry in the parallel build is not yet a terminal error card.
+                                if (!tamaV2Test) setTransientInlineError(status)
+                            }
+                            try {
+                                for (remaining in delaySec downTo 1) {
+                                    _autoRetryCountdown.value = remaining
+                                    if (!tamaV2Test && rateDelay != null) withContext(Dispatchers.Main) {
+                                        setTransientInlineError(context.getString(R.string.nm_reach_rate_wait, remaining))
+                                    }
+                                    kotlinx.coroutines.delay(1000)
+                                }
+                            } finally {
+                                _autoRetryCountdown.value = 0
+                            }
+                            // Clear inline error so the retry attempt can start cleanly.
+                            withContext(Dispatchers.Main) {
+                                clearInlineError()
+                            }
+                            // Roll back partial blocks from the failed stream attempt so the retried
+                            // stream's deltas don't double-append on top of stale content. Previous
+                            // turns (everything before turnStartBlockIndex) are preserved.
+                            if (allToolBlocks.size > turnStartBlockIndex) {
+                                while (allToolBlocks.size > turnStartBlockIndex) {
+                                    allToolBlocks.removeAt(allToolBlocks.size - 1)
+                                }
+                                // [T-android-fallback-text-rewind] Keep this turn's
+                                // already-streamed text on screen across the rollback.
+                                // `accumulatedText` only folds in `turnTextSb` after the
+                                // while loop completes successfully, so passing bare
+                                // `accumulatedText` here would visibly rewind everything
+                                // the user already read this turn. The next attempt
+                                // streams into a fresh `turnTextSb` and re-publishes
+                                // `accumulatedText + newTurnText`, so this transient
+                                // value is overwritten cleanly (no duplication).
+                                withContext(Dispatchers.Main) {
+                                    updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
+                                }
+                            }
+                            // T307: SB-based per-turn accumulators reset.
+                            turnTextSb.setLength(0)
+                            currentTextBlockSb = null
+                            // [T-android-tool-splits-reply-fix] The tracked turn
+                            // text block was just rolled back with the rest of
+                            // this turn's partial blocks.
+                            turnTextBlockIdx = -1
+                            turnThinking.clear()
+                            toolCalls.clear()
+                            toolCallSignatures.clear()  // [T-android-gemini3-thoughtsig / #179]
+                            // T94 fix 2 + T256: throttle bookkeeping is per-stream
+                            // attempt; reset alongside the partial-block rollback so
+                            // the next attempt's first delta fires through immediately
+                            // rather than coalescing against stale baselines.
+                            pendingChunkSb.setLength(0)
+                            lastUiUpdateMs = 0L
+                            lastFlushedLen = 0
+                            lastFileToolInputMs = 0L
+                            lastOtherToolInputMs = 0L
+                            continue  // retry on same provider
+                        }
+                        // nanoMuse: distinguish an exhausted LEAN request from a successful
+                        // downgrade; retain the original provider diagnostic on the error card.
+                        if (reach?.httpStatus == 413 && nmRoute.profile == Profile.LEAN) {
+                            withContext(Dispatchers.Main) {
+                                appendSystemInfo(context.getString(R.string.nm_router_lean_too_large), "info")
                             }
                         }
-                        throw actual  // re-throw unwrapped, all fallbacks exhausted
+                        // Retries exhausted or non-retryable — proceed to fallback / throw.
+                        _autoRetryAttempt.value = 0
+                        _autoRetryCountdown.value = 0
+                        // [T-android-timeout-while-running] Clear any transient
+                        // inline error from the prior retry attempts before we
+                        // either fall back (loop continues with a new provider)
+                        // or throw (terminal setInlineError below re-sets it
+                        // with the final non-retryable message). Without this,
+                        // a transient banner from the previous attempt could
+                        // linger as the new provider starts streaming — the
+                        // updateAssistantMessage(isStreaming=true) defense
+                        // catches it on the next delta, but clearing here
+                        // makes the intent explicit and avoids a one-frame
+                        // flash of the stale banner.
+                        withContext(Dispatchers.Main) { clearInlineError() }
+                        if (nmAutoTurn != null) {
+                            // A bug, malformed request, safety refusal or cancellation must not
+                            // silently trigger another potentially billable provider.
+                            val decision = ai.tama.router.AutoModelFailure.classify(
+                                actual, nmRequestTools.isNotEmpty(), switchOnAmbiguousAccessDenied = !tamaV2Test,
+                            ) ?: throw actual
+                            val failed = checkNotNull(nmAutoCandidate)
+                            val expectedVersion = nmDispatchAccountVersion
+                            // nanoMuse: checking a version and then recording separately permits
+                            // invalidation between them. Commit each result under the same lock.
+                            val recorded = if (tamaV2Test) when (decision) {
+                                is ai.tama.router.AutoModelFailure.Decision.Cooldown ->
+                                    AutoModelRuntime.runIfCurrent(failed.providerId, expectedVersion) {
+                                        nmAutoTurn.fail(failed.entryId, failed.providerId, decision.reason,
+                                            decision.retryAfterSeconds, decision.retryAfterPresent)
+                                    }
+                                ai.tama.router.AutoModelFailure.Decision.UnsupportedTools ->
+                                    nmAutoIdentity?.let { AutoModelStore.noteUnsupportedToolsIfCurrent(context, it, expectedVersion) } == true
+                            } else if (expectedVersion != null && expectedVersion == AutoModelRuntime.accountVersion(failed.providerId)) {
+                                when (decision) {
+                                    is ai.tama.router.AutoModelFailure.Decision.Cooldown ->
+                                        nmAutoTurn.fail(failed.entryId, failed.providerId, decision.reason,
+                                            decision.retryAfterSeconds, decision.retryAfterPresent)
+                                    ai.tama.router.AutoModelFailure.Decision.UnsupportedTools -> {
+                                        nmAutoIdentity?.let { AutoModelStore.noteUnsupportedTools(context, it) }
+                                        nmAutoLocalBlocks[failed.entryId] = context.getString(R.string.nm_auto_reason_capability)
+                                        nmAutoTurn.exclude(failed.entryId)
+                                    }
+                                }
+                                true
+                            } else false
+                            if (!recorded) {
+                                // Never transfer an old in-flight error to a replacement account.
+                                nmAutoLocalBlocks[failed.entryId] = context.getString(R.string.nm_auto_reason_consent)
+                                nmAutoTurn.exclude(failed.entryId)
+                            } else if (tamaV2Test && decision == ai.tama.router.AutoModelFailure.Decision.UnsupportedTools) {
+                                nmAutoLocalBlocks[failed.entryId] = context.getString(R.string.nm_auto_reason_capability)
+                                nmAutoTurn.exclude(failed.entryId)
+                            }
+                            // Only uncommitted stream fragments are discarded. Tool calls/results
+                            // from previous successful iterations remain in agentHistory.
+                            while (allToolBlocks.size > turnStartBlockIndex) allToolBlocks.removeAt(allToolBlocks.size - 1)
+                            withContext(Dispatchers.Main) {
+                                updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
+                            }
+                            turnTextSb.setLength(0)
+                            currentTextBlockSb = null
+                            turnTextBlockIdx = -1
+                            turnThinking.clear()
+                            toolCalls.clear()
+                            toolCallSignatures.clear()
+                            pendingChunkSb.setLength(0)
+                            lastUiUpdateMs = 0L
+                            lastFlushedLen = 0
+                            lastFileToolInputMs = 0L
+                            lastOtherToolInputMs = 0L
+                            nmAutoActivate(nmAutoSelect(null))
+                            preparedMessages = null
+                            pendingOutput = null
+                            outputRetried = false
+                            rateRetried = false
+                            contextOverflowRetried = false
+                            retryAttempt = 0
+                            continue
+                        }
+                        // nanoMuse: never forward an unchanged size/output rejection to a group
+                        // model. Profile downgrade and an output-cap retry need their own guards.
+                        val shouldFallback = if (nmFallbackCommit != null) {
+                            // nanoMuse: even the "always" strategy must not forward a generic
+                            // 403, malformed request, safety refusal or cancellation.
+                            ai.tama.router.GroupFallback.canSwitch(
+                                ai.tama.router.AutoModelFailure.classify(actual, nmRequestTools.isNotEmpty(),
+                                    switchOnAmbiguousAccessDenied = false), sizeRejection,
+                            )
+                        } else !sizeRejection && (isRateLimit || is5xx ||
+                            fallbackStrategy == com.openminis.app.data.model.FallbackStrategy.always)
+                        if (nmFallbackCommit != null && this@ChatViewModel.currentProvider !== currentProvider) throw actual
+                        val nextCandidate = if (!shouldFallback) null else if (nmFallbackCommit == null) {
+                            remainingFallbacks.removeFirstOrNull()
+                        } else {
+                            // Candidates were captured before network retries. Do not dispatch to a
+                            // model hidden, removed, disabled or repointed while we were waiting.
+                            var eligible: FallbackCandidate? = null
+                            while (eligible == null && remainingFallbacks.isNotEmpty()) {
+                                val candidate = remainingFallbacks.removeAt(0)
+                                if (nmFallbackStillEligible(candidate)) eligible = candidate
+                            }
+                            eligible
+                        }
+                        val next = nextCandidate?.provider
+                        if (next != null && nextCandidate != null) {
+                            val reason = if (nmFallbackCommit != null) context.getString(when {
+                                reach?.kind == io.github.nanomuse.net.ProviderReach.Kind.QUOTA -> R.string.nm_auto_failure_quota
+                                isRateLimit -> R.string.nm_auto_failure_rate
+                                is5xx -> R.string.nm_auto_failure_server
+                                else -> R.string.nm_group_switch_other
+                            }) else when {
+                                isRateLimit -> "Rate limited"
+                                actual is com.openminis.app.data.model.LLMError.ProviderError -> actual.detail
+                                else -> actual.message ?: "Error"
+                            }
+                            // [T-android-model-indicator-flash-on-endpoint-retry]
+                            // Same-model recovery is a TRANSPARENT retry, not a real
+                            // model switch. A model group can hold several entries
+                            // for the SAME modelId behind different provider
+                            // instances/endpoints (e.g. deepseek-v4-flash via a dead
+                            // hub.oaifree.com key + via api.deepseek.com). When the
+                            // first 401s, group-fallback moves to the next instance —
+                            // same modelId, different endpoint — which should recover
+                            // silently. Only flash the model capsule when the
+                            // resolved modelId ACTUALLY changes; an endpoint/instance-
+                            // only change must not surface to the UI.
+                            val isRealModelChange = next.model.id != currentProvider.model.id
+                            if (nmFallbackCommit != null) {
+                                nmGroupSwitchSource = currentProvider.model.displayName
+                                nmGroupSwitchReason = reason
+                            }
+                            fallbackReasons.add("⚠️ ${currentProvider.model.displayName}: $reason")
+                            // nanoMuse: provider/model labels can be user-supplied.
+                            if (!tamaV2Test) Log.i(TAG, "🔀 $reason on ${currentProvider.model.displayName}, switching to ${next.model.displayName} (realModelChange=$isRealModelChange)")
+                            // nanoMuse: a different route must not inherit a proposal or its one-shot flags.
+                            // The existing overall retry counter remains bounded across the group.
+                            pendingOutput = null
+                            outputRetried = false
+                            rateRetried = false
+                            // nanoMuse: selection belongs to the source session and must not
+                            // replace a newer user choice while a failed request was in flight.
+                            val fromClient = currentProvider
+                            val fromEntryId = _activeEntryId.value
+                            fun installFallback() {
+                                val newEntry = providerRepository.config.value.modelEntries.find {
+                                    it.id == nextCandidate.entryId
+                                }
+                                if (nmFallbackCommit != null && newEntry == null) {
+                                    throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+                                }
+                                currentProvider = next
+                                // nanoMuse: remember the exact approved group candidate until dispatch.
+                                if (nmFallbackCommit != null) nmManualFallback = nextCandidate
+                                // Also update class-level provider so the next sendMessage() starts from here
+                                this@ChatViewModel.currentProvider = next
+                                // Update top bar model info + active entry. (For a same-
+                                // model endpoint recovery these are no-ops on the visible
+                                // model name, but still keep activeEntryId / provider name
+                                // in sync with the instance we actually used.)
+                                _modelName.value = currentProvider.model.displayName
+                                // Update activeEntryId so model picker reflects the switch.
+                                // [T-android-fallback-entry-identity] Look the entry up by
+                                // its OWN id, carried on the candidate. The previous
+                                // `find { it.model.id == currentProvider.model.id }` was
+                                // ambiguous: two instances can expose the same model id, so
+                                // it returned whichever entry sits earlier in modelEntries.
+                                // Observed in the field — falling back onto
+                                // `deepseek-v4-flash` served by "DeekSeak" showed the
+                                // provider as "Bailian OpenAI", because Bailian also has a
+                                // `deepseek-v4-flash` entry and happened to be found first.
+                                // That also poisoned activeEntryId and the persisted
+                                // binding, so re-entering the session resumed on the WRONG
+                                // instance.
+                                if (newEntry != null) {
+                                    _activeEntryId.value = newEntry.id
+                                    currentModel = newEntry.model
+                                    val newInstance = providerRepository.instance(newEntry.providerInstanceId)
+                                    if (newInstance != null) {
+                                        _providerName.value = newInstance.label.ifEmpty { newEntry.model.provider }
+                                    }
+                                }
+                                // Flash ONLY on a genuine model switch — never on a
+                                // transparent same-model endpoint retry.
+                                if (isRealModelChange) _fallbackTrigger.value++
+                                val groupId = _selectedGroupId.value
+                                if (nmFallbackCommit != null && newEntry != null) {
+                                    nmFallbackCommit.switched(newEntry.id, groupId)
+                                } else if (groupId != null && newEntry != null) {
+                                    persistBinding("""{"type":"group","groupId":"$groupId","lastEntryId":"${newEntry.id}"}""")
+                                } else if (newEntry != null) {
+                                    persistBinding("""{"type":"entry","entryId":"${newEntry.id}"}""")
+                                }
+                            }
+                            if (nmFallbackCommit != null) withContext(Dispatchers.Main) {
+                                if (nmLoopSession != realSessionId.ifEmpty { sessionId } ||
+                                    this@ChatViewModel.currentProvider !== fromClient || currentProvider !== fromClient ||
+                                    _activeEntryId.value != fromEntryId || !nmFallbackStillEligible(nextCandidate)) {
+                                    throw LLMError.ProviderError(context.getString(R.string.nm_auto_disabled_during_turn))
+                                }
+                                installFallback()
+                            } else installFallback()
+                            val infoText = if (nmFallbackCommit != null) context.getString(
+                                R.string.nm_group_switch_attempt, fallbackReasons.last(), currentProvider.model.displayName,
+                            ) else fallbackReasons.joinToString("\n") + "\n🔄 Switched to ${currentProvider.model.displayName}"
+                            allToolBlocks.removeAll { it.kind == "info" }
+                            allToolBlocks.add(0, AssistantBlock(
+                                id = "fallback_info_$turn",
+                                kind = "info",
+                                content = infoText,
+                                toolTitle = if (nmFallbackCommit != null) context.getString(R.string.nm_group_switch_title) else "Switched model",
+                                toolStatus = ToolBlockStatus.SUCCESS,
+                            ))
+                            // [T-android-fallback-text-rewind] Same as the retry-
+                            // rollback path above: preserve this turn's streamed text
+                            // (`turnTextSb`) on screen while we switch providers.
+                            // `accumulatedText` hasn't folded it in yet, so bare
+                            // `accumulatedText` would rewind the visible reply. The new
+                            // provider streams into a fresh `turnTextSb` (reset just
+                            // below) and re-publishes `accumulatedText + newTurnText`.
+                            withContext(Dispatchers.Main) {
+                                updateAssistantMessage(assistantId, accumulatedText + turnTextSb.toString(), true, allToolBlocks)
+                            }
+                            // Reset turn state for retry with new provider
+                            turnTextSb.setLength(0)
+                            currentTextBlockSb = null
+                            // [T-android-tool-splits-reply-fix] Fresh stream from a
+                            // different provider — and the add(0, info) above
+                            // shifted every block index anyway.
+                            turnTextBlockIdx = -1
+                            turnThinking.clear()
+                            toolCalls.clear()
+                            toolCallSignatures.clear()  // [T-android-gemini3-thoughtsig / #179]
+                            // loop continues — will retry collect with currentProvider
+                        } else {
+                            // All fallbacks exhausted. Surface the trail of tried
+                            // models AND the group members that were silently
+                            // skipped (disabled / not logged in / hidden) so the
+                            // user can see why fallback never reached them —
+                            // mirrors iOS streamWithGroupFallback exhausted path.
+                            if (shouldFallback && tamaV2Test) {
+                                // nanoMuse: do not mix raw provider text or untranslated member
+                                // states into the chat. Preserve the original diagnostic on the error.
+                                withContext(Dispatchers.Main) {
+                                    appendSystemInfo(context.getString(R.string.nm_auto_none), "info")
+                                }
+                                throw actual
+                            }
+                            if (shouldFallback) {
+                                val skipped = unavailableGroupMembers()
+                                if (fallbackReasons.isNotEmpty() || skipped.isNotEmpty()) {
+                                    val trail = (fallbackReasons + skipped).joinToString("\n")
+                                    val finalDesc = actual.message ?: actual.toString()
+                                    throw com.openminis.app.data.model.LLMError.ProviderError("$trail\n$finalDesc").apply {
+                                        // nanoMuse: carry only the final failing call's diagnostics.
+                                        nmProviderReach = (actual as? LLMError)?.nmProviderReach
+                                        nmRelayError = (actual as? LLMError)?.nmRelayError
+                                    }
+                                }
+                            }
+                            throw actual  // re-throw unwrapped, all fallbacks exhausted
+                        }
+                    } finally {
+                        nmTicket?.let { ticket ->
+                            if (nmDispatchStarted) AutoModelRuntime.health.finish(ticket, nmMeasuredInput, nmMeasuredOutput)
+                            else AutoModelRuntime.health.cancelBeforeDispatch(ticket)
+                        }
                     }
-                }
-            }  // end while (!collectDone)
+                }  // end while (!collectDone)
+                false
+            }
+            if (nmRestartAgentTurn) continue@agentTurns
 
             // T307: materialise the per-turn StringBuilder ONCE at the
             // turn boundary. After this point everything is plain String
@@ -8878,6 +11298,12 @@ class ChatViewModel(
                 content = turnText,
                 contentParts = assistantParts,
                 reasoningContent = turnReasoningContent,
+                originModelId = currentProvider.model.id,
+                originProviderInstanceId = providerRepository.config.value.modelEntries
+                    .find { it.id == _activeEntryId.value && it.model.id == currentProvider.model.id }
+                    ?.takeIf { this@ChatViewModel.currentProvider === currentProvider }
+                    ?.providerInstanceId,
+                originRouteFingerprint = nmLastSentRoute,
             ))
 
             // T321: empty-turn diagnostic — fires when GPT-5.5 (or any other
@@ -8895,13 +11321,15 @@ class ChatViewModel(
 
             // If no tool calls, we're done
             if (toolCalls.isEmpty()) {
+                // nanoMuse: keep the profile only when this user turn actually used tools.
+                nmPreviousRoute = SessionState(nmRoute.profile, nmRoute.hints, nmUsedTools)
                 AppLogger.info(TAG_STREAM, "runAgentLoop turn=$turn no tool calls → break (finishReason=$turnFinishReason)")
                 withContext(Dispatchers.Main) {
                     updateAssistantMessage(assistantId, accumulatedText, false, allToolBlocks)
                 }
                 val turnParts = buildTurnParts(allToolBlocks, turnStartBlockIndex, toolInputMap)
                 val blockMeta = allToolBlocks.filter { it.kind == "tool_use" }.associateBy { it.id }
-                persistAssistantTurn(turnParts, lastUsage, turnReasoningContent, blockMeta)
+                val terminalAssistantId = persistAssistantTurn(turnParts, lastUsage, turnReasoningContent, blockMeta, nmLastSentRoute) // nanoMuse: identify the saved final row.
                 // [T-error-persist-android] Empty-response hint: the model ended a
                 // turn (finish=stop/end_turn) with no visible text anywhere in the
                 // reply and no tool blocks — the user just sees a blank bubble.
@@ -8939,6 +11367,7 @@ class ChatViewModel(
                             context.getString(R.string.chat_error_stream_dropped_partial),
                         )
                     }
+                    onTerminalFailure()
                     // [T-android-group-pause-badge-restamp] A LIVE interruption just
                     // happened: this is a real entry into the paused state, so the
                     // badge's 24h freshness stamp must be refreshed. Cancel any
@@ -9009,9 +11438,11 @@ class ChatViewModel(
                             context.getString(R.string.error_empty_response_generic)
                     }
                     withContext(Dispatchers.Main) { setInlineError(hint) }
+                    onTerminalFailure()
                 }
                 // Auto-title after first exchange
                 if (turn == 0) generateSessionTitleIfNeeded()
+                onTerminalAssistantSaved(terminalAssistantId, turnFinishReason) // nanoMuse: only after this loop's final write.
                 loopExitedNormally = true
                 break
             }
@@ -9038,292 +11469,20 @@ class ChatViewModel(
                 }
             }
 
-            // Execute all tool calls
-            val resultParts = mutableListOf<AgentContentPart>()
-            for ((id, name, args) in toolCalls) {
-                // [T-android-overlay-tool-title] Pull tool_title uniformly
-                // from args for ALL tools — without this browser_use's
-                // tool_title never reached the overlay (only shell_execute
-                // had a per-tool status override that surfaced it). Reading
-                // it here also means new tools added later automatically
-                // get title-in-overlay behavior without per-call plumbing.
-                val dispatchToolTitle = try {
-                    args.optString("tool_title", "").takeIf { it.isNotBlank() }
-                } catch (_: Exception) { null }
-                SessionActivityTracker.updateToolStatus(
-                    status = "Running: $name",
-                    toolName = name,
-                    isRunning = true,
-                    toolTitle = dispatchToolTitle,
-                )
-                // JSON repair (T-tool-json-repair b2c4f8a6): salvage truncated /
-                // type-mismatched / typo'd args BEFORE preflight rejects them.
-                // Mutates `args` in place; downstream argsStr and preflight see
-                // the repaired payload. Mirrors iOS repairToolArgs in
-                // AIChatViewModel.swift.
-                val repairs = com.openminis.app.provider.ToolJsonRepair.repair(
-                    name, args, toolInputChunkRings[id]?.lastOrNull(), agentTools,
-                )
-                if (repairs.isNotEmpty()) {
-                    AppLogger.warning(
-                        "ToolPreflight",
-                        "[ToolRepair] REPAIRED tool=$name id=$id strategies=[${repairs.joinToString(", ")}] " +
-                            "argsKeys=[${args.keys().asSequence().toList().sorted().joinToString(",")}] " +
-                            "rawTail=<<<${toolInputChunkRings[id]?.lastOrNull()?.take(500) ?: ""}>>>"
-                    )
-                }
-                // [T-truncated-args-visibility #119] Non-null when THIS call's
-                // arguments arrived truncated and were auto-closed. Only the
-                // truncation strategy means the VALUE was cut short; coercion
-                // and fuzzy-name repairs fix the shape of a complete argument.
-                // Mirrors iOS truncationRepairTag.
-                val truncationRepairTag: String? = repairs.firstOrNull { it.startsWith("truncation+") }
-
-                // [T-truncated-args-visibility #119] Refuse truncated WRITES.
-                // Auto-closing an unterminated JSON string is indistinguishable
-                // from the model ending `content` there, so a half file lands on
-                // disk while UI and tool result both report success. For writes a
-                // partial artifact is silent corruption of user data and is worse
-                // than no write at all; read-only and shell tools keep the
-                // repair-and-run behaviour. Mirrors iOS ConcurrentTools.
-                if (truncationRepairTag != null && (name == "file_write" || name == "file_edit")) {
-                    val path = args.optString("path", "").ifBlank { args.optString("file_path", "") }
-                    AppLogger.warning(
-                        "ToolPreflight",
-                        "[ToolRepair] REFUSED truncated write tool=$name id=$id strategy=$truncationRepairTag path=$path"
-                    )
-                    val modelMessage = buildString {
-                        append("Error: This call was NOT executed. Its argument stream was truncated ")
-                        append("in transit (repair strategy: $truncationRepairTag), so the `content` ")
-                        append("your client sent was cut short and would have written an incomplete file")
-                        if (path.isNotBlank()) append(" to $path")
-                        append(". Nothing was written to disk — the target file is unchanged.\n\n")
-                        append("The most likely cause is the response hitting its output-token limit ")
-                        append("mid-argument. Re-issue this write in smaller pieces: write the first ")
-                        append("part, then append the rest with follow-up calls, rather than repeating ")
-                        append("the same oversized call.")
-                    }
-                    val refusedIdx = allToolBlocks.indexOfFirst { it.id == id }
-                    if (refusedIdx >= 0) {
-                        val elapsed = System.currentTimeMillis() - allToolBlocks[refusedIdx].startTimeMs
-                        allToolBlocks[refusedIdx] = allToolBlocks[refusedIdx].copy(
-                            toolStatus = ToolBlockStatus.FAILED,
-                            content = "Blocked: arguments were truncated in transit",
-                            durationMs = elapsed,
-                        )
-                        withContext(Dispatchers.Main) {
-                            updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
-                        }
-                    }
-                    toolLoopDetector.record(name, parseToolParams(args.toString()),
-                        result = null, errorMessage = modelMessage, toolCallId = id)
-                    resultParts.add(AgentContentPart.ToolResult(
-                        id = id, name = name,
-                        content = modelMessage,
-                        isError = true,
-                    ))
-                    toolInputChunkRings.remove(id)
-                    continue
-                }
-                val argsStr = args.toString()
-                val paramsMap = parseToolParams(argsStr)
-                // Flip PENDING → RUNNING right before the execute dispatch so the UI
-                // (tool pill spinner) shows the exact moment execution begins.
-                val preIdx = allToolBlocks.indexOfFirst { it.id == id }
-                if (preIdx >= 0 && allToolBlocks[preIdx].toolStatus == ToolBlockStatus.PENDING) {
-                    allToolBlocks[preIdx] = allToolBlocks[preIdx].copy(toolStatus = ToolBlockStatus.RUNNING)
-                    withContext(Dispatchers.Main) {
-                        updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
-                    }
-                }
-
-                // Loop-detector check BEFORE execution. CRITICAL outcomes short-circuit
-                // the call: synthesize an error result so the tool_use/tool_result pair
-                // stays balanced and the LLM sees the block reason.
-                val precheck = toolLoopDetector.check(name, paramsMap)
-                if (precheck.level == Level.CRITICAL) {
-                    val blockedMsg = precheck.message ?: "[LOOP BLOCKED] tool execution blocked"
-                    android.util.Log.w("ToolChain[VM]",
-                        "[turn=$turn] tool BLOCKED by loop detector name=$name msg=$blockedMsg")
-                    AppLogger.warning("ChatViewModel",
-                        "tool blocked by loop detector name=$name reason=$blockedMsg")
-                    val blockIdx = allToolBlocks.indexOfFirst { it.id == id }
-                    if (blockIdx >= 0) {
-                        val elapsed = System.currentTimeMillis() - allToolBlocks[blockIdx].startTimeMs
-                        allToolBlocks[blockIdx] = allToolBlocks[blockIdx].copy(
-                            toolStatus = ToolBlockStatus.FAILED,
-                            content = blockedMsg,
-                            durationMs = elapsed,
-                        )
-                    }
-                    // Record the blocked attempt so consecutive blocks still
-                    // count toward the unknown-tool / circuit-breaker windows.
-                    toolLoopDetector.record(name, paramsMap,
-                        result = null, errorMessage = blockedMsg, toolCallId = id)
-                    resultParts.add(AgentContentPart.ToolResult(
-                        id = id, name = name,
-                        content = blockedMsg,
-                        isError = true,
-                    ))
-                    continue
-                }
-
-                // Preflight: reject empty / missing-required-field tool calls
-                // BEFORE the UI flips to RUNNING and BEFORE executeTool() does
-                // any actual work. Mirrors iOS preflightValidateToolCall in
-                // AIChatViewModel.swift. Synthesizes a tool_result error so the
-                // model can self-correct on the next turn without us spawning
-                // shells or touching the filesystem on `{}` args.
-                val preflightError = preflightValidateToolCall(name, args, agentTools)
-                if (preflightError != null) {
-                    val chunkRing: List<String> = toolInputChunkRings.remove(id) ?: emptyList()
-                    AppLogger.warning(
-                        "ToolPreflight",
-                        "BLOCKED tool=$name id=$id reason=\"$preflightError\" " +
-                            "argsKeys=[${args.keys().asSequence().toList().sorted().joinToString(",")}] " +
-                            "chunkCount=${chunkRing.size} " +
-                            "lastChunk=<<<${chunkRing.lastOrNull()?.take(500) ?: ""}>>>"
-                    )
-                    chunkRing.forEachIndexed { i, snap ->
-                        AppLogger.warning(
-                            "ToolPreflight",
-                            "  chunk[$i] bytes=${snap.toByteArray(Charsets.UTF_8).size} raw=<<<${snap.take(500)}>>>"
-                        )
-                    }
-                    // English literal — string resource lookup intentionally
-                    // avoided to keep this commit independent of any in-flight
-                    // strings.xml refactor in other sessions. Promote to a
-                    // localized R.string entry in a follow-up if needed.
-                    val uiMessage = "Blocked invalid tool call"
-                    val modelMessage = "Error: Tool call rejected before execution. $preflightError The arguments your client sent were empty or missing required fields — re-issue the call with all required parameters filled in. Do not retry with the same empty arguments."
-                    val blockIdxPre = allToolBlocks.indexOfFirst { it.id == id }
-                    if (blockIdxPre >= 0) {
-                        val elapsedPre = System.currentTimeMillis() - allToolBlocks[blockIdxPre].startTimeMs
-                        allToolBlocks[blockIdxPre] = allToolBlocks[blockIdxPre].copy(
-                            toolStatus = ToolBlockStatus.FAILED,
-                            content = uiMessage,
-                            durationMs = elapsedPre,
-                        )
-                    }
-                    toolLoopDetector.record(
-                        toolName = name, params = paramsMap,
-                        result = null, errorMessage = modelMessage, toolCallId = id
-                    )
-                    resultParts.add(AgentContentPart.ToolResult(
-                        id = id, name = name,
-                        content = modelMessage,
-                        isError = true,
-                    ))
-                    withContext(Dispatchers.Main) {
-                        updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
-                    }
-                    continue
-                }
-
-                android.util.Log.d("ToolChain[VM]", "[turn=$turn] executeTool START name=$name args=${argsStr.take(200)}")
-                val result = executeTool(name, argsStr, id, allToolBlocks, assistantId, accumulatedText)
-                android.util.Log.d("ToolChain[VM]", "[turn=$turn] executeTool END name=$name success=${result.success} title=${result.toolTitle} outputLen=${result.output.length} output=${result.output.take(200)}")
-
-                // Record post-execution. WARNING text is appended to the tool
-                // result so the model sees it on its next turn. No block here —
-                // CRITICAL only fires from check() and we already returned above.
-                val errMsgForDetector = if (!result.success) result.output else null
-                val postRecord = toolLoopDetector.record(
-                    toolName = name,
-                    params = paramsMap,
-                    result = if (result.success) result.output else null,
-                    errorMessage = errMsgForDetector,
-                    toolCallId = id,
-                )
-                val outputForLLM = if (postRecord.level == Level.WARNING && postRecord.message != null) {
-                    AppLogger.debug("ChatViewModel",
-                        "appending loop-warning to tool result name=$name key=${postRecord.warningKey}")
-                    "${result.output}\n\n${postRecord.message}"
-                } else {
-                    result.output
-                }
-
-                val blockIdx = allToolBlocks.indexOfFirst { it.id == id }
-                if (blockIdx >= 0) {
-                    val elapsed = System.currentTimeMillis() - allToolBlocks[blockIdx].startTimeMs
-                    // Keep live-streamed content if it has more data than the truncated result.
-                    // T263: takeLast(80) was applied uniformly, but it was sized for
-                    // shell_execute (long stdout streams where the tail is what
-                    // matters). For tools whose first line carries metadata —
-                    // file_read's `[path | N bytes | M lines | showing A-B of M]`
-                    // banner, file_write/file_edit confirmations, memory_* /
-                    // browser_use structured headers — clipping the head dropped
-                    // the banner entirely. iOS routes file_read through a
-                    // dedicated branch (AIChatViewModel.swift:5229) and avoids
-                    // this; mirror that intent by gating the trim to shell_execute.
-                    val existingContent = allToolBlocks[blockIdx].content
-                    val resultContent = if (name == "shell_execute") {
-                        result.output.lines().takeLast(80).joinToString("\n")
-                    } else {
-                        result.output
-                    }
-                    val finalContent = if (existingContent.length > resultContent.length) existingContent else resultContent
-                    // [T-truncated-args-visibility #119] A call built from
-                    // truncated args must not render as a clean success — that
-                    // silence is the reported bug. Show it with the same weight
-                    // as the blocked path. Mirrors iOS ConcurrentTools.
-                    val finalStatus = when {
-                        result.success && truncationRepairTag != null -> ToolBlockStatus.FAILED
-                        result.success -> ToolBlockStatus.SUCCESS
-                        result.timedOut -> ToolBlockStatus.TIMEOUT
-                        else -> ToolBlockStatus.FAILED
-                    }
-                    // T-bg-overlay phase 1: tool finished — drop the
-                    // notification's indeterminate progress bar so the
-                    // user can tell streaming has paused (LLM step) vs
-                    // a tool is in flight.
-                    // [T-overlay-glyph-typed-outcome] Pass the typed
-                    // outcome so the bg overlay glyph reflects the real
-                    // SUCCESS / TIMEOUT / FAILED result instead of
-                    // text-sniffing the stale "Running: foo" status.
-                    val toolOutcome = when (finalStatus) {
-                        ToolBlockStatus.SUCCESS -> com.openminis.app.service.ToolOutcome.Success
-                        ToolBlockStatus.TIMEOUT -> com.openminis.app.service.ToolOutcome.Timeout
-                        ToolBlockStatus.FAILED -> com.openminis.app.service.ToolOutcome.Error
-                        else -> com.openminis.app.service.ToolOutcome.Unknown
-                    }
-                    SessionActivityTracker.clearToolRunning(toolOutcome)
-                    android.util.Log.d("ToolChain[VM]", "[turn=$turn] block[$blockIdx] status→$finalStatus title=${result.toolTitle} contentLen=${finalContent.length}")
-                    allToolBlocks[blockIdx] = allToolBlocks[blockIdx].copy(
-                        toolStatus = finalStatus,
-                        content = finalContent,
-                        toolTitle = result.toolTitle.ifEmpty { allToolBlocks[blockIdx].toolTitle },
-                        durationMs = elapsed,
-                        browserURL = result.pageURL ?: allToolBlocks[blockIdx].browserURL,
-                        imageFilePath = result.imageFilePath ?: allToolBlocks[blockIdx].imageFilePath,
-                    )
-                }
-
-                // [T-truncated-args-visibility #119] Tell the MODEL its own
-                // arguments were altered. Writes never reach here (refused
-                // above); this covers the tools we still run repaired, where the
-                // model would otherwise assume the args it emitted were the args
-                // that ran. Mirrors iOS ConcurrentTools.
-                val outputForLLMWithNote = if (truncationRepairTag != null) {
-                    outputForLLM + "\n\n<system-reminder>The argument stream for this call was " +
-                        "truncated in transit and auto-closed by the client (repair strategy: " +
-                        "$truncationRepairTag) before execution. The arguments actually used may be " +
-                        "incomplete — verify the result and re-issue the call with complete " +
-                        "arguments if anything is missing.</system-reminder>"
-                } else {
-                    outputForLLM
-                }
-
-                resultParts.add(AgentContentPart.ToolResult(
-                    id = id,
-                    name = name,
-                    content = outputForLLMWithNote,
-                    isError = !result.success,
-                    imageData = result.imageData,
-                    imageMimeType = result.imageMimeType,
-                    imageLinuxPath = result.imageLinuxPath,
-                ))
-            }
+            // nanoMuse: execute the same tool sequence in a separate coroutine method.
+            val resultParts = nmDispatchToolCalls(
+                toolCalls = toolCalls,
+                nmRequestTools = nmRequestTools,
+                tamaV2Test = tamaV2Test,
+                nmImageGuard = nmImageGuard,
+                toolInputChunkRings = toolInputChunkRings,
+                allToolBlocks = allToolBlocks,
+                assistantId = assistantId,
+                accumulatedText = accumulatedText,
+                turn = turn,
+                petRunGeneration = petRunGeneration,
+                onToolDispatched = { nmUsedTools = true },
+            )
 
             // Update UI with tool statuses. Mark as awaiting the next model
             // response so "nanoMuse is thinking" shows during the network gap
@@ -9341,7 +11500,7 @@ class ChatViewModel(
             // assistant entry — compact-marker boundary resolution depends on it.
             val turnParts = buildTurnParts(allToolBlocks, turnStartBlockIndex, toolInputMap)
             val blockMeta = allToolBlocks.filter { it.kind == "tool_use" }.associateBy { it.id }
-            val assistantDbId = persistAssistantTurn(turnParts, lastUsage, turnReasoningContent, blockMeta)
+            val assistantDbId = persistAssistantTurn(turnParts, lastUsage, turnReasoningContent, blockMeta, nmLastSentRoute)
             if (assistantDbId != null) {
                 val lastIdx = agentHistory.indexOfLast { it.role == LLMMessage.Role.ASSISTANT && it.dbMessageId == null }
                 if (lastIdx >= 0) {
@@ -9359,6 +11518,7 @@ class ChatViewModel(
                 contentParts = resultParts,
                 dbMessageId = toolResultDbId,
             ))
+            nmPreviousRoute = SessionState(nmRoute.profile, nmRoute.hints, nmUsedTools) // nanoMuse: survive a later interrupted request
 
             // Auto-title after first exchange (mirrors iOS generateSessionTitleIfNeeded)
             if (turn == 0) {
@@ -9390,7 +11550,7 @@ class ChatViewModel(
             //   …assistant(responds-to-queued).
             // The bridge lives in agentHistory only (NOT persisted) —
             // it's purely a wire-format spacer for the API call.
-            if (_promptQueue.value.isNotEmpty()) {
+            if (allowQueuedInterruption && _promptQueue.value.isNotEmpty()) {
                 AppLogger.info(
                     TAG_STREAM,
                     "📨[QueueInterrupt] turn=$turn ${_promptQueue.value.size} queued prompt(s) — interrupting after current tool call to start a standalone turn",
@@ -9401,11 +11561,42 @@ class ChatViewModel(
                         finishedAccumulatedText = accumulatedText,
                         finishedAllToolBlocks = allToolBlocks,
                     )
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    Log.e(TAG, "injectQueuedPromptsAsNewTurn failed", e)
+                    // nanoMuse: do not print exception details from queued content in parallel.
+                    if (tamaV2Test) Log.e(TAG, "injectQueuedPromptsAsNewTurn failed")
+                    else Log.e(TAG, "injectQueuedPromptsAsNewTurn failed", e)
                     null
                 }
                 if (handled != null) {
+                    val imageShortcut = handled.imageShortcut
+                    if (imageShortcut != null) {
+                        // The queued user row is already saved and credited. Finish it
+                        // locally rather than issuing a model request for that row.
+                        nmRunImageShortcut(activeSessionId, imageShortcut) { reply ->
+                            if (!reply.success) onTerminalFailure()
+                            withContext(Dispatchers.Main) {
+                                _messages.value = _messages.value.filterNot { it.id == handled.newAssistantId }
+                                nmAppendAssistantLine(activeSessionId, reply.text)
+                            }
+                        }
+                        completedImageShortcut = true
+                        loopExitedNormally = true
+                        break
+                    }
+                    // nanoMuse: a queued interruption is a new user turn, not the old
+                    // prompt under a new bubble. Keep continuity and classify its content.
+                    nmPreviousRoute = SessionState(nmRoute.profile, nmRoute.hints, nmUsedTools)
+                    nmRoute = nmRouteLatest()
+                    nmCurrentInput = nmCapturePromptInput()
+                    nmUsedTools = false
+                    nmImageGuard.newTurn(handled.explicitImageRequest)
+                    nmWarnedWithoutTools = false
+                    nmAutoTurn?.reset()
+                    nmAutoLocalBlocks.clear()
+                    nmAutoNewUserTurn = true
+                    preparedMessages = null
                     // Switch loop-scope state to the new bubble. Subsequent
                     // iterations populate `handled.newAssistantId` and slice
                     // `allToolBlocks` from the freshly-zeroed start index
@@ -9435,6 +11626,7 @@ class ChatViewModel(
         // (a) must NOT be touched or every normal completion gets a fake "hit
         // 200 turns" sticker (the bug user hit at v1.4.0-dev tip).
         if (!loopExitedNormally) {
+            onTerminalFailure()
             AppLogger.warning(
                 TAG_STREAM,
                 "runAgentLoop EXIT — hit MAX_AGENT_TURNS=$MAX_AGENT_TURNS, finalizing as resumable",
@@ -9444,6 +11636,18 @@ class ChatViewModel(
             }
         } else {
             AppLogger.info(TAG_STREAM, "runAgentLoop EXIT (loop body ended naturally)")
+        }
+        return completedImageShortcut
+        } finally {
+            // nanoMuse: rollback also runs on cancellation. Compare and restore on the
+            // UI dispatcher so a later selection/session cannot be overwritten between them.
+            if (nmFallbackCommit != null) withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                if (nmFallbackCommit.shouldRestore(
+                        _activeEntryId.value, _selectedGroupId.value,
+                        sameClient = this@ChatViewModel.currentProvider === currentProvider,
+                        sameSession = nmLoopSession == realSessionId.ifEmpty { sessionId },
+                    )) restoreConfirmedRoute()
+            }
         }
     }
 
@@ -9546,6 +11750,8 @@ class ChatViewModel(
             // bindMounts map and would surface another session's
             // /var/minis/{workspace,attachments,offloads,browser} files.
             ReadImageTool.NAME -> executeReadImageTool(argsJson)
+            ai.tama.tools.ImageGenerationTool.NAME ->
+                ai.tama.tools.ImageGenerationTool.execute(argsJson, activeSessionId, context)
             "shell_execute" -> executeShellCommand(argsJson, toolId, toolBlocks, assistantId, currentText)
             "browser_use" -> executeBrowserUseTool(argsJson)
             "memory_write" -> executeMemoryWriteTool(argsJson)
@@ -9621,10 +11827,12 @@ class ChatViewModel(
             // RESULT-side attribution (which model answered, what was tried
             // first) is fully implemented and is what the user actually reads.
             onAttempt = { a ->
-                android.util.Log.i(
-                    "VisionGroup",
-                    "[Vision] attempt ${a.index}/${a.total} via ${a.modelName}",
-                )
+                // nanoMuse: a custom model label is not a safe log field.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                    android.util.Log.i(
+                        "VisionGroup",
+                        "[Vision] attempt ${a.index}/${a.total} via ${a.modelName}",
+                    )
             },
         )
         val framed = when (result) {
@@ -9666,6 +11874,7 @@ class ChatViewModel(
      *  distinct from a script that legitimately exits 127 (T-bash-on-demand M5). */
     private val BASH_MISSING_SENTINEL = 119
 
+    // nanoMuse: shell completion markers are decoded incrementally.
     /** Wrap a script to run under bash via a guest-side self-written temp file
      *  (base64, single line, self-cleaning), guarding on `command -v bash` so a
      *  vanished bash is detected precisely for inline self-heal.
@@ -9674,7 +11883,7 @@ class ChatViewModel(
      *  Android: PersistentShell drives commands as `{cmd}; echo …_EXIT_$?…` and
      *  reads the exit code from that marker line. A bare `|| exit 119` would exit
      *  the persistent shell process itself BEFORE the marker echo runs, so no
-     *  marker is emitted and PersistentShell.parseExitCode falls back to -1 —
+     *  marker is emitted and PersistentShell reports failure (-1) —
      *  the M5 self-heal sentinel check (== 119 / 30464) then never matches and a
      *  vanished bash is never re-installed. Wrapping in a subshell makes
      *  `exit 119` leave only the subshell, so `$?` = 119 reaches the marker. */
@@ -9757,8 +11966,10 @@ class ChatViewModel(
             // resolves to the persisted id once `ensureSession()` has run, so
             // every shell runs in a directory that survives VM recreation.
             val dispatchSessionId = activeSessionId
-            android.util.Log.w("ShellExecDiag",
-                "executeShell dispatch=$dispatchSessionId rawSessionId=$sessionId realSessionId=$realSessionId isDraft=$isDraft cmd=${command.take(120).replace('\n', ' ')}")
+            // nanoMuse: shell commands may contain private content or credentials.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                android.util.Log.w("ShellExecDiag",
+                    "executeShell dispatch=$dispatchSessionId rawSessionId=$sessionId realSessionId=$realSessionId isDraft=$isDraft cmd=${command.take(120).replace('\n', ' ')}")
 
             // [T-bash-on-demand] Detect busybox-ash-incompatible bash syntax and,
             // if found, transparently install + switch to bash. Install time is
@@ -9972,7 +12183,8 @@ class ChatViewModel(
             file.writeBytes(data)
             file.absolutePath
         } catch (e: Exception) {
-            android.util.Log.w("ChatViewModel", "persistBrowserArtifact failed: ${e.message}")
+            // nanoMuse: file exceptions may contain a private path.
+            nmLogPrivateFailure("persistBrowserArtifact failed", e)
             null
         }
     }
@@ -10332,13 +12544,17 @@ class ChatViewModel(
     private fun buildAssistantPartsJson(
         parts: List<AgentContentPart>,
         toolBlockMeta: Map<String, AssistantBlock>,
+        routeFingerprint: String? = null,
     ): String = buildString {
+        val routeField = routeFingerprint
+            ?.takeIf { ai.tama.router.ModelRouteHistory.validFingerprint(it) }
+            ?.let { ",\"_tamaRoute\":${escapeJson(it)}" }.orEmpty()
         append("[")
         parts.forEachIndexed { index, part ->
             if (index > 0) append(",")
             when (part) {
                 is AgentContentPart.Text -> {
-                    append("""{"type":"text","value":${escapeJson(part.text)}}""")
+                    append("""{"type":"text","value":${escapeJson(part.text)}$routeField}""")
                 }
                 is AgentContentPart.ToolUse -> {
                     // Skip tool_use with blank name — upstream bug guard.
@@ -10353,7 +12569,7 @@ class ChatViewModel(
                     // signature (null-literal when absent) so it survives a session
                     // reload and can be replayed on the historical functionCall.
                     val sigJson = part.thoughtSignature?.let { escapeJson(it) } ?: "null"
-                    append("""{"type":"toolUse","value":{"toolUseId":${escapeJson(part.id)},"name":${escapeJson(name)},"input":${escapeJson(inputStr)},"description":${escapeJson(desc)},"pageURL":${escapeJson(pageURL)},"imageFilePath":${escapeJson(imgPath)},"thoughtSignature":$sigJson}}""")
+                    append("""{"type":"toolUse","value":{"toolUseId":${escapeJson(part.id)},"name":${escapeJson(name)},"input":${escapeJson(inputStr)},"description":${escapeJson(desc)},"pageURL":${escapeJson(pageURL)},"imageFilePath":${escapeJson(imgPath)},"thoughtSignature":$sigJson}$routeField}""")
                 }
                 else -> { /* tool_result is persisted via persistToolResultMessage */ }
             }
@@ -10366,9 +12582,10 @@ class ChatViewModel(
         usage: LLMUsage?,
         reasoningContent: String? = null,
         toolBlockMeta: Map<String, AssistantBlock> = emptyMap(),
+        routeFingerprint: String? = null,
     ): String? {
         if (parts.isEmpty()) return null
-        val partsJson = buildAssistantPartsJson(parts, toolBlockMeta)
+        val partsJson = buildAssistantPartsJson(parts, toolBlockMeta, routeFingerprint)
         val tokenJson = usage?.let {
             """{"inputTokens":${it.inputTokens},"outputTokens":${it.outputTokens},"cacheCreationTokens":${it.cacheCreationInputTokens ?: 0},"cacheReadTokens":${it.cacheReadInputTokens ?: 0},"latestContextTokens":${it.latestContextTokens}}"""
         }
@@ -10444,7 +12661,18 @@ class ChatViewModel(
         return entity.id
     }
 
-    private fun buildSystemPrompt(): String? {
+    // nanoMuse: retries and fallbacks derive their prompt from this exact session snapshot.
+    private fun nmCapturePromptInput(): PromptProfiles.Input {
+        var snapshot: PromptProfiles.Input? = null
+        buildSystemPrompt(onSnapshot = { snapshot = it })
+        return checkNotNull(snapshot)
+    }
+
+    // nanoMuse: an optional local, count-only snapshot for /prompt-size.
+    private fun buildSystemPrompt(
+        onSnapshot: ((ai.tama.chat.PromptProfiles.Input) -> Unit)? = null,
+        onMeasured: ((List<PromptSize.Measure<PromptSize.Section>>, Boolean?) -> Unit)? = null,
+    ): String? {
         // Cache-friendly layout: keep `base` byte-stable by stripping out anything
         // that varies per request, then append a "Runtime context" suffix at the
         // very end with all the dynamic bits (date, timezone, locale, configured
@@ -10482,134 +12710,11 @@ class ChatViewModel(
         // aren't reachable when the user asks. The fragment / tool dual
         // gate is symmetrical: enable both or disable both, never mismatch.
         val memoryOn = _memoryEnabled.value
-        val toolListMemoryBullets = if (memoryOn) {
-            """
-- memory_write: Save a memory entry to today's daily log (YYYY-MM-DD.md). Use proactively to note user preferences, project patterns, and important context.
-- memory_get: Recall memories with keyword search. Check memory at the start of new topics to leverage past knowledge."""
-        } else {
-            // Empty — no memory_write / memory_get bullets when disabled.
-            // The "Memory system:" section below also collapses, so the
-            // model gets a coherent picture rather than half-mentioned
-            // tools it can't actually call.
-            ""
-        }
-        val memorySystemSection = if (memoryOn) {
-            """
-
-Memory system (currently ENABLED):
-- memory_write writes to today's daily log (YYYY-MM-DD.md) — use it for session notes, key facts, project context, things learned, and action items.
-- GLOBAL.md (/var/minis/memory/GLOBAL.md) stores persistent preferences, settings, and general-purpose conventions. To read it, use file_read (NOT memory_get). To update it, use file_read first then file_edit. If GLOBAL.md does not exist yet, use file_write to create it directly.
-- IMPORTANT: Only write to GLOBAL.md when the user explicitly asks (e.g. 'remember this globally', 'save to global memory'). Before editing, deduplicate and clean up — avoid ambiguity, repetition, or daily-log-style entries. GLOBAL.md should contain only concise, reusable knowledge (preferences, settings, conventions), NOT session logs or transient context.
-- Use memory_get to recall past knowledge before starting tasks — check if there are relevant memories that can help.
-- Proactively save memories (via memory_write to daily log) when you discover user preferences or important patterns — don't wait to be asked.
-- When the user says 'remember this' or similar, use memory_write to persist to the daily log. Only write to GLOBAL.md if the user specifically asks for global/persistent storage.
-- What NOT to remember: passwords, API keys, tokens, secrets, or any sensitive credentials. Warn the user about the risk first; only proceed if they explicitly confirm.
-- Keep memories concise, factual, and general-purpose — avoid noise that won't be useful later."""
-        } else {
-            """
-
-Memory system (currently DISABLED):
-- The user has turned OFF memory injection and memory tools for this session. GLOBAL.md and recent daily logs are NOT included in this prompt, and the memory_write / memory_get tools are NOT available — do not attempt to call them.
-- If the user asks why earlier memories aren't visible, or asks you to save something, tell them memory is currently disabled and point them at the /memory slash command or [Settings → Memory](minis://settings/memory) to re-enable it.
-- SOUL.md (personality / identity) is unaffected by this toggle; the persona section above still applies."""
-        }
-        // nanoMuse: these former interpolation points stay empty; their unchanged text is emitted
-        // in the deterministic volatile suffix after RiskPolicy and Hands. The Feed line below
-        // teaches the agent the read-only feedback contract without treating silence as dislike.
-        val memoryToolListInStablePrefix = ""
-        val memoryGuidanceInStablePrefix = ""
-        val base = identitySection + """You should proactively use shell commands to accomplish the user's tasks — installing packages (apk add), writing and running scripts, managing files, networking, and any other operations a Linux terminal can perform.
-
-Available tools:
-- shell_execute: Run any shell command. Each invocation is an isolated process with stdout/stderr captured. Prefer this for most tasks — it is a real Linux environment with persistent filesystem. Common tools (python3, pip, curl, wget, git, ssh, etc.) can be installed via apk add; Python packages via pip install. Use `which <cmd>` to check if a tool is already installed before running apk add — many packages persist across sessions. When you need to wait before checking results (e.g. polling, waiting for a process), use the `delay` parameter instead of `sleep` in the command — delay blocks the agent flow without occupying the shell, so other concurrent tasks can use it during the wait. This avoids resource contention. Execution discipline for long-running or dispatched work: make tool calls immediately instead of describing intentions, and keep working until the task is complete. Without a scheduler or timed-callback tool, `delay` is your ONLY wait mechanism within a turn — to follow up on something still running, chain delay-then-check calls at a task-appropriate interval until you have the result or hit a sensible retry cap. NEVER end a turn with a promise of future action: 'I'll keep monitoring', 'will sync the result later', and ending right after a single still-running status check with 'let's keep waiting' are all the same violation — once your turn ends, NOTHING runs until the user's next message. If polling to completion is genuinely not worth blocking the turn, close honestly instead: state that the task keeps running in the background, that you will only learn its outcome when the user next messages (or they ask you to check), and — if something must fire on a schedule beyond this conversation — point them to the options under 'Scheduled tasks' later in this prompt (native alarm reminder or a system-level schedule; those notify the USER, they do not wake you).
-- file_read: Read file contents (faster than cat).
-- file_write: Create new files or overwrite existing files (faster than echo/tee).
-- file_edit: Edit existing files with exact string replacement (old_string → new_string). Preferred over file_write for modifications — always file_read first.
-- browser_use: Web browsing (navigate, screenshot, click, type, get_text, scroll, scroll_and_collect, get_readable, get_backbone, fetch, etc.). Starts with a desktop Chrome user agent. Use screenshot to see the page.
-  当 browser_use 触达 Google 登录 / OAuth 页（accounts.google.com、signin.google.com、myaccount.google.com、oauth2.googleapis.com 等）或网页返回 "disallowed_useragent" / 403 包含 "browser is not secure" 字样时，**不要重试或尝试登录** — Google 永久禁止 in-app WebView 完成登录，重试只会浪费 turn。改为告诉用户："此页面需要在系统 Chrome 完成登录" 并给出可点击的 Markdown link [在 Chrome 中打开](https://accounts.google.com/...)。点该 link 时 app 会跳出 Custom Tab；用户在 Chrome 完成操作后，请他**把所需结果（邮件正文 / 文档摘要 / 表格数据）粘贴回 chat**，你再继续帮他处理。这是 Android 平台限制，不是 bug。${memoryToolListInStablePrefix}
-
-Sandbox directory /var/minis/ (writeability is stated per path):
-  /var/minis/attachments/ — Media files (images, audio, video). Display inline with ![desc](minis://attachments/filename).
-  /var/minis/workspace/   — Working files (scripts, data, configs). Link with [name](minis://workspace/filename).
-  /var/minis/offloads/    — Auto-saved large outputs. Read with file_read.
-  /var/minis/browser/     — Browser screenshots and extracts.
-  /var/minis/shared/      — Cross-session shared storage for artifacts and documents. Organize by project or topic (e.g. shared/myproject/, shared/datasets/). Do NOT store temporary files here.
-  /var/minis/memory/GLOBAL.md    — Persistent global memory (read-only, user-maintained via Settings).
-  /var/minis/memory/YYYY-MM-DD.md — Daily memory log.
-  /var/minis/feed/YYYY-MM-DD/NN.md — Read-only Feed posts. "liked: true" is explicit positive feedback; no liked field means only "not liked yet", never dislike. Use aggregate patterns to improve future Feed topics, not to infer a negative preference from silence.
-  /var/minis/mounts/<name>/      — User-mounted external folders from Settings → Mount External Folders. Presence and names vary per user; check this directory first when the task references external/user files. Some mounts may be read-only — file_write / file_edit will reject writes with a clear error message.
-
-The minis:// URL scheme:
-  minis://attachments/file.png  →  /var/minis/attachments/file.png
-  minis://workspace/data.csv    →  /var/minis/workspace/data.csv
-  minis://shared/project/f.txt  →  /var/minis/shared/project/f.txt
-
-IMPORTANT: minis:// URLs are app-internal — they are NOT web URLs. Do NOT pass minis:// action URLs (open_terminal, views, settings) to browser_use — those are app deep links, use Markdown links in chat instead. However, minis:// resource URLs CAN be opened in browser_use with navigate. All directories under /var/minis/ are accessible: workspace, attachments, offloads, shared, etc. The built-in browser fully supports minis:// — HTML pages and all sub-resources (JS, CSS, images, fonts, etc.) referenced via minis:// absolute URLs or relative paths resolve correctly within the current session. When building multi-file web projects, use file_write to create files in the same directory (e.g. /var/minis/workspace/myapp/), then reference sub-resources with relative paths in HTML (e.g. <link href="style.css">, <script src="app.js">, <img src="logo.png">). The browser resolves relative paths against the minis:// base URL automatically. Cross-directory references also work with absolute minis:// URLs (e.g. <img src="minis://attachments/photo.png"> from a workspace HTML page). Navigate to the entry HTML to preview, e.g. minis://workspace/myapp/index.html.
-To display a minis:// URL in chat, write it as a Markdown link or image (e.g. [name](minis://...)) — the app handles it when the user taps it.
-IMPORTANT: minis:// URLs MUST be percent-encoded. Non-ASCII characters (Chinese, emoji, spaces, etc.) in filenames will break Markdown rendering if not encoded. Use the minis_url from tool results directly — it is already encoded. If you construct a minis:// URL manually, percent-encode the filename (e.g. %E4%B8%AD%E6%96%87 for non-ASCII characters).
-When you write files to /var/minis/, the tool result includes a minis_url you can embed directly in Markdown.
-Inline media — use the ![desc](minis://...) image syntax for ALL of images, audio, AND video. The same ![]() syntax renders an inline audio player or video player, not just images:
-  - Images: ![chart](minis://attachments/chart.png)   → inline image (.png/.jpg/.gif/.webp)
-  - Audio:  ![song](minis://attachments/song.mp3)     → inline audio player (.mp3/.m4a/.wav)
-  - Video:  ![clip](minis://attachments/clip.mp4)     → inline video player (.mp4/.mov/.m4v)
-Do NOT use the [text](url) link form for audio/video when you want them to play inline — that only produces a tappable link. Use ![]() to embed an actual player.
-For non-media files, use Markdown links: [filename](minis://workspace/filename).
-Tappable link previews: text/code (.py/.json/.md/etc), images, audio, video, HTML, and PDF files open native previews when the user taps a [name](minis://...) link.
-Use Markdown links for all non-media minis:// files — the user can tap to preview them directly in chat.
-
-File creation guidelines:
-- Use file_write to CREATE new files. Use file_edit to MODIFY existing files. The shell is BusyBox ash: heredoc syntax (cat << EOF, python3 << 'EOF') may mis-parse braces, quotes, or special characters and execute abnormally — avoid it whenever possible, and prefer file_write over echo/printf for writing file contents. When you hit escaping or parsing errors with long inline content, write the content to a file first (file_write), then pass or execute the file (e.g. `python3 /tmp/script.py`).
-- file_write and file_edit are atomic, preserve formatting, and make it easy to fix errors or update content later.
-- shell_execute is for RUNNING commands, not for writing files.
-- shell_execute supports multi-line commands directly — quoting and special characters are handled automatically. However, commands MUST NOT exceed 1000 characters. If longer, write a script file with file_write first, then run it.
-- ICMP is blocked by the PRoot sandbox — `ping` will hang indefinitely. Use `curl` or `wget` to test network connectivity instead.
-- Also (BusyBox ash, NOT bash): `**` recursive glob (globstar) is NOT supported. Use `find <dir> -name '*.ext'` for recursive file search, and pipe to `xargs` for tools like `wc`. Brace expansion ({a,b,c}) and bash arrays (arr=(...), ${'$'}{arr[@]}) are also unsupported — use space-separated strings with a for loop or multiple arguments instead.
-- Python packages: many PyPI packages (numpy, pandas, scipy, pillow, etc.) lack musllinux_aarch64 wheels and will fail to build from source. Use Alpine's native packages instead: `apk search py3-<name>` then `apk add py3-numpy py3-pandas py3-matplotlib py3-pillow py3-scipy py3-requests`. Only fall back to `pip install` for pure-Python packages not available via apk. For matplotlib, always set `matplotlib.use('Agg')` before importing pyplot — there is no display server in the sandbox.
-- Background services: each shell_execute runs in an isolated process. When starting a background server (e.g. `python3 -m http.server &`), you MUST redirect stdout/stderr to avoid SIGPIPE when the shell exits: `python3 -m http.server 8765 > /dev/null 2>&1 &`. Without redirection the server dies silently after the command finishes.
-- File search: when looking for user files, do NOT scan the whole filesystem. Search under /var/minis/ first (workspace/attachments/shared for the current session, mounts/* for user-provided external folders). Only widen the scope if the file is clearly not under /var/minis/.
-
-Tool call style:
-- Default: do not narrate routine, low-risk tool calls — just call the tool directly.
-- Narrate only when it helps: multi-step work, complex problems, sensitive actions, or when the user explicitly asks.
-- Keep narration brief and value-dense; avoid repeating obvious steps.
-- When a tool exists for an action, use it directly instead of explaining what you plan to do or asking the user to confirm.
-- Use reasonable defaults and contextual inference to fill in missing details (e.g. 'tonight' means today, 'remind me' implies creating a reminder immediately). Only ask for clarification when genuinely ambiguous.
-
-Tone and style:
-- Reply in the language that best matches the user's input. Only switch languages when the user explicitly asks.
-- Be concise. Prefer action over explanation — when the user asks for something that can be done via shell, do it directly.
-
-Android-only tools (android-* CLIs):
-CLI tools at /usr/local/bin with the `android-` prefix give you access to Android framework capabilities and on-device control. Invoke them from shell_execute like any other binary — they are already on PATH. Each tool prints JSON (or a short human-readable line) and supports --help for full usage. Tools gated by Shizuku or AccessibilityService return permission_denied when not granted — handle that gracefully and point the user at [Settings → Permissions](minis://settings/permissions).
-- android-alarm — schedule alarms/timers in the system Clock app (`schedule <HH:MM> --label <L> [--repeat ONCE|DAILY|WEEKDAYS]`, `timer <seconds> --label <L>`, `open`). Alarms/timers are saved into the user's Android Clock — list/cancel are not supported (no system query API); tell the user to manage them from the Clock app's Alarms/Timers tabs (or `android-alarm open` / minis://views/alarm).
-- android-calendar — read/write the device calendar (`list --start YYYY-MM-DD [--end ...] [--max N]`; `create --title <T> --start <ISO> [--end <ISO>] [--description <D>] [--location <L>] [--all-day]`).
-- android-clipboard — `get | set <text> [--label L] | clear`.
-- android-contacts — `list [--max N] | search <query> [--max N] | get <id> | delete <id>`. Requires READ_CONTACTS (delete also needs WRITE_CONTACTS).
-- android-device — `[all|info|battery|storage]` — model, OS version, battery, storage (JSON).
-- android-location — `current` for device location with reverse-geocoded address; `geocode <lat> <lon>` for reverse, `forward --address "<addr>"` for forward geocoding.
-- android-notification — `send --title <T> [--body <B>] | clear | list [--max N]`. `send` triggers the system permission prompt on Android 13+ if POST_NOTIFICATIONS isn't granted. `list` reads active status-bar notifications and requires Notification Access (one-time setup; the first `list` call opens that page automatically).
-- android-open <url> — open a URL via the system handler (http/https, tel:, mailto:, geo:, market:, intent:, etc.). Use this to open something immediately. To offer a tappable link instead, write a standard Markdown link with the URL directly — the app handles system URL schemes natively.
-- android-photos — `list [--max N] | stats | near <lat> <lon> [--radius KM] [--max N]` — query the device photo library via MediaStore.
-- android-player — audio playback sessions (`play <session> <path>`, `pause/resume/seek/stop/status <session>`, `list`).
-- android-speak — device TTS (`<text> [--rate F] [--pitch F] [--volume F]`; `--stop | --status`).
-- android-speech — microphone transcription (`listen [--language BCP47] [--max N] [--timeout SEC]`; `status`). Requires RECORD_AUDIO.
-- android-weather <latitude> <longitude> — Open-Meteo forecast (current + hourly + daily). No API key needed.
-- android-shizuku-cli — invoke privileged Android system APIs (package management, settings, system commands) via Shizuku when granted. Curated subcommands return structured JSON; for anything not covered, fall back to `android-shizuku-cli exec <any shell command>` which runs the command via `sh -c` with Shizuku privilege (same surface as `adb shell`). Run with no args (or --help) for the subcommand list.
-- android-a11y-cli — drive system UI (read screen, tap, type, swipe, scroll) via the Android AccessibilityService when enabled. Run with no args (or --help) for the subcommand list.
-- minis-open <url-or-path>: Opens a resource inside nanoMuse without leaving the chat. Accepts http/https URLs (→ built-in WebKit preview) and chat-resource file paths under /var/minis/** (→ built-in file preview, routed by extension: images to the image viewer, .md to markdown preview, .html to HTML preview, .pdf/office docs to QuickLook, audio/video to the media player, else share sheet). Examples: minis-open https://example.com, minis-open /var/minis/workspace/report.md, minis-open /var/minis/attachments/chart.png. Prefer this over android-open for anything that can be previewed in-app so the user doesn't lose conversation context. Use android-open for non-web schemes (tel:, mailto:, geo:, intent:, etc.) or when the user explicitly wants the system handler.
-- minis-sessions-cli: Manage chat sessions. `list` recent or by date range, `search --keywords` cross-session, `messages --id` to read, `send` to create/continue a session, `retry` to re-run, `status` to check, `open` to navigate the app UI. Run --help for full options.
-- minis-model-use: Invoke other LLM models pre-configured by the user. Use `minis-model-use list` to see them (includes each model's modality capabilities like image_output, audio_output, etc.), `minis-model-use search <query>` to filter by name/provider. `minis-model-use run --model <id_or_name>` sends an OpenAI-compatible messages request; pass input via --input <json_file> or stdin, output goes to stdout or --output <path>. The OpenAI shape is the PRIMARY input for every model and modality; standard params are auto-converted to the underlying provider, so do not hand-write provider-native bodies as the primary input. For provider-specific extras the standard schema doesn't model (web-search plugins, image-to-image fields, TTS/video or other custom endpoints), escape hatches exist for OpenAI-compatible providers (they error or are ignored on Anthropic/Gemini models): `extra_body` (object merged verbatim into the request body), a custom `endpoint` path, and a top-level `passthrough` envelope for fully verbatim requests with RAW (unparsed) responses. Results may carry `warnings` (fields that were ignored/downgraded and why) and `applied_extras` (which extras actually took effect) — read them to self-correct. Run --help for the full contract before using these. Models may support multimodal output (image generation, TTS/audio, video) — check the modalities field in list output. For image_output models, pass generation params in the input JSON: top-level `n`/`size`/`quality`/`prompt` (OpenAI /images/generations style) or `generation_config.{aspect_ratio,image_size,number_of_images,person_generation}` (Gemini). Run with --help for full usage.
-- minis-config: Read or change nanoMuse settings programmatically. Run `minis-config --help` for subcommands and `minis-config topic-help <topic>` for details on a specific area. For array-valued fields (e.g. `models`, `groups`, `envvars`, `defaults.agentLoopEntries`) the `get` subcommand accepts `--filter <keywords>` (whitespace-AND, case-insensitive substring match against each element's JSON) and `--page <N> --page-size <N>` (default 20, max 100) — use these instead of dumping the full list when you only need a subset, and check the response's `pagination` / `agent_hint` fields for the next-page command. Every write triggers an in-app confirmation sheet and is logged to a revertable audit (1000-entry rolling log). After a successful change the response includes a `user_message` field — relay it (or paraphrase) so the user knows how to review or revert via Settings → Logs → Config Changes. If the call returns `permission_denied`, the user has disabled minis-config in [Settings → Permissions](minis://settings/permissions); relay that message and don't retry. You CAN add new providers and write their `apiKey` (literal string OR a `${'$'}${'$'}ENV_VAR` reference to copy from an env var at write time), but `get` never echoes API keys / OAuth tokens / env var values back — those reads return `permission_denied` by design. OAuth tokens and env var values are not settable via this tool; for an env var, point the user at [Set ENV_NAME](minis://settings/environments?create_key=ENV_NAME&create_value=) so they enter the value themselves.
-- minis-scheduled: Create and manage scheduled tasks — prompts that run automatically at a chosen time. `minis-scheduled create --time HH:MM --prompt "..." [--label L] [--repeat once|daily|weekdays|custom --days mon,tue,...] [--target new|follow-up|rerun --session <id> --message <id>] [--model <modelId>] [--start YYYY-MM-DD] [--end YYYY-MM-DD]` schedules it; `list` shows existing tasks (with nextTriggerMs and run history), `delete --id <taskId>`, `enable`/`disable --id <taskId>`, and `run --id <taskId>` fires one immediately. Target modes: `new` runs the prompt in a fresh chat; `follow-up` appends the prompt to an existing chat (--session); `rerun` re-runs an existing chat (--session) from a chosen user message (--message). Use this when the user asks to "remind me / do X every morning / run this later / schedule a task". Run --help for full usage.
-Interactive terminal: minis://open_terminal opens a terminal for tasks that require interactive stdin (passwords, ssh, TUI apps like htop/vi). Write it as a Markdown link in your response — the app opens it when tapped. The optional init_command parameter pre-fills (NOT executes) a command; it MUST be fully percent-encoded (spaces → %20, & → %26, | → %7C, etc.). Only use this for genuinely interactive sessions — for everything else, use shell_execute. Examples: [Open Terminal](minis://open_terminal), [Login to SSH](minis://open_terminal?init_command=ssh%20user%40host).
-
-Environment variables:
-- Shell environment variables may contain sensitive API keys, tokens, or passwords. NEVER echo, print, cat, or otherwise output their values to stdout/stderr. Always reference them by variable name (e.g. ${'$'}API_KEY) inside scripts or commands — never inline the literal value.
-- When a skill or task requires an environment variable that is not set, tell the user which variable is missing and provide a tappable deep link to create it: [Set ENV_NAME](minis://settings/environments?create_key=ENV_NAME&create_value=) — the user can tap it to open the Environment Variables page with the key pre-filled.
-- Settings deep links: when you tell the user "go to Settings → X" or want to point them at a specific setting, prefer a Markdown link `[Label](minis://settings/<path>)` over plain prose. Available paths: providers (list), providers/<instanceId> (one provider), model-groups (incl. Agent Loop), model-groups/<groupId>, usage (token usage), skills, memory, storage, shared-folders (Shared Folders: /var/minis/{shared,skills,memory}), mount-external (Mount External Folders), logs, appearance, background, about, permissions, environments[?create_key=K&create_value=V[&create_note=N]], rootfs (also reachable as mirrors). Unknown paths fall back to Settings home, but prefer the exact path so users land where they want. These settings/action links are app deep links — render them as Markdown links in chat (same action-vs-resource rule as the minis:// section above: only /var/minis resource URLs may go to browser_use).
-- To check if a variable is set, use `[ -n "${'$'}VAR" ] && echo 'set' || echo 'not set'`. NEVER use echo ${'$'}VAR, printenv VAR, or any command that would output the actual value into the conversation context.${memoryGuidanceInStablePrefix}
-
-Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended, so in-app scheduled scripts may not run as expected. For recurring tasks that must fire while the app is backgrounded, use the native alarm tool (AlarmManager) or tell the user to set up a system-level schedule (Google Calendar event, Tasker automation, etc.). (Waiting or polling WITHIN the current turn is different — that is what shell_execute `delay` chains are for, per the shell_execute notes above.)"""
+        // nanoMuse: share the exact memory instructions with the count-only host fixture.
+        val toolListMemoryBullets = ai.tama.chat.AgentMemoryPrompt.toolList(memoryOn)
+        val memorySystemSection = ai.tama.chat.AgentMemoryPrompt.guidance(memoryOn)
+        // nanoMuse: the same stable template is shared with the host measurement.
+        val base = ai.tama.chat.AgentBasePrompt.build(identitySection)
 
         // nanoMuse: match iOS suffix groups: model/tool/session state, then memory and USER.md;
         // PromptCacheLayout appends runtime context last by contract.
@@ -10662,29 +12767,38 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         } else {
             null
         }
-        return io.github.nanomuse.chat.PromptCacheLayout.build(
-            stableSections = listOf(
-                io.github.nanomuse.chat.PromptDiet.prompt(base), // nanoMuse: the minis-* paragraphs condensed (PromptDiet)
-                io.github.nanomuse.guard.RiskPolicy.promptParagraph(),
-                io.github.nanomuse.hands.Hands.promptParagraph(context),
-            ),
-            volatileSections = listOf(
-                skillFragment,
-                mcpFragment,
-                namingAddendum,
-                io.github.nanomuse.media.MediaModels.promptParagraph(context),
-                io.github.nanomuse.reach.Computers.promptParagraph(context),
-                io.github.nanomuse.chat.SessionAddenda.forPrompt(sessionKey),
-                io.github.nanomuse.goals.GoalFlow.systemAddendum(context, sessionKey),
-                io.github.nanomuse.feed.FeedFlow.systemAddendum(context, sessionKey),
-                toolListMemoryBullets,
-                memorySystemSection,
-                globalMemoryFragment,
-                dailyMemoryFragment,
-                io.github.nanomuse.sysfiles.UserFile.promptFragment(context),
-            ),
-            runtimeContext = runtimeContext,
-        ).prompt
+        // nanoMuse: label each actual section once, so diagnostics cannot change its contents
+        // or order. A local command or isolated debug test receives counts, never fragments.
+        val stable: List<Pair<PromptSize.Section, String?>> = listOf(
+            PromptSize.Section.RISK_POLICY to io.github.nanomuse.guard.RiskPolicy.promptParagraph(),
+            PromptSize.Section.HANDS to io.github.nanomuse.hands.Hands.promptParagraph(context),
+        )
+        val volatile: List<Pair<PromptSize.Section, String?>> = listOf(
+            PromptSize.Section.SKILLS to skillFragment,
+            PromptSize.Section.MCP to mcpFragment,
+            PromptSize.Section.NAMING to namingAddendum,
+            PromptSize.Section.MEDIA to io.github.nanomuse.media.MediaModels.promptParagraph(context),
+            PromptSize.Section.COMPUTERS to io.github.nanomuse.reach.Computers.promptParagraph(context),
+            PromptSize.Section.SESSION to io.github.nanomuse.chat.SessionAddenda.forPrompt(sessionKey),
+            PromptSize.Section.GOALS to io.github.nanomuse.goals.GoalFlow.systemAddendum(context, sessionKey),
+            PromptSize.Section.FEED to io.github.nanomuse.feed.FeedFlow.systemAddendum(context, sessionKey),
+            PromptSize.Section.MEMORY_TOOLS to toolListMemoryBullets,
+            PromptSize.Section.MEMORY_GUIDANCE to memorySystemSection,
+            PromptSize.Section.GLOBAL_MEMORY to globalMemoryFragment,
+            PromptSize.Section.DAILY_MEMORY to dailyMemoryFragment,
+            PromptSize.Section.USER_FILE to io.github.nanomuse.sysfiles.UserFile.promptFragment(context),
+        )
+        // nanoMuse: capture the exact session fragments once; retries derive smaller profiles
+        // from this snapshot instead of re-reading memory or rebuilding completed tool results.
+        val profileInput = ai.tama.chat.PromptProfiles.Input(identitySection, base, stable, volatile, runtimeContext)
+        onSnapshot?.invoke(profileInput)
+        val built = ai.tama.chat.PromptProfiles.build(ai.tama.router.Profile.FULL, profileInput)
+        if (onMeasured != null) runCatching {
+            // nanoMuse: measure the exact compact prompt, not the former dieted template.
+            val imageReady = runCatching { io.github.nanomuse.media.MediaModels.agentImageEndpoint(context) != null }.getOrNull()
+            onMeasured(built.sizes, imageReady)
+        }
+        return built.prompt
     }
 
     // ─── Legacy tool execution methods (kept for compatibility) ───────────
@@ -10880,7 +12994,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 val rawBytes = try {
                     context.contentResolver.openInputStream(attachment.uri)?.use { it.readBytes() }
                 } catch (e: Exception) {
-                    Log.w(TAG, "image read failed for ${attachment.fileName}: ${e.message}")
+                    // nanoMuse: attachment names and file errors are private.
+                    if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                        Log.w(TAG, "image read failed")
+                    else Log.w(TAG, "image read failed for ${attachment.fileName}: ${e.message}")
                     null
                 } ?: continue
                 val ref = try {
@@ -10891,7 +13008,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         originalFileName = attachment.fileName,
                     )
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to persist image attachment ${attachment.fileName}", e)
+                    // nanoMuse: do not emit the filename or an exception stack in parallel.
+                    if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                        Log.e(TAG, "Failed to persist image attachment")
+                    else Log.e(TAG, "Failed to persist image attachment ${attachment.fileName}", e)
                     continue
                 }
                 // Resize only for the LLM payload — token-efficient and a
@@ -10915,7 +13035,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 val safeName = uniqueUploadFileName(uploadsHostDir, attachment.fileName)
                 val dest = java.io.File(uploadsHostDir, safeName)
                 val uploadOk = try { dest.writeBytes(rawBytes); true } catch (e: Exception) {
-                    Log.w(TAG, "uploads write failed for ${attachment.fileName}: ${e.message}")
+                    // nanoMuse: filenames and file errors can contain private data.
+                    if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                        Log.w(TAG, "attachment upload write failed")
+                    else Log.w(TAG, "uploads write failed for ${attachment.fileName}: ${e.message}")
                     false
                 }
                 val linuxPath = if (uploadOk) "/var/minis/attachments/uploads/$safeName" else null
@@ -10956,7 +13079,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     dest.outputStream().use { output -> input.copyTo(output) }
                 } != null
             } catch (e: Exception) {
-                Log.w(TAG, "non-image upload write failed for ${attachment.fileName}: ${e.message}")
+                // nanoMuse: filenames and file errors can contain private data.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    Log.w(TAG, "non-image upload write failed")
+                else Log.w(TAG, "non-image upload write failed for ${attachment.fileName}: ${e.message}")
                 runCatching { dest.delete() }
                 false
             }
@@ -10972,7 +13098,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     )
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to persist non-image attachment ${attachment.fileName}", e)
+                // nanoMuse: do not emit the filename or an exception stack in parallel.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    Log.e(TAG, "Failed to persist non-image attachment")
+                else Log.e(TAG, "Failed to persist non-image attachment ${attachment.fileName}", e)
                 null
             }
             if (ref != null) {
@@ -11240,10 +13369,15 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // every path of this function — XIN 40454 reported sessions silently
         // staying "New Chat" and the failure paths were under-logged.
         // Logging only; no logic change.
+        // nanoMuse: a title can be the person's first message, so omit it and
+        // the session id from these diagnostics in the parallel package.
+        val tamaV2Test = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
         AppLogger.info(
             "TitleGen",
-            "enter session=${realSessionId.ifEmpty { sessionId }} attempts=$titleGenerationAttempts/$TITLE_MAX_ATTEMPTS " +
-                "inFlight=$titleGenerationInFlight currentTitle='${_sessionTitle.value.take(200)}'",
+            ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title generation entered") {
+                "enter session=${realSessionId.ifEmpty { sessionId }} attempts=$titleGenerationAttempts/$TITLE_MAX_ATTEMPTS " +
+                    "inFlight=$titleGenerationInFlight currentTitle='${_sessionTitle.value.take(200)}'"
+            },
         )
         if (titleGenerationInFlight || titleGenerationAttempts >= TITLE_MAX_ATTEMPTS) {
             AppLogger.info(
@@ -11254,7 +13388,20 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         }
         // Skip if title already set (not "New Chat")
         if (_sessionTitle.value != "New Chat" && _sessionTitle.value.isNotEmpty()) {
-            AppLogger.info("TitleGen", "skip guard=title-already-set title='${_sessionTitle.value.take(200)}'")
+            // nanoMuse: an existing title can contain private conversation text.
+            AppLogger.info("TitleGen", ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title already set") {
+                "skip guard=title-already-set title='${_sessionTitle.value.take(200)}'"
+            })
+            return
+        }
+        // nanoMuse: automatic titles are an extra model request, even when chat is manual.
+        // Use the existing local first-message fallback until the separate cost risk is accepted.
+        if (!ai.tama.router.AutomaticCostGuard.permits(context) || !ai.tama.pricing.ModelCostGuard.permits()) {
+            titleGenerationInFlight = true
+            viewModelScope.launch(Dispatchers.IO) {
+                try { applyFallbackTitleFromFirstMessage("automatic cost not verified") }
+                finally { titleGenerationInFlight = false }
+            }
             return
         }
         // Prefer a dedicated sub-model (cheap, non-OAuth) — mirrors iOS resolveSubEntry.
@@ -11395,9 +13542,12 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 // previous manual prefix branch here was redundant.
                 val effectiveSystemPrompt = TITLE_GEN_SYSTEM_PROMPT
 
+                // nanoMuse: a custom model id can itself be private data.
                 AppLogger.info(
                     "TitleGen",
-                    "dispatch attempt=$titleGenerationAttempts provider=${provider.javaClass.simpleName} model=${provider.model.id}",
+                    ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title request dispatched") {
+                        "dispatch attempt=$titleGenerationAttempts provider=${provider.javaClass.simpleName} model=${provider.model.id}"
+                    },
                 )
                 // [T-android-titlegen-reasoning] Match iOS callSubModelForTitle:
                 // explicitly disable thinking (thinkingLevel = OFF). The provider
@@ -11410,6 +13560,11 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 // default), keep the T334 budget bump so it can finish thinking
                 // and still emit the JSON. Unified with regenerateTitle's ladder.
                 val titleMaxTokens = if (provider.model.supportsReasoning == true) 2048 else 100
+                // nanoMuse: settings may change while title context or OAuth is prepared.
+                if (!ai.tama.router.AutomaticCostGuard.permits(context) || !ai.tama.pricing.ModelCostGuard.permits()) {
+                    applyFallbackTitleFromFirstMessage("automatic cost not verified")
+                    return@launch
+                }
                 val response = provider.sendMessage(
                     messages = listOf(LLMMessage(role = LLMMessage.Role.USER, content = prompt)),
                     systemPrompt = effectiveSystemPrompt,
@@ -11422,10 +13577,13 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     thinkingLevel = ThinkingLevel.OFF,
                 )
 
+                // nanoMuse: model output may repeat conversation or credentials.
                 AppLogger.info(
                     "TitleGen",
-                    "response stopReason=${response.stopReason} textLen=${response.text.length} " +
-                        "raw='${response.text.take(200).replace("\n", "\\n")}'",
+                    ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title response received") {
+                        "response stopReason=${response.stopReason} textLen=${response.text.length} " +
+                            "raw='${response.text.take(200).replace("\n", "\\n")}'"
+                    },
                 )
                 val (title, category, folderName) = parseTitleResponse(response.text)
                 if (title.isNotEmpty()) {
@@ -11435,7 +13593,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         _sessionTitle.value = title
                         _sessionCategory.value = category
                     }
-                    AppLogger.info("TitleGen", "outcome=set title='$title' category='$category'")
+                    // nanoMuse: generated titles and categories may echo private input.
+                    AppLogger.info("TitleGen", ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title set") {
+                        "outcome=set title='$title' category='$category'"
+                    })
                     // [T-android-auto-grouping] Group assignment is best-effort
                     // and strictly SUBORDINATE to the title: a name that
                     // resolves to nothing is silently dropped (never create a
@@ -11471,14 +13632,19 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                             }.singleOrNull()
                         if (match != null) {
                             val applied = chatRepository.setFolderIfUnfiled(match.id, sid)
+                            // nanoMuse: folder names and ids are user data.
                             AppLogger.info(
                                 "TitleGen",
-                                "auto-group '$folderName' -> ${match.id.take(8)} applied=$applied",
+                                ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "automatic grouping checked") {
+                                    "auto-group '$folderName' -> ${match.id.take(8)} applied=$applied"
+                                },
                             )
                         } else {
                             AppLogger.info(
                                 "TitleGen",
-                                "auto-group: model offered '$folderName' but no group matches — leaving ungrouped",
+                                ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "no matching group") {
+                                    "auto-group: model offered '$folderName' but no group matches — leaving ungrouped"
+                                },
                             )
                         }
                     }
@@ -11490,11 +13656,14 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     // or non-JSON output). Previously this was silent and left
                     // the session as "New Chat". Log the real cause and, on the
                     // final attempt, fall back to the first user message.
+                    // nanoMuse: stop reasons may contain provider-controlled text.
                     AppLogger.warning(
                         "TitleGen",
-                        "outcome=no-title attempt=$titleGenerationAttempts/$TITLE_MAX_ATTEMPTS " +
-                            "(empty / unparseable response) stopReason=${response.stopReason} " +
-                            "textLen=${response.text.length}",
+                        ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "no usable title response") {
+                            "outcome=no-title attempt=$titleGenerationAttempts/$TITLE_MAX_ATTEMPTS " +
+                                "(empty / unparseable response) stopReason=${response.stopReason} " +
+                                "textLen=${response.text.length}"
+                        },
                     )
                     if (titleGenerationAttempts >= TITLE_MAX_ATTEMPTS) {
                         AppLogger.warning("TitleGen", "outcome=gave-up ($titleGenerationAttempts/$TITLE_MAX_ATTEMPTS) — applying first-message fallback title")
@@ -11502,18 +13671,29 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     }
                 }
             } catch (e: Exception) {
+                // nanoMuse: a last-moment cost refusal uses the local title, without retry.
+                if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) {
+                    applyFallbackTitleFromFirstMessage("model cost not verified")
+                    return@launch
+                }
                 // [T-title-gen-fallback-first-message-android] Request error /
                 // timeout / provider failure. Log the concrete cause (was
                 // already logged, kept) and fall back to the first user message
                 // on the final attempt.
+                // nanoMuse: provider exceptions can echo input, endpoints or credentials.
                 AppLogger.warning(
                     "TitleGen",
-                    "outcome=exception attempt=$titleGenerationAttempts/$TITLE_MAX_ATTEMPTS " +
-                        "${e.javaClass.simpleName}: ${e.message?.take(200)}",
+                    ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title request failed") {
+                        "outcome=exception attempt=$titleGenerationAttempts/$TITLE_MAX_ATTEMPTS " +
+                            "${e.javaClass.simpleName}: ${e.message?.take(200)}"
+                    },
                 )
                 if (titleGenerationAttempts >= TITLE_MAX_ATTEMPTS) {
                     AppLogger.warning("TitleGen", "outcome=gave-up ($titleGenerationAttempts/$TITLE_MAX_ATTEMPTS) — applying first-message fallback title")
-                    applyFallbackTitleFromFirstMessage("request failed: ${e.message?.take(200)}")
+                    val reason = ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "request failed") {
+                        "request failed: ${e.message?.take(200)}"
+                    }
+                    applyFallbackTitleFromFirstMessage(reason)
                 }
             } finally {
                 titleGenerationInFlight = false
@@ -11534,11 +13714,14 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 // that silently never runs is worse than none, because the log
                 // line would claim it did.
                 if (!isActive) {
+                    // nanoMuse: do not record the session id in the parallel app.
                     AppLogger.warning(
                         "TitleGen",
-                        "outcome=cancelled attempt=$titleGenerationAttempts/$TITLE_MAX_ATTEMPTS " +
-                            "session=${(realSessionId.ifEmpty { sessionId }).take(8)} " +
-                            "reason=scope-cancelled — applying first-message fallback",
+                        ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title generation cancelled") {
+                            "outcome=cancelled attempt=$titleGenerationAttempts/$TITLE_MAX_ATTEMPTS " +
+                                "session=${(realSessionId.ifEmpty { sessionId }).take(8)} " +
+                                "reason=scope-cancelled — applying first-message fallback"
+                        },
                     )
                     withContext(NonCancellable) {
                         applyFallbackTitleFromFirstMessage("scope cancelled")
@@ -11566,12 +13749,16 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
      * fallback derived from the opening message.
      */
     private suspend fun applyFallbackTitleFromFirstMessage(reason: String) {
+        // nanoMuse: fallback reasons can include provider text and session ids.
+        val tamaV2Test = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
         val sidForCheck = realSessionId.ifEmpty { sessionId }
         val existing = chatRepository.getSession(sidForCheck)?.title?.trim()
         if (!existing.isNullOrEmpty() && existing != "New Chat") {
             AppLogger.info(
                 "TitleGen",
-                "outcome=fallback-skipped session=${sidForCheck.take(8)} reason=already-titled",
+                ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title fallback skipped") {
+                    "outcome=fallback-skipped session=${sidForCheck.take(8)} reason=already-titled"
+                },
             )
             return
         }
@@ -11592,10 +13779,13 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // Collapse all whitespace (incl. newlines) to single spaces, trim.
         val cleaned = text.replace(Regex("\\s+"), " ").trim()
         if (cleaned.isEmpty()) {
+            // nanoMuse: keep the fallback reason and session out of parallel logs.
             AppLogger.warning(
                 "TitleGen",
-                "outcome=fallback-unavailable session=${sidForCheck.take(8)} " +
-                    "reason=first-user-message-empty-after-cleanup ($reason)",
+                ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title fallback unavailable") {
+                    "outcome=fallback-unavailable session=${sidForCheck.take(8)} " +
+                        "reason=first-user-message-empty-after-cleanup ($reason)"
+                },
             )
             return
         }
@@ -11604,10 +13794,12 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         withContext(Dispatchers.Main) {
             _sessionTitle.value = fallbackTitle
         }
-        // Length only — never the user's prompt text.
+        // nanoMuse: the reason can contain provider text, even when the title is omitted.
         AppLogger.info(
             "TitleGen",
-            "outcome=fallback session=${sidForCheck.take(8)} titleLen=${fallbackTitle.length} reason=$reason",
+            ai.tama.net.ChatLogPrivacy.message(tamaV2Test, "title fallback set") {
+                "outcome=fallback session=${sidForCheck.take(8)} titleLen=${fallbackTitle.length} reason=$reason"
+            },
         )
     }
 
@@ -11644,17 +13836,29 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // is only reached from the suspend agent loop on a background thread.
         if (instance.credentialType == com.openminis.app.data.model.ProviderCredential.oauth) {
             try {
-                val manager = com.openminis.app.auth.OAuthManager.forInstance(context, instance)
-                val freshToken = kotlinx.coroutines.runBlocking { manager?.validAccessToken() }
-                if (freshToken != null && freshToken != apiKey) {
-                    providerRepository.saveApiKey(instance.id, freshToken)
-                    apiKey = freshToken
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                    val refreshed = kotlinx.coroutines.runBlocking { nmGuardedOAuthRefresh(instance) }
+                    val live = providerRepository.config.value
+                    val liveEntry = live.modelEntries.find { it.id == entry.id }
+                    val liveInstance = live.instances.find { it.id == instance.id }
+                    if (liveEntry != entry || liveInstance == null ||
+                        AutoModelStore.routeFingerprint(liveInstance) != AutoModelStore.routeFingerprint(instance) ||
+                        !providerRepository.nmOAuthKeyStillCurrent(refreshed.snapshot)) return null
+                    apiKey = refreshed.freshKey ?: refreshed.oldKey ?: return null
+                } else {
+                    val manager = com.openminis.app.auth.OAuthManager.forInstance(context, instance)
+                    val freshToken = kotlinx.coroutines.runBlocking { manager?.validAccessToken() }
+                    if (freshToken != null && freshToken != apiKey) {
+                        providerRepository.saveApiKey(instance.id, freshToken, oauthRefresh = true)
+                        apiKey = freshToken
+                    }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "TitleGen OAuth refresh failed: ${e.message}")
+                nmLogPrivateFailure("TitleGen OAuth refresh failed", e)
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") return null
             }
         }
-        return ProviderFactory.create(instance, apiKey, entry.model, context)
+        return nmCreateProvider(instance, apiKey, entry.model)
     }
 
     /** Parse LLM response for title/category JSON. Multiple fallback strategies. */
@@ -11715,13 +13919,56 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         }?.content
         SessionActivityTracker.publishLastReply(sessionId, text)
     }
-    // nanoMuse: every stream path shares completion classification before publishing its badge.
-    private suspend fun finishTrackedReply(id: String) {
-        if (kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]?.isCancelled == true) {
-            SessionActivityTracker.markReplyIncomplete(id)
+    // nanoMuse: read only this job's still-current tracker run; -1 cannot pay any generation.
+    private fun nmPetGenerationForJob(job: Job?): Long {
+        val binding = job?.let { nmTrackedLocalRuns.current(it) } ?: return -1L
+        return SessionActivityTracker.petGenerationForRun(binding.sessionId, binding.turnId)
+    }
+
+    // nanoMuse: bind the run to its actual coroutine, including a Stop racing slot acquisition.
+    private fun beginTrackedReply(id: String, job: Job): String {
+        val binding = nmTrackedLocalRuns.begin(job, { job.isActive }) {
+            val turnId = SessionActivityTracker.setActive(id, onStop = {
+                if (streamJob === job) cancelStream()
+                else stopObsoleteTrackedReply(job)
+            })
+            io.github.nanomuse.pet.PetRunBinding(id, turnId)
+        } ?: throw CancellationException("Stopped before tracker start")
+        // A parent scope can cancel independently of cancelStream while registration is running.
+        if (!job.isActive) {
+            stopObsoleteTrackedReply(job)
+            throw CancellationException("Stopped during tracker start")
         }
+        return binding.turnId
+    }
+
+    // nanoMuse: a callback captured by an older job must never cancel the newer streamJob.
+    private fun stopObsoleteTrackedReply(job: Job) {
+        val binding = nmTrackedLocalRuns.stop(job) { job.cancel() }
+        finishStoppedReply(binding, publishReply = false)
+    }
+
+    private fun finishStoppedReply(binding: io.github.nanomuse.pet.PetRunBinding?, publishReply: Boolean) {
+        if (binding == null) return
+        val (id, turnId) = binding
+        SessionActivityTracker.markReplyIncomplete(id, turnId)
+        if (SessionActivityTracker.isCurrentRun(id, turnId)) {
+            if (publishReply) publishOverlayReplyExcerpt(id)
+            SessionActivityTracker.clearToolRunning(com.openminis.app.service.ToolOutcome.Cancelled)
+        }
+        SessionActivityTracker.setInactive(id, turnId)
+    }
+
+    // nanoMuse: every stream path shares completion classification before publishing its badge.
+    private suspend fun finishTrackedReply(id: String, turnId: String) {
+        val job = kotlin.coroutines.coroutineContext[Job] ?: return
+        val binding = nmTrackedLocalRuns.finish(job) ?: return
+        if (binding.sessionId != id || binding.turnId != turnId) return
+        if (!SessionActivityTracker.isCurrentRun(id, turnId)) return
+        if (job.isCancelled) SessionActivityTracker.markReplyIncomplete(id, turnId)
+        if (!SessionActivityTracker.isCurrentRun(id, turnId)) return
         publishOverlayReplyExcerpt(id)
-        SessionActivityTracker.setInactive(id)
+        SessionActivityTracker.setInactive(id, turnId)
     }
 
 
@@ -11731,7 +13978,50 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         nmHeadlessReceipt?.requestStop() // nanoMuse: request local Stop before publishing idle.
         AppLogger.info(TAG_STREAM, "cancelStream invoked _isStreaming=false (sid=$activeSessionId)")
         if (_isStreaming.value) io.github.nanomuse.ui.feedback.TurnFeedback.stopped(activeSessionId) // nanoMuse: the record hears the Stop; the chat asks why, once (relay 0.31)
-        streamJob?.cancel()
+        // nanoMuse: block registrations while retiring BOTH the old chat job and
+        // its managed shell peer. An offload worker can arrive after the first scan.
+        val stoppedJob = streamJob
+        val stoppedImageShortcut = stoppedJob != null && stoppedJob === nmImageShortcutJob
+        val stoppedImageCall = stoppedJob != null && stoppedJob === nmActiveImageShortcutCall
+        val stoppedImagePlaceholder = if (stoppedImageShortcut) nmImageShortcutPlaceholderId else null
+        val parallelStop = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        val stoppedSessions = if (isDraft && realSessionId.isNotEmpty() && activeSessionId != sessionId)
+            listOf(activeSessionId, sessionId) else listOf(activeSessionId)
+        var stoppedVideoMayHaveSubmitted = false
+        var stoppedImageMayHaveSubmitted = false
+        var stoppedModelUseMayHaveSubmitted = false
+        var stoppedBinding: io.github.nanomuse.pet.PetRunBinding? = null
+        if (parallelStop) {
+            val pausedVideos = mutableListOf<String>()
+            val pausedImages = mutableListOf<String>()
+            val pausedModelUse = mutableListOf<String>()
+            try {
+                for (sid in stoppedSessions) {
+                    pausedVideos.add(sid)
+                    val warning = ai.tama.media.VideoAttemptTracker.pauseSession(sid)
+                    stoppedVideoMayHaveSubmitted = warning || stoppedVideoMayHaveSubmitted
+                }
+                for (sid in stoppedSessions) {
+                    pausedImages.add(sid)
+                    val warning = ai.tama.media.ImageAttemptTracker.pauseSession(sid)
+                    stoppedImageMayHaveSubmitted = warning || stoppedImageMayHaveSubmitted
+                }
+                for (sid in stoppedSessions) {
+                    pausedModelUse.add(sid)
+                    val warning = ai.tama.net.ModelUseAttemptTracker.pauseSession(sid)
+                    stoppedModelUseMayHaveSubmitted = warning || stoppedModelUseMayHaveSubmitted
+                }
+                stoppedBinding = stoppedJob?.let { job -> nmTrackedLocalRuns.stop(job) { job.cancel() } }
+                // Revokes the PRoot peer before the temporary registration pauses end.
+                for (sid in stoppedSessions) ExecutionCoordinator.stopCurrentCommand(sid)
+            } finally {
+                pausedModelUse.forEach { ai.tama.net.ModelUseAttemptTracker.resumeSession(it) }
+                pausedImages.forEach { ai.tama.media.ImageAttemptTracker.resumeSession(it) }
+                pausedVideos.forEach { ai.tama.media.VideoAttemptTracker.resumeSession(it) }
+            }
+        } else {
+            stoppedBinding = stoppedJob?.let { job -> nmTrackedLocalRuns.stop(job) { job.cancel() } }
+        }
         _isStreaming.value = false
         // T-streaming-side-channel: flush any in-flight delta back into the
         // canonical message so the rest of cancelStream's cleanup (publish
@@ -11748,24 +14038,38 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // surface any reply we already streamed + tag outcome as
         // Cancelled so the overlay's glyph reflects the actual end
         // state (⊘) instead of carrying over the prior tool's outcome.
-        // nanoMuse: cancellation must be recorded before the immediate tracker teardown.
-        SessionActivityTracker.markReplyIncomplete(activeSessionId)
-        publishOverlayReplyExcerpt(activeSessionId)
-        SessionActivityTracker.clearToolRunning(com.openminis.app.service.ToolOutcome.Cancelled)
-        SessionActivityTracker.setInactive(activeSessionId)
-        if (isDraft && realSessionId.isNotEmpty() && activeSessionId != sessionId) {
-            SessionActivityTracker.markReplyIncomplete(sessionId)
-            SessionActivityTracker.setInactive(sessionId)
+        // nanoMuse: never tear down another job's tracker run, even after draft promotion.
+        finishStoppedReply(stoppedBinding, publishReply = !stoppedImageShortcut && !stoppedImageCall)
+        if (stoppedImageShortcut) {
+            // There may not yet be a placeholder. Generic model cleanup would
+            // otherwise mistake the previous reply for this interrupted turn.
+            if (stoppedImagePlaceholder != null) {
+                _messages.value = _messages.value.filterNot { it.id == stoppedImagePlaceholder }
+            }
+            _canResume.value = false
+        } else {
+            // Stop whichever shell the agent loop is actually dispatching against.
+            // Before `ensureSession()` that is the draft id; after, the real id.
+            if (!parallelStop) {
+                ExecutionCoordinator.stopCurrentCommand(activeSessionId)
+                if (isDraft && realSessionId.isNotEmpty() && activeSessionId != sessionId) {
+                    ExecutionCoordinator.stopCurrentCommand(sessionId)
+                }
+            }
+            handleUserCancelledCleanup()
         }
-        // Stop whichever shell the agent loop is actually dispatching against.
-        // Before `ensureSession()` that is the draft id; after, the real id.
-        // Stopping the wrong one leaves a runaway yt-dlp/ffmpeg alive.
-        ExecutionCoordinator.stopCurrentCommand(activeSessionId)
-        if (isDraft && realSessionId.isNotEmpty() && activeSessionId != sessionId) {
-            // Mid-turn rename: sweep any lingering draft shell too.
-            ExecutionCoordinator.stopCurrentCommand(sessionId)
+        if (stoppedImageShortcut || stoppedImageCall || stoppedImageMayHaveSubmitted) {
+            // The remote service may already have received the request, even when Stop wins locally.
+            appendSystemInfo(context.getString(R.string.nm_image_request_failed), "info")
         }
-        handleUserCancelledCleanup()
+        if (stoppedVideoMayHaveSubmitted) {
+            // nanoMuse: Stop cannot retract a task already handed to the service.
+            appendSystemInfo(context.getString(R.string.nm_video_request_failed), "info")
+        }
+        if (stoppedModelUseMayHaveSubmitted) {
+            // nanoMuse: the marker is conservative and does not prove a charge.
+            appendSystemInfo(context.getString(R.string.nm_model_use_stop_warning), "info")
+        }
 
         // T189: iOS parity (AIChatViewModel.swift L2592-2610). If the user
         // enqueued prompts during the cancelled stream, auto-resume the drain
@@ -11774,7 +14078,13 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         val pending = _promptQueue.value
         if (pending.isNotEmpty()) {
             AppLogger.info(TAG_STREAM, "cancel — ${pending.size} queued prompt(s) remain, restarting drain")
-            resumeQueueAfterCancel()
+            if (stoppedImageShortcut) ai.tama.chat.ChatSetupLaunch.launch( // nanoMuse: deletion may withdraw this delayed drain too.
+                viewModelScope, activeSessionId, enabled = parallelStop,
+                onOwner = {}, onNeverStarted = {},
+            ) {
+                kotlinx.coroutines.delay(200)
+                nmContinueShortcutQueue()
+            } else resumeQueueAfterCancel()
         }
     }
 
@@ -11791,7 +14101,16 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
      * prompt drain after cancel uses the same plumbing as a fresh send.
      */
     private fun resumeQueueAfterCancel() {
-        viewModelScope.launch {
+        // nanoMuse: deletion can withdraw the delayed drain before it reaches a slot.
+        val parallelQueue = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        ai.tama.chat.ChatSetupLaunch.launch(
+            viewModelScope, activeSessionId, enabled = parallelQueue,
+            onOwner = {}, onNeverStarted = {},
+        ) {
+            var claimedSetup = false
+            var streamLaunched = false
+            try {
+            if (parallelQueue) coroutineContext.ensureActive()
             kotlinx.coroutines.delay(200)
             if (_promptQueue.value.isEmpty()) return@launch
             if (_isStreaming.value) return@launch
@@ -11814,8 +14133,18 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             }
             var provider: LLMProvider = initialProvider
 
+            // nanoMuse: own the asynchronous refresh too, before a new tap can start another drain.
+            if (parallelQueue) {
+                coroutineContext.ensureActive()
+                streamJob = coroutineContext[Job]
+                _isStreaming.value = true
+                claimedSetup = true
+            }
             // Refresh OAuth token if needed (mirrors sendMessage L2477-2501).
-            if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                if (!AutoModelStore.enabled(context))
+                    provider = nmRefreshSelectedOAuth(provider) ?: run { nmOAuthChangedMessage(); return@launch }
+            } else if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
                 try {
                     val activeEntryId = _activeEntryId.value
                     val entry = activeEntryId?.let { id -> providerRepository.config.value.modelEntries.find { it.id == id } }
@@ -11826,25 +14155,16 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         if (freshToken != null) {
                             val storedKey = providerRepository.loadApiKey(instance.id)
                             if (freshToken != storedKey) {
-                                providerRepository.saveApiKey(instance.id, freshToken)
-                                provider = com.openminis.app.provider.ProviderFactory.create(
-                                    instance, freshToken, currentModel ?: provider.model, context
-                                )
+                                providerRepository.saveApiKey(instance.id, freshToken, oauthRefresh = true)
+                                provider = nmCreateProvider(instance, freshToken, currentModel ?: provider.model)
                                 currentProvider = provider
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "OAuth token refresh failed (resumeQueueAfterCancel): ${e.message}")
+                    nmLogPrivateFailure("OAuth token refresh failed (resumeQueueAfterCancel)", e)
                 }
             }
-
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt = if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                else "$prefix\n\n${baseSystemPrompt ?: ""}"
-            } else baseSystemPrompt
 
             // T145: claim the streaming flag synchronously before launching
             // the streamJob so a concurrent send/retry tap is rejected by the
@@ -11854,37 +14174,41 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             _canResume.value = false
             _error.value = null
 
-            streamJob = launch(Dispatchers.IO) {
+            nmLaunchStream(this) { // nanoMuse: keep the drain under the registered setup.
                 AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob ENTER sid=$activeSessionId")
                 try {
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
-                    AppLogger.debug(TAG_STREAM, "resumeQueueAfterCancel streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
-                            ?: com.openminis.app.data.model.FallbackStrategy.default
+                    val trackedSessionId = activeSessionId
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "resumeQueueAfterCancel streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
                     }
-                    val fallbackProviders = buildFallbackProviders(provider)
-
                     try {
+
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let { providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy }
+                                ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drainQueuedPrompts CALL")
                         drainQueuedPrompts(
                             provider = provider,
-                            systemPrompt = systemPrompt,
-                            fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel drain CANCELLED")
                     } catch (e: Exception) {
-                        AppLogger.error(TAG_STREAM, "resumeQueueAfterCancel drain EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
-                        Log.e(TAG, "Queued drain error (resumeQueueAfterCancel)", e)
-                        setInlineError(e.message ?: "Unknown error")
-                        // nanoMuse: a failed resumed run is not a new unread answer.
-                        SessionActivityTracker.markReplyIncomplete(activeSessionId)
+                        logTurnFailure("resumeQueueAfterCancel drain EXCEPTION ${e.javaClass.simpleName}: ${e.message}",
+                            "Queued drain error (resumeQueueAfterCancel)", e)
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
+                        // An error suppresses unread and remains distinct from a user cancellation.
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -11894,8 +14218,11 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         // non-null excerpt. Reading _messages here is safe:
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        }
                         AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -11909,6 +14236,12 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel _isStreaming SKIPPED (stale job)")
                 }
                 AppLogger.info(TAG_STREAM, "resumeQueueAfterCancel streamJob EXIT")
+            }
+            streamLaunched = true // nanoMuse: a launch failure still resets this setup.
+            } finally {
+                if (claimedSetup && !streamLaunched && nmMayFinishSetup(coroutineContext[Job])) {
+                    _isStreaming.value = false // nanoMuse: failed refresh cannot strand the indicator.
+                }
             }
         }
     }
@@ -12096,7 +14429,8 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // setInlineError (which persisted an error sticker on the last assistant
         // row). Clear it now so a successful resume doesn't merge-resurrect the
         // turn-limit banner on the next reload.
-        clearPersistedLastAssistantError()
+        val parallelResume = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        if (!parallelResume) clearPersistedLastAssistantError() // nanoMuse: parallel write is owned by the setup below.
         AppLogger.info(TAG, "▶️ resume: continuing partial assistant message (no new header emitted)")
         // [T-android-tool-autoscroll] Start-of-turn snap. The thinking
         // placeholder is the only visible delta until the model's first
@@ -12111,68 +14445,105 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // a valid starting point for the next API call — no reminder needed.
         val historyEndsWithAssistant =
             agentHistory.lastOrNull()?.role == LLMMessage.Role.ASSISTANT
-        if (historyEndsWithAssistant) {
+        val resumeReminder = if (historyEndsWithAssistant) {
             val reminder =
                 "<system-reminder>The user stopped the previous response but now wants to continue. Pick up exactly where you left off.</system-reminder>"
-            val parts = listOf<AgentContentPart>(AgentContentPart.Text(reminder))
-            agentHistory.add(
-                LLMMessage(
-                    role = LLMMessage.Role.USER,
-                    content = reminder,
-                    contentParts = parts,
+            if (!parallelResume) { // nanoMuse: preserve the normal package's timing.
+                val parts = listOf<AgentContentPart>(AgentContentPart.Text(reminder))
+                agentHistory.add(
+                    LLMMessage(
+                        role = LLMMessage.Role.USER,
+                        content = reminder,
+                        contentParts = parts,
+                    )
                 )
-            )
-            viewModelScope.launch(Dispatchers.IO) {
-                val partsJson = """[{"type":"text","value":${escapeJson(reminder)}}]"""
-                chatRepository.appendMessage(activeSessionId, "user", partsJson)
+                viewModelScope.launch(Dispatchers.IO) {
+                    val partsJson = """[{"type":"text","value":${escapeJson(reminder)}}]"""
+                    chatRepository.appendMessage(activeSessionId, "user", partsJson)
+                }
             }
-        }
+            reminder
+        } else null
 
-        viewModelScope.launch {
-            val baseSystemPrompt = buildSystemPrompt()
-            val systemPrompt =
-                if ((provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true) {
-                    val prefix = io.github.nanomuse.cloud.ClaudeSignIn.identifier // nanoMuse: empty on a build without it, never throws; the provider refuses the send (#373)
-                    if (baseSystemPrompt?.startsWith(prefix) == true) baseSystemPrompt
-                    else "$prefix\n\n${baseSystemPrompt ?: ""}"
-                } else baseSystemPrompt
+        // nanoMuse: reserve resume before its dispatcher can run, like send and retry.
+        val resumeSessionId = activeSessionId
+        if (parallelResume) _isStreaming.value = true
+        ai.tama.chat.ChatSetupLaunch.launch(
+            viewModelScope, resumeSessionId, enabled = parallelResume,
+            onOwner = { streamJob = it }, onNeverStarted = ::nmIdleWhenOwnerEnds,
+        ) {
+            var streamLaunched = false
+            try {
+            if (parallelResume) { // nanoMuse: both writes belong to this setup; an in-flight DB write may still commit.
+                coroutineContext.ensureActive()
+                withContext(Dispatchers.IO) {
+                    nmClearPersistedLastAssistantError(resumeSessionId)
+                    if (resumeReminder != null) {
+                        coroutineContext.ensureActive()
+                        val partsJson = """[{"type":"text","value":${escapeJson(resumeReminder)}}]"""
+                        chatRepository.appendMessage(resumeSessionId, "user", partsJson)
+                    }
+                }
+                coroutineContext.ensureActive()
+                if (resumeReminder != null) { // nanoMuse: publish the reminder only after its write returns.
+                    agentHistory.add(
+                        LLMMessage(
+                            role = LLMMessage.Role.USER,
+                            content = resumeReminder,
+                            contentParts = listOf(AgentContentPart.Text(resumeReminder)),
+                        )
+                    )
+                }
+            }
+            // nanoMuse: rebuild the provider-specific prefix for each actual request.
+            val nmPromptInput = nmCapturePromptInput()
 
             AppLogger.info(TAG_STREAM, "resume _isStreaming=true (sid=$activeSessionId)")
             _isStreaming.value = true
-            streamJob = launch(Dispatchers.IO) {
+            nmLaunchStream(this) { // nanoMuse: keep the child under the registered resume.
                 AppLogger.info(TAG_STREAM, "resume streamJob ENTER sid=$activeSessionId")
                 try {
-                    SessionConcurrencyManager.acquireSlot(activeSessionId)
-                    AppLogger.debug(TAG_STREAM, "resume streamJob slot acquired")
-                    SessionActivityTracker.setActive(activeSessionId, onStop = { cancelStream() })
-                    val activeFallbackStrategy = run {
-                        val groupId = _selectedGroupId.value
-                        groupId?.let {
-                            providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy
-                        } ?: com.openminis.app.data.model.FallbackStrategy.default
+                    val trackedSessionId = activeSessionId
+                    val trackedSlot = SessionConcurrencyManager.acquireSlot(trackedSessionId)
+                    val trackedTurnId = try { // nanoMuse: return this lease if tracker startup fails.
+                        AppLogger.debug(TAG_STREAM, "resume streamJob slot acquired")
+                        beginTrackedReply(trackedSessionId, requireNotNull(coroutineContext[Job]))
+                    } catch (e: Throwable) {
+                        SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        throw e
                     }
-                    val fallbackProviders = buildFallbackProviders(provider)
                     try {
+                        val activeFallbackStrategy = run {
+                            val groupId = _selectedGroupId.value
+                            groupId?.let {
+                                providerRepository.config.value.modelGroups.find { g -> g.id == it }?.fallbackStrategy
+                            } ?: com.openminis.app.data.model.FallbackStrategy.default
+                        }
+                        val fallbackProviders = buildFallbackProviders(provider)
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop CALL")
-                        runAgentLoop(
+                        val completedImageShortcut = runAgentLoop(
                             provider = provider,
-                            systemPrompt = systemPrompt,
+                            promptInput = nmPromptInput,
                             fallbackProviders = fallbackProviders,
                             fallbackStrategy = activeFallbackStrategy,
+                            onTerminalFailure = { SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId) },
                         )
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop RETURN normal")
-                        nmAfterTurn() // nanoMuse
-                        drainQueuedPrompts(provider, systemPrompt, fallbackProviders, activeFallbackStrategy)
+                        if (!completedImageShortcut) nmAfterTurn() // model turns only
+                        drainQueuedPrompts(provider, activeFallbackStrategy) {
+                            SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
+                        }
                         AppLogger.info(TAG_STREAM, "resume drainQueuedPrompts RETURN")
                     } catch (e: CancellationException) {
+                        SessionActivityTracker.markReplyIncomplete(trackedSessionId, trackedTurnId) // nanoMuse
                         AppLogger.info(TAG_STREAM, "resume runAgentLoop CANCELLED")
                         Log.d(TAG, "Agent loop cancelled (resume)")
                     } catch (e: Exception) {
-                        AppLogger.error(TAG_STREAM, "resume runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
-                        Log.e(TAG, "Agent loop error (resume)", e)
-                        setInlineError(e.message ?: "Unknown error")
-                        // nanoMuse: a failed resumed run is not a new unread answer.
-                        SessionActivityTracker.markReplyIncomplete(activeSessionId)
+                        logTurnFailure("resume runAgentLoop EXCEPTION ${e.javaClass.simpleName}: ${e.message}",
+                            "Agent loop error (resume)", e)
+                        setInlineError(e) // nanoMuse: preserve the failing call's diagnostic
+                        // An error suppresses unread and remains distinct from a user cancellation.
+                        SessionActivityTracker.markStreamError(trackedSessionId, trackedTurnId)
                     } finally {
                         AppLogger.info(TAG_STREAM, "resume streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
@@ -12182,8 +14553,11 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         // non-null excerpt. Reading _messages here is safe:
                         // we're in the finally block of the agent loop and
                         // the stream has already flushed its last delta.
-                        finishTrackedReply(activeSessionId)
-                        SessionConcurrencyManager.releaseSlot(activeSessionId)
+                        try {
+                            finishTrackedReply(trackedSessionId, trackedTurnId)
+                        } finally {
+                            SessionConcurrencyManager.releaseSlot(trackedSlot)
+                        }
                         AppLogger.info(TAG_STREAM, "resume streamJob FINALLY exit")
                     }
                 } catch (e: CancellationException) {
@@ -12199,6 +14573,12 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 }
                 AppLogger.info(TAG_STREAM, "resume streamJob EXIT")
             }
+            streamLaunched = true // nanoMuse: a launch failure still resets this setup.
+            } finally {
+                if (parallelResume && !streamLaunched && nmMayFinishSetup(coroutineContext[Job])) {
+                    _isStreaming.value = false // nanoMuse: a failed setup must not strand the indicator.
+                }
+            }
         }
     }
 
@@ -12207,8 +14587,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // Tear down whichever shell was actually serving this VM. Terminate
         // both ids when the rename happened, since a draft shell may still
         // linger if the agent ran a tool before `ensureSession()`.
+        OffloadPermissionManager.clearSessionGrants(activeSessionId)
         ExecutionCoordinator.sessionDidTerminate(activeSessionId)
         if (activeSessionId != sessionId) {
+            OffloadPermissionManager.clearSessionGrants(sessionId)
             ExecutionCoordinator.sessionDidTerminate(sessionId)
         }
     }
@@ -12499,7 +14881,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 // short, fixed-size placeholder so the row still appears
                 // (so the user can delete or scroll past it) but no longer
                 // pulls megabytes through the layout pass.
-                Log.w(
+                // nanoMuse: parsing errors can include fragments of the private stored message.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                    Log.w(TAG, "toChatMessages: stored message could not be parsed")
+                } else Log.w(
                     TAG,
                     "toChatMessages: failed to parse partsJson for id=${entity.id} " +
                         "len=${entity.partsJson.length} role=${entity.role}: ${e.javaClass.simpleName}: ${e.message}",
@@ -12727,6 +15112,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             contentParts = contentParts,
             dbMessageId = id,
             reasoningContent = reasoningContent,
+            originModelId = modelId,
+            originProviderInstanceId = providerInstanceId,
+            originRouteFingerprint = if (r == LLMMessage.Role.ASSISTANT)
+                ai.tama.router.ModelRouteHistory.fingerprintFromPartsJson(partsJson) else null,
         )
     }
 
@@ -12786,6 +15175,9 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         "file_edit" -> "Edit File"
         "browser_use" -> "Browse Web"
         "read_image" -> "Read Image"
+        ai.tama.tools.ImageGenerationTool.NAME ->
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                context.getString(R.string.nm_models_image_title) else "Generate Image"
         "memory_write" -> "Write Memory"
         "memory_get" -> "Read Memory"
         "web_search" -> "Search Web"

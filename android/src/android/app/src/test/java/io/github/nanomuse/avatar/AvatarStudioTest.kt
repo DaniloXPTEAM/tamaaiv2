@@ -1,8 +1,8 @@
 package io.github.nanomuse.avatar
 
 import android.content.Context
-import android.content.ContextWrapper
 import android.graphics.Bitmap
+import com.openminis.app.R
 import com.openminis.app.data.model.ProviderCredential
 import com.openminis.app.data.model.ProviderInstance
 import com.openminis.app.data.model.ProviderType
@@ -24,9 +24,11 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.mockito.Mockito
 
 class AvatarStudioTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -36,11 +38,20 @@ class AvatarStudioTest {
         apiKey = "k",
         model = "m",
     )
-    private val context: Context = object : ContextWrapper(null) {}
+    private val autoPreferences = io.github.nanomuse.pet.PetMapPreferences()
+    private val context: Context = Mockito.mock(Context::class.java).also {
+        Mockito.`when`(it.getSharedPreferences("tama_auto_models", Context.MODE_PRIVATE)).thenReturn(autoPreferences)
+        Mockito.`when`(it.getString(R.string.nm_model_cost_blocked)).thenReturn("Cost not verified")
+        Mockito.`when`(it.getString(R.string.nm_avatar_auto_unavailable)).thenReturn("Automatic avatar unavailable")
+        Mockito.`when`(it.getString(R.string.nm_media_model_change_blocked)).thenReturn("Model changed")
+        Mockito.`when`(it.getString(R.string.nm_avatar_provider_busy)).thenReturn("Provider busy")
+        Mockito.`when`(it.getString(R.string.nm_error_private_generic)).thenReturn("Provider failed")
+    }
     private val realDrawer = AvatarStudio.drawer
 
     @After fun restore() {
         AvatarStudio.drawer = realDrawer
+        ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(false)
     }
 
     /** The stubbed android.jar cannot make a Bitmap the usual way; its no-argument constructor does. */
@@ -310,5 +321,69 @@ class AvatarStudioTest {
         assertTrue(AvatarStudio.looksRateLimited(RuntimeException("Throttling.RateQuota")))
         assertFalse(AvatarStudio.looksRateLimited(RuntimeException("HTTP 401 invalid api key")))
         assertFalse(AvatarStudio.looksRateLimited(RuntimeException(null as String?)))
+    }
+
+    @Test fun `retry policy preserves normal app and does not retry in parallel`() {
+        val limited = IOException("HTTP 429")
+        assertFalse(AvatarStudio.shouldRetryRateLimit(true, 0, limited))
+        assertTrue(AvatarStudio.shouldRetryRateLimit(false, 0, limited))
+        assertTrue(AvatarStudio.shouldRetryRateLimit(false, 1, limited))
+        assertFalse(AvatarStudio.shouldRetryRateLimit(false, 2, limited))
+        assertFalse(AvatarStudio.shouldRetryRateLimit(false, 0, IOException("HTTP 401")))
+    }
+
+    @Test fun `parallel candidates do not retry or display provider text`() = runBlocking {
+        assumeTrue(com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+        AvatarStore.useDirForTests(tmp.newFolder())
+        val calls = AtomicInteger()
+        AvatarStudio.drawer = { _, _, _, _ ->
+            calls.incrementAndGet()
+            throw IOException("HTTP 429 fixture-key and private prompt")
+        }
+        AvatarStudio.startCandidates(context, endpoint, "a bird", AvatarStudio.Style.MUSE, null)
+        withTimeout(5_000) { AvatarStudio.candidateJob!!.join() }
+        assertEquals(AvatarStudio.CANDIDATES, calls.get())
+        assertTrue(AvatarStudio.slots.value.all { it is Slot.Failed && it.message == "Provider busy" })
+        assertEquals("Provider busy", AvatarStudio.error.value)
+        assertFalse(AvatarStudio.slots.value.toString().contains("fixture-key"))
+        assertFalse(AvatarStudio.slots.value.toString().contains("private prompt"))
+    }
+
+    @Test fun `parallel candidate start refuses unknown cost before endpoint lookup`() {
+        assumeTrue(com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+        ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(false)
+        assertFalse(AvatarStudio.generateCandidates(context, "a bird", AvatarStudio.Style.MUSE))
+        assertEquals("Cost not verified", AvatarStudio.error.value)
+        Mockito.verify(context, Mockito.never()).applicationContext
+    }
+
+    @Test fun `parallel automatic mode blocks candidate start before endpoint lookup`() {
+        assumeTrue(com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+        ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(true)
+        ai.tama.router.AutoModelStore.setEnabled(context, true)
+        assertFalse(AvatarStudio.generateCandidates(context, "a bird", AvatarStudio.Style.MUSE))
+        assertEquals("Automatic avatar unavailable", AvatarStudio.error.value)
+        Mockito.verify(context, Mockito.never()).applicationContext
+    }
+
+    @Test fun `parallel queued candidates do not start after automatic mode is enabled`() = runBlocking {
+        assumeTrue(com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+        AvatarStore.useDirForTests(tmp.newFolder())
+        val calls = AtomicInteger()
+        val release = CompletableDeferred<Unit>()
+        AvatarStudio.drawer = { _, _, _, _ ->
+            calls.incrementAndGet()
+            release.await()
+            throw IOException("fixture failure")
+        }
+        AvatarStudio.startCandidates(context, endpoint, "a bird", AvatarStudio.Style.MUSE, null)
+        waitUntil("two requests hold the lanes") { calls.get() == 2 }
+        ai.tama.router.AutoModelStore.setEnabled(context, true)
+        release.complete(Unit)
+        withTimeout(5_000) { AvatarStudio.candidateJob!!.join() }
+        assertEquals(2, calls.get())
+        assertEquals(2, AvatarStudio.slots.value.count {
+            it is Slot.Failed && it.message == "Automatic avatar unavailable"
+        })
     }
 }

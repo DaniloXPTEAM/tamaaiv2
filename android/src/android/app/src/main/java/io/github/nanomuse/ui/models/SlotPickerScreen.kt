@@ -88,8 +88,10 @@ fun SlotPickerScreen(slot: Slot, onBack: () -> Unit, onAddProvider: () -> Unit) 
     var expanded by rememberSaveable { mutableStateOf(emptySet<String>()) }
     var query by rememberSaveable { mutableStateOf("") }
 
-    // Model Studio does not list video models: the known ones are probed once a day per key.
-    if (slot == Slot.VIDEO) {
+    // nanoMuse: even an empty video probe may create a billable task. The
+    // parallel app offers manual confirmation on the image and video screen instead.
+    val parallelTest = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+    if (slot == Slot.VIDEO && ai.tama.media.VideoProbeBatch.mayStartAutomatically(parallelTest)) {
         LaunchedEffect(groups.size) {
             val stale = groups.map { it.instance }.filter { MediaModels.availableVideoModels(context, it) == null || !MediaModels.videoCheckIsFresh(context, it) }
             if (stale.isEmpty()) return@LaunchedEffect
@@ -108,6 +110,16 @@ fun SlotPickerScreen(slot: Slot, onBack: () -> Unit, onAddProvider: () -> Unit) 
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp).padding(top = 12.dp),
         )
+        // nanoMuse: distinguish an untried video check from a provider failure.
+        if (slot == Slot.VIDEO && parallelTest) {
+            Text(
+                text = stringResource(R.string.nm_video_probe_manual_hint),
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 12.dp),
+            )
+        }
         if (slot != Slot.CHAT && groups.isNotEmpty()) {
             SettingsSection {
                 AutomaticRow(
@@ -174,7 +186,7 @@ fun SlotPickerScreen(slot: Slot, onBack: () -> Unit, onAddProvider: () -> Unit) 
                 if (shown.hidden > 0) {
                     SettingsRow(
                         title = stringResource(R.string.nm_models_show_more, shown.hidden),
-                        titleColor = MuseTones.action,
+                        titleColor = MuseTones.accent,
                         onClick = { expanded = expanded + group.instance.id },
                         showChevron = false,
                         showDivider = false,
@@ -187,7 +199,7 @@ fun SlotPickerScreen(slot: Slot, onBack: () -> Unit, onAddProvider: () -> Unit) 
                 title = stringResource(R.string.nm_media_checking),
                 titleColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 showDivider = false,
-                trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.action) },
+                trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.accent) },
             )
         }
         SettingsSection(
@@ -196,7 +208,7 @@ fun SlotPickerScreen(slot: Slot, onBack: () -> Unit, onAddProvider: () -> Unit) 
         ) {
             SettingsRow(
                 title = stringResource(R.string.nm_media_add_provider),
-                titleColor = MuseTones.action,
+                titleColor = MuseTones.accent,
                 onClick = onAddProvider,
                 showChevron = false,
                 showDivider = false,

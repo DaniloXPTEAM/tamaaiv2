@@ -24,7 +24,9 @@ class OAuthRedirectActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         val uri = intent?.data
-        Log.i(TAG, "OAuth redirect received: $uri")
+        // nanoMuse: the redirect URL carries the authorization code and state.
+        val nmParallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        if (nmParallel) Log.i(TAG, "OAuth redirect received") else Log.i(TAG, "OAuth redirect received: $uri")
 
         if (uri != null) {
             val code = uri.getQueryParameter("code")
@@ -37,7 +39,8 @@ class OAuthRedirectActivity : Activity() {
                     try {
                         val port = uri.port.takeIf { it > 0 } ?: 54545
                         val localUrl = "http://127.0.0.1:$port${uri.path}?${uri.query}"
-                        Log.d(TAG, "Forwarding to local server: $localUrl")
+                        // nanoMuse: localUrl also contains the authorization code.
+                        if (!nmParallel) Log.d(TAG, "Forwarding to local server: $localUrl")
                         // nanoMuse: never through the system proxy; a VPN or proxy app would swallow the loopback request (#441).
                         val conn = java.net.URL(localUrl).openConnection(java.net.Proxy.NO_PROXY) as java.net.HttpURLConnection
                         conn.connectTimeout = 5000
@@ -47,7 +50,9 @@ class OAuthRedirectActivity : Activity() {
                         Log.i(TAG, "Local server response: $responseCode")
                         conn.disconnect()
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to forward to local server", e)
+                        // nanoMuse: an exception can contain the full callback URL.
+                        if (nmParallel) Log.e(TAG, "Failed to forward to local server")
+                        else Log.e(TAG, "Failed to forward to local server", e)
                     }
                 }.start()
             } else {

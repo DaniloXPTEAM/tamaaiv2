@@ -9,6 +9,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.ensureActive // nanoMuse
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -69,8 +70,10 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
             providerRepository: com.openminis.app.data.repository.ProviderRepository,
         ): String {
             val manager = XAIOAuthManager(context, instanceId)
-            val token = manager.performLogin(context)
-            providerRepository.saveApiKey(instanceId, token)
+            // nanoMuse: commit the bundle and key with the current attempt, not afterward.
+            val ticket = manager.nmBeginLogin()
+            val token = manager.nmPerformLogin(context, ticket, providerRepository)
+            if (ticket == null) providerRepository.saveApiKey(instanceId, token)
             return token
         }
     }
@@ -192,6 +195,28 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
 
+    // nanoMuse: a separate xAI browser attempt must not replace this one's PKCE/state.
+    private class NmAuthorization(val url: String, val verifier: String, val challenge: String, val state: String)
+    private suspend fun nmAuthorization(): NmAuthorization {
+        val (verifier, challenge) = generateHexPKCE()
+        val state = generateState()
+        val nonce = generateNonce()
+        val authEndpoint = resolveAuthEndpoint()
+        val url = "$authEndpoint?" + listOf(
+            "response_type=code",
+            "client_id=$clientId",
+            "redirect_uri=${Uri.encode(redirectUri)}",
+            "scope=${Uri.encode(scopes)}",
+            "state=$state",
+            "nonce=$nonce",
+            "code_challenge=$challenge",
+            "code_challenge_method=S256",
+            "plan=generic",
+            "referrer=minis",
+        ).joinToString("&")
+        return NmAuthorization(url, verifier, challenge, state)
+    }
+
     /**
      * NOT overriding [OAuthManager.buildAuthorizationUrl] (suspendless
      * shape) — this manager runs its own [performLogin] which can
@@ -241,9 +266,25 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
      * ("oauth_tokens" inside [onTokensReceived]) and parses the ID
      * token for `email` / `accountId` for display in ProviderDetailScreen.
      */
-    private suspend fun exchangeCodeForToken(code: String): String = withContext(Dispatchers.IO) {
+    // nanoMuse: the exchange may finish after a newer login or logout.
+    private suspend fun exchangeCodeForToken(
+        code: String,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket?,
+        repository: com.openminis.app.data.repository.ProviderRepository?,
+        authorization: NmAuthorization?,
+    ): String = withContext(Dispatchers.IO) {
         val tokenEndpoint = resolveTokenEndpoint()
-        val params = buildTokenParams(code)
+        nmRequireLoginCurrent(ticket)
+        // nanoMuse: never read another in-flight attempt's verifier/challenge.
+        val params = if (authorization == null) buildTokenParams(code) else mapOf(
+            "grant_type" to "authorization_code",
+            "code" to code,
+            "redirect_uri" to redirectUri,
+            "client_id" to clientId,
+            "code_verifier" to authorization.verifier,
+            "code_challenge" to authorization.challenge,
+            "code_challenge_method" to "S256",
+        )
         val formBody = params.entries.joinToString("&") { "${it.key}=${Uri.encode(it.value)}" }
         val req = Request.Builder()
             .url(tokenEndpoint)
@@ -255,7 +296,8 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
         resp.close()
         if (code0 !in 200..299) {
             Log.e(TAG, "xAI token exchange failed: $code0 ${OAuthManager.sanitizeBody(body)}")
-            throw Exception("xAI token exchange failed ($code0): $body")
+            // nanoMuse: an untrusted OAuth body can echo secrets to the UI or logcat.
+            throw Exception(if (nmParallelAuth) "xAI token exchange failed ($code0)" else "xAI token exchange failed ($code0): $body")
         }
         val json = JSONObject(body)
         val accessToken = json.optString("access_token", "")
@@ -268,8 +310,22 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
         if (expiresIn > 0) {
             json.put("expire_at", System.currentTimeMillis() + expiresIn * 1000)
         }
-        saveTokensJson(json)
-        onTokensReceived(json)
+        // nanoMuse: bind account display claims and both credential stores to
+        // this attempt. The token endpoint was already resolved before the POST.
+        if (ticket != null) {
+            val claims = nmLoginClaims(json.optString("id_token", ""))
+            val metadata = buildMap {
+                claims?.optString("email", "")?.takeIf { it.isNotEmpty() }?.let { put("email", it) }
+                claims?.optString("name", "")?.takeIf { it.isNotEmpty() }?.let { put("display_name", it) }
+                val account = claims?.optString("account_id", "")?.takeIf { it.isNotEmpty() }
+                    ?: claims?.optString("sub", "")?.takeIf { it.isNotEmpty() }
+                if (account != null) put("account_id", account)
+            }
+            nmCommitLogin(ticket, repository, json, metadata)
+        } else {
+            nmChangeOAuthAccount { saveTokensJson(json) }
+            onTokensReceived(json)
+        }
         Log.i(TAG, "xAI token exchange OK, expires in ${expiresIn}s, has refresh: ${json.has("refresh_token")}")
         accessToken
     }
@@ -302,6 +358,16 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
         // Cache the discovered token endpoint so refreshes don't have
         // to repeat the discovery round-trip.
         runCatching { resolveTokenEndpoint() }
+    }
+
+    override suspend fun nmOnTokensReceived(json: JSONObject, snapshot: NmOAuthSnapshot) {
+        // nanoMuse: direct/base exchanges cannot attach old claims to a newer account.
+        val claims = nmLoginClaims(json.optString("id_token", "")) ?: return
+        nmIfOAuthCurrent(snapshot, compareTokens = false) {
+            email = claims.optString("email", "").ifEmpty { null }
+            displayName = claims.optString("name", "").ifEmpty { null }
+            accountId = claims.optString("account_id", "").ifEmpty { claims.optString("sub", "") }.ifEmpty { null }
+        }
     }
 
     /**
@@ -339,8 +405,15 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
      * case so a manual API-key fallback or a later subscription bump
      * can pick up where we left off without re-OAuthing.
      */
-    override suspend fun refreshToken(): Boolean = withContext(Dispatchers.IO) {
-        val stored = JSONObject(
+    override suspend fun refreshToken(): Boolean = nmRefreshXai(null)
+
+    // nanoMuse: a suspended caller must not pick up a replacement account.
+    override suspend fun nmRefreshTokenIfCurrent(snapshot: NmOAuthSnapshot): Boolean = nmRefreshXai(snapshot)
+
+    private suspend fun nmRefreshXai(expected: NmOAuthSnapshot?): Boolean = withContext(Dispatchers.IO) {
+        if (nmParallelAuth && expected != null && !nmIfOAuthCurrent(expected) {}) return@withContext false
+        val nmSnapshot = if (nmParallelAuth) expected ?: nmOAuthSnapshot() else null
+        val stored = if (nmSnapshot != null) nmSnapshot.storedTokens() ?: return@withContext false else JSONObject(
             loadOAuthString("tokens").takeUnless { it.isNullOrEmpty() }
                 ?: return@withContext false,
         )
@@ -375,10 +448,15 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
             if (expiresIn > 0) {
                 json.put("expire_at", System.currentTimeMillis() + expiresIn * 1000)
             }
-            saveTokensJson(json)
+            // nanoMuse: reject a late success after another login, logout or refresh.
+            if (nmSnapshot != null) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (!nmIfOAuthCurrent(nmSnapshot) { saveTokensJson(json) }) return@withContext false
+            } else saveTokensJson(json)
             true
         } catch (e: Exception) {
-            Log.e(TAG, "xAI refresh error", e)
+            if (nmParallelAuth && e is kotlinx.coroutines.CancellationException) throw e
+            if (nmParallelAuth) Log.e(TAG, "xAI refresh error") else Log.e(TAG, "xAI refresh error", e)
             false
         }
     }
@@ -391,7 +469,17 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
      * open a Chrome Custom Tab against the authorization endpoint, wait
      * for the code, then exchange. Throws on failure.
      */
-    suspend fun performLogin(context: Context): String {
+    suspend fun performLogin(context: Context): String = nmPerformLogin(context, nmBeginLogin(), null)
+
+    // nanoMuse: carry this attempt through discovery, browser and exchange.
+    private suspend fun nmPerformLogin(
+        context: Context,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket?,
+        repository: com.openminis.app.data.repository.ProviderRepository?,
+    ): String {
+        // nanoMuse: parallel attempts own their listener and lifecycle observer;
+        // the legacy shared fields below must never stop a newer attempt.
+        if (ticket != null) return nmPerformParallelLogin(context, ticket, repository)
         // Re-entrancy guard. A double Compose recomposition / button tap
         // can launch two performLogin coroutines on the same instanceId
         // before either has resolved. Each would generate its own
@@ -403,6 +491,8 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
         // 84067d0a).
         if (isAuthenticating) {
             Log.w(TAG, "xAI login already in progress — ignoring re-entrant call (instance: $instanceId)")
+            // nanoMuse: never return another attempt's token as this login's result.
+            if (ticket != null) throw NmOAuthLoginSuperseded()
             // Wait for the in-flight login to finish and surface its
             // resulting token so the caller's `providerRepository.saveApiKey`
             // path still has a value to persist when a second tap races.
@@ -422,20 +512,23 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
             loginCallbackServer?.stop()
             loginCallbackServer = null
 
-            val authUrl = buildXAIAuthorizationUrl()
-            val expectedState = loadOAuthString("state") ?: ""
+            val authorization = if (ticket != null) nmAuthorization() else null // nanoMuse
+            val authUrl = authorization?.url ?: buildXAIAuthorizationUrl()
+            val expectedState = authorization?.state ?: loadOAuthString("state") ?: ""
+            nmRequireLoginCurrent(ticket)
 
             val accessToken = withContext(Dispatchers.IO) {
                 val (code, state) = suspendCancellableCoroutine<Pair<String, String?>> { cont ->
-                    val server = OAuthCallbackServer(callbackPort) { receivedCode, receivedState ->
+                    val server = OAuthCallbackServer(callbackPort,
+                        expectedPath = if (ticket != null) redirectPath else null,
+                        expectedState = authorization?.state,
+                        startOrder = ticket?.order,
+                        mayStart = { ticket == null || (cont.isActive && ai.tama.router.OAuthLoginAttempts.isCurrent(ticket)) },
+                    ) { receivedCode, receivedState ->
                         if (cont.isActive) {
-                            // Successful redirect — clear the
-                            // external-cancel hook before the callback
-                            // server's own onCode→stop() chain runs, so
-                            // the resulting stop() doesn't fire a
-                            // spurious cancel after we've already
-                            // resumed the continuation with the code.
-                            loginCallbackServer?.onExternalCancel = null
+                            // The parallel listener clears its own cancellation hook
+                            // before invoking us. Preserve the legacy behavior otherwise.
+                            if (ticket == null) loginCallbackServer?.onExternalCancel = null
                             cont.resume(receivedCode to receivedState)
                         }
                     }
@@ -458,7 +551,7 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
 
                     cont.invokeOnCancellation {
                         server.stop()
-                        loginCallbackServer = null
+                        if (loginCallbackServer === server) loginCallbackServer = null
                     }
 
                     // Same Chrome Custom Tab pattern as OpenAIOAuthManager —
@@ -494,11 +587,14 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
                 loginCallbackServer = null
                 Log.i(TAG, "xAI callback received — code length: ${code.length}")
 
-                if (expectedState.isNotEmpty() && state != null && state != expectedState) {
+                // nanoMuse: the parallel callback must include the state for this attempt.
+                if ((ticket != null && (expectedState.isEmpty() || state != expectedState)) ||
+                    (ticket == null && expectedState.isNotEmpty() && state != null && state != expectedState)) {
                     throw Exception("xAI OAuth state mismatch — possible CSRF, refusing to exchange")
                 }
 
-                exchangeCodeForToken(code)
+                nmRequireLoginCurrent(ticket)
+                exchangeCodeForToken(code, ticket, repository, authorization)
             }
 
             Log.i(TAG, "=== xAI OAuth login complete (instance: $instanceId) ===")
@@ -506,6 +602,92 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
         } finally {
             isAuthenticating = false
             disarmDismissalDetector()
+        }
+    }
+
+    // nanoMuse: each parallel login has its own server and observer. In particular,
+    // completion or a delayed dismissal from an older attempt cannot close or
+    // disarm another attempt on the same manager or on a different manager.
+    private suspend fun nmPerformParallelLogin(
+        context: Context,
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket,
+        repository: com.openminis.app.data.repository.ProviderRepository?,
+    ): String {
+        val authorization = nmAuthorization()
+        nmRequireLoginCurrent(ticket)
+        return withContext(Dispatchers.IO) {
+            val (code, state) = suspendCancellableCoroutine<Pair<String, String?>> { cont ->
+                val disarm = java.util.concurrent.atomic.AtomicReference<(() -> Unit)?>(null)
+                val server = OAuthCallbackServer(
+                    callbackPort, expectedPath = redirectPath, expectedState = authorization.state,
+                    startOrder = ticket.order,
+                    mayStart = { cont.isActive && ai.tama.router.OAuthLoginAttempts.isCurrent(ticket) },
+                ) { receivedCode, receivedState ->
+                    if (cont.isActive) {
+                        disarm.getAndSet(null)?.invoke()
+                        cont.resume(receivedCode to receivedState)
+                    }
+                }
+                server.onExternalCancel = {
+                    cont.cancel(kotlinx.coroutines.CancellationException("xAI OAuth callback cancelled"))
+                }
+                disarm.set(nmArmDismissalDetector(server))
+                cont.invokeOnCancellation {
+                    disarm.getAndSet(null)?.invoke()
+                    server.stop()
+                }
+                try {
+                    server.start()
+                    if (!cont.isActive || !ai.tama.router.OAuthLoginAttempts.isCurrent(ticket)) {
+                        cont.cancel(kotlinx.coroutines.CancellationException("xAI OAuth sign-in superseded"))
+                        return@suspendCancellableCoroutine
+                    }
+                    val tab = CustomTabsIntent.Builder().setShowTitle(true).build()
+                    tab.launchUrl(context, Uri.parse(authorization.url))
+                } catch (e: Exception) {
+                    disarm.getAndSet(null)?.invoke()
+                    // Preserve the startup/launch error rather than replacing it
+                    // with this server's external-cancellation callback.
+                    server.onExternalCancel = null
+                    server.stop()
+                    throw e
+                }
+            }
+            if (state != authorization.state) throw Exception("xAI OAuth state mismatch")
+            nmRequireLoginCurrent(ticket)
+            exchangeCodeForToken(code, ticket, repository, authorization)
+        }
+    }
+
+    private fun nmArmDismissalDetector(server: OAuthCallbackServer): () -> Unit {
+        val armed = java.util.concurrent.atomic.AtomicBoolean(true)
+        val observer = object : DefaultLifecycleObserver {
+            @Volatile var sawBackgrounded = false
+            override fun onPause(owner: LifecycleOwner) { sawBackgrounded = true }
+            override fun onStop(owner: LifecycleOwner) { sawBackgrounded = true }
+            override fun onResume(owner: LifecycleOwner) {
+                if (!sawBackgrounded || !armed.get()) return
+                GlobalScope.launch {
+                    delay(1500)
+                    if (armed.get()) server.stop()
+                }
+            }
+        }
+        try {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (armed.get()) ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
+            }
+        } catch (_: Exception) {
+            Log.w(TAG, "Could not attach xAI dismissal observer")
+        }
+        return {
+            if (armed.getAndSet(false)) {
+                try {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        ProcessLifecycleOwner.get().lifecycle.removeObserver(observer)
+                    }
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -545,9 +727,15 @@ class XAIOAuthManager(context: Context, instanceId: String) : OAuthManager(conte
                 // Give the loopback callback up to 1.5s to land —
                 // covers the race where xAI's redirect arrives a beat
                 // after the Custom Tab dismisses.
+                val observedServer = loginCallbackServer
+                val observedLifecycle = this
                 GlobalScope.launch {
                     delay(1500)
-                    val server = loginCallbackServer ?: return@launch
+                    // nanoMuse: an old delayed dismissal must not stop a new login.
+                    val server = if (nmParallelAuth) {
+                        observedServer?.takeIf { dismissalObserver === observedLifecycle && loginCallbackServer === it }
+                    } else loginCallbackServer
+                    server ?: return@launch
                     Log.w(TAG, "App resumed without OAuth callback — treating as user dismissal, stopping server")
                     server.stop()
                 }

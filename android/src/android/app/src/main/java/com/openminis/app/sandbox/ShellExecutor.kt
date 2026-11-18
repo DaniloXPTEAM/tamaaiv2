@@ -17,6 +17,8 @@ object ShellExecutor {
 
     private const val TAG = "ShellExecutor"
     private const val DEFAULT_TIMEOUT_MS = 600_000L // 10 minutes
+    // nanoMuse: shell commands and exceptions may contain prompts or credentials.
+    private val nmParallel: Boolean get() = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
 
     data class ShellResult(
         val output: String,
@@ -50,15 +52,14 @@ object ShellExecutor {
 
         val first = runOnce(context, command, timeout, environment, lineCallback, noSeccomp = false)
 
-        // [T-android-seccomp-selfheal / GH#186] If the child died on an early
-        // fatal signal with no output at all, the host kernel's seccomp fast
-        // path is the prime suspect — retry once without it. Gated hard so a
-        // normal failing command is never re-run; see SeccompFallbackPolicy.
-        if (!SeccompFallbackPolicy.shouldRetryWithoutSeccomp(
+        // nanoMuse: an early silent crash can still follow a file write or
+        // network call. The parallel app does not silently rerun a command;
+        // the normal package retains the upstream seccomp fallback.
+        if (!ai.tama.sandbox.ShellRetrySafety.shouldRetry(
+                parallel = nmParallel,
                 exitCode = first.exitCode,
                 durationMs = first.durationMs,
                 producedOutput = first.output.isNotEmpty(),
-                alreadyRetried = false,
             )
         ) {
             return@withContext first
@@ -99,7 +100,8 @@ object ShellExecutor {
     ): ShellResult = withContext(Dispatchers.IO) {
         val prootCommand = PRootKernel.buildProotCommand(command)
 
-        Log.d(TAG, "Executing: $command")
+        // nanoMuse: omit the command from parallel-package logcat.
+        Log.d(TAG, ai.tama.net.SandboxLogPrivacy.start(nmParallel, command))
 
         val startTime = System.currentTimeMillis()
 
@@ -176,16 +178,19 @@ object ShellExecutor {
                 }
             }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            Log.w(TAG, "Command timed out after ${timeout}ms: $command")
+            // nanoMuse: a timeout still reports its duration, not the private command.
+            Log.w(TAG, ai.tama.net.SandboxLogPrivacy.timeout(nmParallel, timeout, command))
             currentProcess?.destroyForcibly()
             currentProcess = null
             output.appendLine("\n[Command timed out after ${timeout / 1000}s]")
             exitCode = 124 // Standard timeout exit code
         } catch (e: Exception) {
-            Log.e(TAG, "Command failed: $command", e)
+            // nanoMuse: exception text and a stack trace can echo arguments or paths.
+            val message = ai.tama.net.SandboxLogPrivacy.failure(nmParallel, command)
+            if (nmParallel) Log.e(TAG, message) else Log.e(TAG, message, e)
             currentProcess?.destroyForcibly()
             currentProcess = null
-            output.appendLine("\n[Error: ${e.message}]")
+            output.appendLine("\n" + ai.tama.net.SandboxLogPrivacy.failureOutput(nmParallel, e.message))
             exitCode = -1
         }
 

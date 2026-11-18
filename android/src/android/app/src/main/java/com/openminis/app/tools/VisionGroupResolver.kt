@@ -8,6 +8,7 @@ import com.openminis.app.data.model.hasImageInput
 import com.openminis.app.data.repository.ProviderRepository
 import com.openminis.app.provider.ProviderFactory
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.ensureActive // nanoMuse
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -27,6 +28,19 @@ import kotlinx.coroutines.withTimeout
  * can't decode.
  */
 object VisionGroupResolver {
+    // nanoMuse: provider errors and user-configured model ids may contain secrets.
+    private val nmParallel: Boolean
+        get() = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+    private const val NM_AUTOMATIC_VISION_UNVERIFIED =
+        "automatic vision dispatch is unavailable until the target and its image cost can be verified; do not retry automatically"
+
+    // The existing Vision Group can route to an unrelated paid model. Until it
+    // participates in automatic consent and price checks, do not dispatch it
+    // behind the automatic chat selector. Manual mode is unchanged.
+    private fun nmAutomaticVisionBlocked(context: Context?): Boolean =
+        nmParallel && (context == null || ai.tama.router.AutoModelStore.enabled(context))
+
+    private class NmVisionBlocked : Exception()
 
     /**
      * Fixed instruction given to the describing model. Asks for transcription as
@@ -164,6 +178,7 @@ object VisionGroupResolver {
         // fallback switch as it happens rather than only in the final result.
         onAttempt: ((VisionAttempt) -> Unit)? = null,
     ): VisionResult {
+        if (nmAutomaticVisionBlocked(context)) return VisionResult.Failure(NM_AUTOMATIC_VISION_UNVERIFIED)
         val entries = candidates(repo, context, seed)
         if (entries.isEmpty()) {
             return VisionResult.Failure("no vision-capable model is available in the configured Vision Group")
@@ -184,28 +199,42 @@ object VisionGroupResolver {
         val failures = mutableListOf<Pair<String, String>>()
         val attempts = entries.take(MAX_ATTEMPTS)
         for ((idx, pair) in attempts.withIndex()) {
+            if (nmAutomaticVisionBlocked(context)) return VisionResult.Failure(NM_AUTOMATIC_VISION_UNVERIFIED)
             val (instance, entry) = pair
             val name = displayName(instance, entry)
             onAttempt?.invoke(VisionAttempt(idx + 1, attempts.size, name))
             try {
                 val text = describeOnce(repo, context, instance, entry, imageData, mimeType, instruction)
+                if (nmAutomaticVisionBlocked(context)) return VisionResult.Failure(NM_AUTOMATIC_VISION_UNVERIFIED)
                 val trimmed = text.trim()
                 if (trimmed.isEmpty()) {
                     failures.add(name to "returned an empty description")
-                    android.util.Log.w("VisionGroup", "[Vision] candidate ${idx + 1} (${entry.model.id}) returned empty — trying next")
+                    if (nmParallel) android.util.Log.w("VisionGroup", "[Vision] candidate returned empty — trying next")
+                    else android.util.Log.w("VisionGroup", "[Vision] candidate ${idx + 1} (${entry.model.id}) returned empty — trying next")
                     continue
                 }
                 if (idx > 0) {
-                    android.util.Log.i("VisionGroup", "[Vision] succeeded on fallback candidate ${idx + 1} (${entry.model.id})")
+                    if (nmParallel) android.util.Log.i("VisionGroup", "[Vision] succeeded on fallback candidate")
+                    else android.util.Log.i("VisionGroup", "[Vision] succeeded on fallback candidate ${idx + 1} (${entry.model.id})")
                 }
                 return VisionResult.Success(trimmed, name, failures.toList())
+            } catch (_: NmVisionBlocked) {
+                return VisionResult.Failure(NM_AUTOMATIC_VISION_UNVERIFIED)
             } catch (e: TimeoutCancellationException) {
+                // A caller's cancellation is not a candidate timeout and must
+                // not trigger further provider requests in the parallel app.
+                if (nmParallel) kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 failures.add(name to "timed out after ${PER_ATTEMPT_TIMEOUT_MS / 1000}s")
-                android.util.Log.w("VisionGroup", "[Vision] candidate ${idx + 1} (${entry.model.id}) timed out — trying next")
+                if (nmParallel) android.util.Log.w("VisionGroup", "[Vision] candidate timed out — trying next")
+                else android.util.Log.w("VisionGroup", "[Vision] candidate ${idx + 1} (${entry.model.id}) timed out — trying next")
             } catch (e: Exception) {
-                val reason = e.message ?: e.toString()
+                if (nmParallel && e is kotlinx.coroutines.CancellationException) throw e
+                val reason = ai.tama.net.ProviderLogPrivacy.failureDetail(
+                    nmParallel, e.message ?: if (nmParallel) null else e.toString(), "request failed",
+                )
                 failures.add(name to reason)
-                android.util.Log.w("VisionGroup", "[Vision] candidate ${idx + 1} (${entry.model.id}) failed: $reason — trying next")
+                if (nmParallel) android.util.Log.w("VisionGroup", "[Vision] candidate failed — trying next")
+                else android.util.Log.w("VisionGroup", "[Vision] candidate ${idx + 1} (${entry.model.id}) failed: $reason — trying next")
             }
         }
         val detail = if (failures.isEmpty()) "all vision models failed"
@@ -229,7 +258,8 @@ object VisionGroupResolver {
         // Guard: only route to a model that actually declares image input.
         if (!entry.model.hasImageInput) throw IllegalStateException("model is not vision-capable")
         val provider = ProviderFactory.create(instance, apiKey, entry.model, context)
-        android.util.Log.i("VisionGroup", "[Vision] describing via ${provider.name} model=${entry.model.id} bytes=${imageData.size}")
+        if (nmParallel) android.util.Log.i("VisionGroup", "[Vision] describing image")
+        else android.util.Log.i("VisionGroup", "[Vision] describing via ${provider.name} model=${entry.model.id} bytes=${imageData.size}")
 
         return withTimeout(PER_ATTEMPT_TIMEOUT_MS) {
             // Images go through the provider's dedicated `imageParts` argument
@@ -243,6 +273,7 @@ object VisionGroupResolver {
             // thinkingLevel OFF for the same reason title generation uses it:
             // some models otherwise return an empty body with a reasoning-only
             // stop reason.
+            if (nmAutomaticVisionBlocked(context)) throw NmVisionBlocked()
             val response = provider.sendMessage(
                 messages = listOf(message),
                 systemPrompt = SYSTEM_PROMPT,

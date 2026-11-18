@@ -170,7 +170,12 @@ internal object ConfigBuiltins {
                         ?: throw ConfigError.InvalidValue("No active session — open a chat first")
                     if (s.isEmpty()) {
                         // Clear the binding — fall back to default group/entry on next load.
-                        runBlocking { chatRepo.dao.updateSessionBinding(sid, "", "") }
+                        runBlocking {
+                            // nanoMuse: join the parallel app's per-session write order.
+                            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                                chatRepo.updateSessionBinding(sid, "", "")
+                            else chatRepo.dao.updateSessionBinding(sid, "", "")
+                        }
                         return@ClosureField
                     }
                     val cfg = providerRepo.config.value
@@ -202,7 +207,10 @@ internal object ConfigBuiltins {
                         )
                     }
                     runBlocking {
-                        chatRepo.dao.updateSessionBinding(sid, bindingJson, modelId)
+                        // nanoMuse: a config selection participates in parallel binding ordering too.
+                        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                            chatRepo.updateSessionBinding(sid, bindingJson, modelId)
+                        else chatRepo.dao.updateSessionBinding(sid, bindingJson, modelId)
                     }
                 },
             )
@@ -965,7 +973,7 @@ internal object ConfigBuiltins {
             ClosureField(
                 path = "soul.name",
                 displayName = "Soul name",
-                description = "The agent's name as shown in chat bubble headers and as the system-prompt identity. Trimmed; empty falls back to \"nanoMuse\".",
+                description = "The agent's name as shown in chat bubble headers and as the system-prompt identity. Trimmed; empty falls back to \"TAMA AI\".",
                 valueSchema = ConfigSchema.Str(maxLength = 64),
                 risk = ConfigRisk.SENSITIVE,
                 revertable = true,

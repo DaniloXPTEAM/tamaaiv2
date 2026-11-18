@@ -18,6 +18,11 @@ import org.junit.Before
 import org.junit.Test
 
 class GeminiProviderTest {
+
+    // nanoMuse: these transport fixtures use MockWebServer, never a provider account.
+    @org.junit.Before fun allowFixtureRequests() { ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(true) }
+    @org.junit.After fun resetFixtureCostPermission() { ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(false) }
+
     private lateinit var server: MockWebServer
     private lateinit var provider: GeminiProvider
 
@@ -367,11 +372,58 @@ class GeminiProviderTest {
         Unit
     }
 
-    @Test(expected = LLMError.InvalidApiKey::class)
-    fun `sendMessage throws on 403`() = runBlocking {
+    @Test
+    fun `403 is an access refusal not proof the API key is invalid`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(403).setBody("Forbidden"))
-        provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
-        Unit
+        try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
+            throw AssertionError("Expected access refusal")
+        } catch (e: LLMError.ProviderError) {
+            assertEquals(io.github.nanomuse.net.ProviderReach.Kind.ACCESS_DENIED, e.nmProviderReach?.kind)
+            assertEquals(403, e.nmProviderReach?.httpStatus)
+        }
+    }
+
+    @Test
+    fun `429 retains retry wait and redacts the query credential`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "9")
+            .setBody("""{"error":{"message":"retry test-key"}}"""))
+        try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
+            throw AssertionError("Expected rate limit")
+        } catch (e: LLMError.RateLimited) {
+            assertEquals(429, e.nmProviderReach?.httpStatus)
+            assertEquals(9, e.nmProviderReach?.retryAfterS)
+            assertEquals(LLMModel.gemini25Flash.id, e.nmProviderReach?.modelId)
+            assertTrue(e.nmProviderReach?.originalMessage?.contains("test-key") != true)
+        }
+    }
+
+    @Test
+    fun `413 retains request size diagnosis`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(413).setBody("""{"error":{"message":"request too large"}}"""))
+        try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
+            throw AssertionError("Expected size refusal")
+        } catch (e: LLMError.ProviderError) {
+            assertEquals(io.github.nanomuse.net.ProviderReach.Kind.REQUEST_TOO_LARGE, e.nmProviderReach?.kind)
+            assertEquals(413, e.nmProviderReach?.httpStatus)
+        }
+    }
+
+    @Test
+    fun `in-band 429 is an error not a successful empty stream`() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
+            .setBody("data: {\"error\":{\"code\":429,\"message\":\"retry test-key\"}}\n\n"))
+        val thrown = try {
+            provider.streamMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100).toList()
+            null
+        } catch (e: Throwable) { e }
+        val failure = generateSequence(thrown) { it.cause }.filterIsInstance<LLMError.RateLimited>().firstOrNull()
+        assertTrue("Expected rate limit, got $thrown", failure != null)
+        assertEquals(io.github.nanomuse.net.ProviderReach.Kind.RATE_LIMITED, failure?.nmProviderReach?.kind)
+        assertNull(failure?.nmProviderReach?.httpStatus)
+        assertTrue(failure?.nmProviderReach?.originalMessage?.contains("test-key") != true)
     }
 
     @Test(expected = LLMError.RateLimited::class)

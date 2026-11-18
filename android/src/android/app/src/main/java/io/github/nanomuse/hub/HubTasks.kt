@@ -8,7 +8,10 @@ import java.util.concurrent.ConcurrentHashMap
  * clears it when the answer goes out; the unit tests exercise the lookup rules here.
  */
 internal class HubTasks {
-    private class Run(val senderId: String, val conversation: String, val sessionId: String) {
+    private class Run(
+        val senderId: String, val conversation: String, val sessionId: String,
+        val owner: Any? = null, // nanoMuse: identity of this invocation, not just its reusable call id.
+    ) {
         @Volatile var stopped = false
     }
 
@@ -22,14 +25,41 @@ internal class HubTasks {
         runs[callId] = Run(senderId, conversation, sessionId)
     }
 
+    /** nanoMuse: the parallel app must not replace an invocation that is still running. */
+    @Synchronized fun tryStart(callId: String, senderId: String, conversation: String, sessionId: String, owner: Any): Boolean {
+        if (callId.isBlank() || runs.containsKey(callId)) return false
+        runs[callId] = Run(senderId, conversation, sessionId, owner)
+        return true
+    }
+
     /** Forgets the run; true when a `stop` ended it, so the task answers `cancelled`. */
     @Synchronized fun finished(callId: String): Boolean = runs.remove(callId)?.stopped == true
+
+    /** nanoMuse: late cleanup cannot remove a replacement which reused the call id. */
+    @Synchronized fun finishedExact(callId: String, owner: Any): Boolean {
+        val run = runs[callId]?.takeIf { it.owner === owner } ?: return false
+        runs.remove(callId)
+        return run.stopped
+    }
 
     /** Keep the selected run registered until cancellation has been requested. */
     @Synchronized fun stop(senderId: String, callId: String?, conversation: String?, cancel: (String) -> Boolean): Boolean {
         val sessionId = find(senderId, callId, conversation) ?: return false
         if (!cancel(sessionId)) return false
         markStopped(sessionId)
+        return true
+    }
+
+    /**
+     * nanoMuse: a verified persistent stop names one live invocation, not every
+     * call sharing its session or a replacement with the same reusable id.
+     * Keep the legacy session-wide behavior in [stop].
+     */
+    @Synchronized fun stopExact(senderId: String, callId: String?, owner: Any, cancel: (String) -> Boolean): Boolean {
+        if (callId.isNullOrBlank()) return false
+        val run = runs[callId]?.takeIf { it.senderId == senderId && it.owner === owner && !it.stopped } ?: return false
+        if (!cancel(run.sessionId)) return false
+        run.stopped = true
         return true
     }
 

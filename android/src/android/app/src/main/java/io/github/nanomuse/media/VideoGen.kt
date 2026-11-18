@@ -1,6 +1,8 @@
 package io.github.nanomuse.media
 
 import android.graphics.Bitmap
+import ai.tama.net.singleUseImageBody
+import ai.tama.net.singleUseImageClient
 import com.openminis.app.data.model.ProviderInstance
 import com.openminis.app.data.model.normalizeModalities
 import com.openminis.app.logging.AppLogger
@@ -97,22 +99,28 @@ object VideoGen {
         "video" in outputModalities.normalizeModalities().orEmpty() || looksLikeVideoModel(id)
 
     /**
-     * Whether [model] exists for this key, without making a video: an empty task is submitted
-     * and Model Studio answers 404 "Model not exist" for an unknown name, or accepts the task
-     * (which then fails at once on the missing prompt — nothing is billed). Null when the
-     * host could not be asked.
+     * Whether [model] exists for this key: an empty task is submitted and Model Studio
+     * answers 404 for an unknown name or reports a bad request for a known one.
+     * Billing for a probe is not proven here. Null when the host could not be asked
+     * or the parallel model-cost guard is active.
      */
     fun probe(host: String, apiKey: String, model: String): Boolean? {
+        // nanoMuse: even an empty task is a POST with unverified cost.
+        if (!ai.tama.pricing.ModelCostGuard.permits()) return null
         val body = JSONObject().put("model", model).put("input", JSONObject()).put("parameters", JSONObject())
+        val requestBody = body.toString().toRequestBody("application/json".toMediaType())
+        // nanoMuse: an empty probe can submit a task; do not replay its POST in the test app.
         val req = Request.Builder()
             .url("$host/api/v1/services/aigc/video-generation/video-synthesis")
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
             .header("X-DashScope-Async", "enable")
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .post(if (parallelTest) requestBody.singleUseImageBody() else requestBody)
             .build()
+        // nanoMuse: a settings change can occur while preparing the probe.
+        if (!ai.tama.pricing.ModelCostGuard.permits()) return null
         return try {
-            http.newCall(req).execute().use { resp ->
+            submissionClient().newCall(req).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
                 when {
                     resp.isSuccessful -> true
@@ -124,7 +132,9 @@ object VideoGen {
                 }
             }
         } catch (e: IOException) {
-            AppLogger.warning(TAG, "probe $model: ${e.message}")
+            // nanoMuse: an error can contain the model, endpoint or credentials.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                AppLogger.warning(TAG, "video probe failed") else AppLogger.warning(TAG, "probe $model: ${e.message}")
             null
         }
     }
@@ -167,23 +177,43 @@ object VideoGen {
             .build()
     }
 
+    // nanoMuse: video POSTs can be billed even when their response is lost. The
+    // one-shot body and client also avoid automatic redirects and authentication replay.
+    private val parallelTest: Boolean
+        get() = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+    private val singleSubmissionClient: OkHttpClient by lazy { http.singleUseImageClient() }
+    private fun submissionClient(): OkHttpClient = if (parallelTest) singleSubmissionClient else http
+
+    /** Re-check the caller's authorization and the process-wide cost guard before network I/O. */
+    private fun requireRequest(beforeRequest: () -> Unit) {
+        beforeRequest()
+        ai.tama.pricing.ModelCostGuard.requireAllowed()
+    }
+
     /** A clip that starts from [image]. Returns the MP4 bytes. */
     suspend fun imageToVideo(
         ep: Endpoint,
         image: Bitmap,
         prompt: String,
         seconds: Int = 4,
+        beforeRequest: () -> Unit = {},
+        onPossibleTaskSubmission: () -> Unit = {}, // nanoMuse: conservative marker before the task POST.
         onProgress: (Progress) -> Unit = {},
     ): ByteArray = withContext(Dispatchers.IO) {
-        onProgress(Progress.Uploading)
+        // nanoMuse: the agent may withdraw its route authorization during a multi-step task.
+        requireRequest(beforeRequest)
         val model = modelFor(ep.model, fromImage = true)
+        // nanoMuse: do not upload a picture for an unapproved sibling model.
+        ai.tama.media.MediaModelChangeGuard.requireSame(parallelTest, ep.model, model)
+        onProgress(Progress.Uploading)
         val png = pngBytes(fitFrame(image))
-        val ossUrl = uploadTemp(ep.copy(model = model), png, "first-frame.png", "image/png")
-        val task = createTask(ep, imageToVideoBody(model, ossUrl, prompt, seconds), ossInput = true)
+        val ossUrl = uploadTemp(ep.copy(model = model), png, "first-frame.png", "image/png", beforeRequest)
+        val task = createTask(ep, imageToVideoBody(model, ossUrl, prompt, seconds), ossInput = true,
+            beforeRequest = beforeRequest, onPossibleTaskSubmission = onPossibleTaskSubmission) // nanoMuse: keep the submission witness through the transport.
         onProgress(Progress.Submitted)
-        val url = poll(ep, task, onProgress)
+        val url = poll(ep, task, beforeRequest, onProgress)
         onProgress(Progress.Downloading)
-        download(url)
+        download(url, beforeRequest)
     }
 
     /** A clip from words alone. [ratio] is one of 16:9, 9:16, 1:1, 4:3, 3:4, 21:9. */
@@ -192,14 +222,22 @@ object VideoGen {
         prompt: String,
         seconds: Int = 4,
         ratio: String = "1:1",
+        beforeRequest: () -> Unit = {},
+        onPossibleTaskSubmission: () -> Unit = {}, // nanoMuse: conservative marker before the task POST.
         onProgress: (Progress) -> Unit = {},
     ): ByteArray = withContext(Dispatchers.IO) {
+        // nanoMuse: a video model's name or availability is not free-price evidence.
+        requireRequest(beforeRequest)
         val model = modelFor(ep.model, fromImage = false)
-        val task = createTask(ep, textToVideoBody(model, prompt, seconds, ratio), ossInput = false)
+        // nanoMuse: a sibling can be priced differently from the selected model.
+        ai.tama.media.MediaModelChangeGuard.requireSame(parallelTest, ep.model, model)
+        val body = textToVideoBody(model, prompt, seconds, ratio)
+        val task = createTask(ep, body, ossInput = false, beforeRequest = beforeRequest,
+            onPossibleTaskSubmission = onPossibleTaskSubmission) // nanoMuse: keep the submission witness through the transport.
         onProgress(Progress.Submitted)
-        val url = poll(ep, task, onProgress)
+        val url = poll(ep, task, beforeRequest, onProgress)
         onProgress(Progress.Downloading)
-        download(url)
+        download(url, beforeRequest)
     }
 
     /** The body of an image-to-video task, as the families want it; [model] is already the sibling for the job. */
@@ -249,13 +287,18 @@ object VideoGen {
     // ── the protocol ──────────────────────────────────────────────────────
 
     /** Model Studio's temporary storage: a signed OSS policy, then a multipart POST. Returns the `oss://` URL. */
-    internal fun uploadTemp(ep: Endpoint, bytes: ByteArray, name: String, mime: String): String {
+    internal fun uploadTemp(
+        ep: Endpoint, bytes: ByteArray, name: String, mime: String, beforeRequest: () -> Unit = {},
+    ): String {
         val policyReq = Request.Builder()
             .url("${ep.host}/api/v1/uploads?action=getPolicy&model=${ep.model}")
             .header("Authorization", "Bearer ${ep.apiKey}")
             .get()
             .build()
-        val policy = http.newCall(policyReq).execute().use { resp ->
+        // nanoMuse: the upload policy is also an external service request;
+        // the parallel app does not silently retry it or follow a redirect.
+        requireRequest(beforeRequest)
+        val policy = submissionClient().newCall(policyReq).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) throw VideoGenException("Upload policy failed (HTTP ${resp.code})" + apiMessage(text))
             JSONObject(text).optJSONObject("data") ?: throw VideoGenException("Upload policy: no data")
@@ -270,43 +313,66 @@ object VideoGen {
             .addFormDataPart("key", key)
             .addFormDataPart("file", name, bytes.toRequestBody(mime.toMediaType()))
             .build()
-        http.newCall(Request.Builder().url(policy.getString("upload_host")).post(form).build()).execute().use { resp ->
+        val uploadBody = if (parallelTest) form.singleUseImageBody() else form
+        val upload = Request.Builder().url(policy.getString("upload_host")).post(uploadBody).build()
+        // nanoMuse: recheck before uploading a reference after the policy request.
+        requireRequest(beforeRequest)
+        submissionClient().newCall(upload).execute().use { resp ->
             if (!resp.isSuccessful) throw VideoGenException("Upload failed (HTTP ${resp.code})")
         }
         return "oss://$key"
     }
 
-    private fun createTask(ep: Endpoint, body: JSONObject, ossInput: Boolean): String {
+    private fun createTask(
+        ep: Endpoint, body: JSONObject, ossInput: Boolean, beforeRequest: () -> Unit,
+        onPossibleTaskSubmission: () -> Unit,
+    ): String { // nanoMuse: report a possible submission even if its response is lost.
+        val requestBody = body.toString().toRequestBody("application/json".toMediaType())
         val req = Request.Builder()
             .url("${ep.host}/api/v1/services/aigc/video-generation/video-synthesis")
             .header("Authorization", "Bearer ${ep.apiKey}")
             .header("Content-Type", "application/json")
             .header("X-DashScope-Async", "enable")
             .apply { if (ossInput) header("X-DashScope-OssResourceResolve", "enable") }
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .post(if (parallelTest) requestBody.singleUseImageBody() else requestBody)
             .build()
-        return http.newCall(req).execute().use { resp ->
+        // nanoMuse: check again at the potentially billable video-task POST.
+        requireRequest(beforeRequest)
+        // nanoMuse: mark before I/O, not after a response that might never arrive.
+        onPossibleTaskSubmission()
+        return submissionClient().newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                AppLogger.warning(TAG, "create HTTP ${resp.code}: ${text.take(300)}")
+                // nanoMuse: providers can echo prompts or keys, even when the task failed.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    AppLogger.warning(TAG, "create HTTP ${resp.code}")
+                else AppLogger.warning(TAG, "create HTTP ${resp.code}: ${text.take(300)}")
                 throw VideoGenException("HTTP ${resp.code}" + apiMessage(text))
             }
             val json = runCatching { JSONObject(text) }.getOrElse { throw VideoGenException("Unreadable response") }
             json.optJSONObject("output")?.optString("task_id")?.takeIf { it.isNotBlank() }
-                ?: throw VideoGenException(json.optString("message").ifBlank { "No task id" })
+                ?: throw VideoGenException(if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    "No task id" else json.optString("message").ifBlank { "No task id" })
         }
     }
 
-    private suspend fun poll(ep: Endpoint, taskId: String, onProgress: (Progress) -> Unit): String {
+    private suspend fun poll(
+        ep: Endpoint, taskId: String, beforeRequest: () -> Unit, onProgress: (Progress) -> Unit,
+    ): String {
         val started = System.currentTimeMillis()
         while (true) {
+            // nanoMuse: revocation stops follow-up queries, but cannot cancel the task already submitted.
+            requireRequest(beforeRequest)
             delay(POLL_MS)
             val req = Request.Builder()
                 .url("${ep.host}/api/v1/tasks/$taskId")
                 .header("Authorization", "Bearer ${ep.apiKey}")
                 .get()
                 .build()
-            val json = http.newCall(req).execute().use { resp ->
+            // nanoMuse: check again after the polling delay and immediately before I/O;
+            // do not let the parallel client follow redirects around that check.
+            requireRequest(beforeRequest)
+            val json = submissionClient().newCall(req).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) throw VideoGenException("Task query failed (HTTP ${resp.code})" + apiMessage(text))
                 runCatching { JSONObject(text) }.getOrElse { throw VideoGenException("Unreadable task") }
@@ -322,14 +388,20 @@ object VideoGen {
         }
     }
 
-    private fun download(url: String): ByteArray =
-        http.newCall(Request.Builder().url(url).get().build()).execute().use { resp ->
+    private fun download(url: String, beforeRequest: () -> Unit): ByteArray {
+        // nanoMuse: even a result URL is an external request with unverified cost;
+        // a redirect or retry must not evade the parallel app's revalidation.
+        requireRequest(beforeRequest)
+        return submissionClient().newCall(Request.Builder().url(url).get().build()).execute().use { resp ->
             if (!resp.isSuccessful) throw VideoGenException("Video download failed (${resp.code})")
             resp.body?.bytes()?.takeIf { it.isNotEmpty() } ?: throw VideoGenException("Empty video")
         }
+    }
 
     /** The user-facing reason from a failed task; the activation message gets a plainer wording. */
     internal fun failureMessage(output: JSONObject): String {
+        // nanoMuse: the provider can echo arbitrary request data in this message.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") return "Video task failed"
         val code = output.optString("code")
         val message = output.optString("message")
         return when {
@@ -343,7 +415,8 @@ object VideoGen {
 
     /** DashScope puts the message at the top; the nanoMuse relay answers OpenAI-shaped (`error.message`, e.g. the clip allowance). */
     private fun apiMessage(text: String): String =
-        runCatching {
+        // nanoMuse: no untrusted provider text enters video failures in the parallel app.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") "" else runCatching {
             val json = JSONObject(text)
             json.optString("message").ifBlank { json.optJSONObject("error")?.optString("message").orEmpty() }
         }.getOrNull()?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""

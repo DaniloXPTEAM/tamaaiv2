@@ -999,22 +999,22 @@ class BrowserUseManager(
     private suspend fun nmGuard(input: BrowserActionInput): NmGate {
         if (input.action != BrowserAction.CLICK && input.action != BrowserAction.TYPE) return NmGate()
         val guard = io.github.nanomuse.guard.BrowserGuard
-        val described = runCatching {
+        // nanoMuse: fail closed if a click/type target cannot be inspected; propagate cancellation.
+        val inspection = guard.inspect(input.action == BrowserAction.TYPE) {
             evaluateJavascript(guard.describeJs(input.selector, input.coordinateX, input.coordinateY))
-        }.getOrNull() ?: return NmGate()
-        val target = io.github.nanomuse.guard.BrowserGuard.Target.parse(described) ?: return NmGate()
-        val verdict = if (input.action == BrowserAction.TYPE) guard.judgeType(target) else guard.judgeClick(target)
-        return when (verdict) {
+        }
+        val target = inspection.target
+        return when (val verdict = inspection.verdict) {
             is io.github.nanomuse.guard.BrowserGuard.Verdict.Proceed -> NmGate()
             is io.github.nanomuse.guard.BrowserGuard.Verdict.Refuse ->
-                NmGate(blocked = BrowserActionResult.error(verdict.text).copy(pageURL = target.url.ifBlank { prevUrlOrNull() }))
+                NmGate(blocked = BrowserActionResult.error(verdict.text).copy(pageURL = target?.url?.ifBlank { null } ?: prevUrlOrNull()))
             is io.github.nanomuse.guard.BrowserGuard.Verdict.Ask -> {
                 val outcome = io.github.nanomuse.guard.RiskGate.check(
                     sessionId = sessionIdProvider() ?: "",
                     kind = io.github.nanomuse.guard.GuardKind.BROWSER,
                     assessment = verdict.assessment,
                     preview = verdict.elementText,
-                    pageUrl = target.url.ifBlank { null },
+                    pageUrl = target?.url?.ifBlank { null },
                     elementText = verdict.elementText,
                 )
                 when (outcome) {

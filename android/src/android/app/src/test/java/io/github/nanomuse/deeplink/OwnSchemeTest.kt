@@ -6,32 +6,32 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/** The app's two link names: `minis` inside, `nanomuse` towards the system; nothing else is ours. */
+/** The app's two link names: `minis` inside, `tama` towards the system; nothing else is ours. */
 class OwnSchemeTest {
     /** The module directory is the working directory of a unit test; the project directory when run from the IDE. */
     private fun source(rel: String): File = listOf(rel, "app/$rel").map(::File).first { it.exists() }
 
     @Test
     fun `both names are ours, in any case, and nothing else is`() {
-        for (s in listOf("minis", "MINIS", "nanomuse", "NanoMuse")) assertTrue(s, OwnScheme.isOwn(s))
-        for (s in listOf(null, "", "http", "https", "minis-mcp", "nanomuse-mcp", "intent", "file")) {
+        for (s in listOf("minis", "MINIS", "tama", "TAMA")) assertTrue(s, OwnScheme.isOwn(s))
+        for (s in listOf(null, "", "http", "https", "minis-mcp", "tama-mcp", "intent", "file", "nanomuse")) {
             assertFalse(s ?: "null", OwnScheme.isOwn(s))
         }
     }
 
     @Test
     fun `the system's name reads as the app's own`() {
-        assertEquals("minis", OwnScheme.internal("nanomuse"))
-        assertEquals("minis", OwnScheme.internal("NANOMUSE"))
+        assertEquals("minis", OwnScheme.internal("tama"))
+        assertEquals("minis", OwnScheme.internal("TAMA"))
         assertEquals("minis", OwnScheme.internal("minis"))
         assertEquals("https", OwnScheme.internal("https"))
         assertEquals(null, OwnScheme.internal(null))
-        assertEquals("minis://settings/soul", OwnScheme.internalUrl("nanomuse://settings/soul"))
-        assertEquals("minis://session/abc/index.html?title=x", OwnScheme.internalUrl("NanoMuse://session/abc/index.html?title=x"))
+        assertEquals("minis://settings/soul", OwnScheme.internalUrl("tama://settings/soul"))
+        assertEquals("minis://session/abc/index.html?title=x", OwnScheme.internalUrl("TAMA://session/abc/index.html?title=x"))
         assertEquals("minis://attachments/a.png", OwnScheme.internalUrl("minis://attachments/a.png"))
         assertEquals("https://nanomuse.cn/", OwnScheme.internalUrl("https://nanomuse.cn/"))
         // the host part is not a scheme
-        assertEquals("https://nanomuse.cn/nanomuse://x", OwnScheme.internalUrl("https://nanomuse.cn/nanomuse://x"))
+        assertEquals("https://nanomuse.cn/tama://x", OwnScheme.internalUrl("https://nanomuse.cn/tama://x"))
     }
 
     @Test

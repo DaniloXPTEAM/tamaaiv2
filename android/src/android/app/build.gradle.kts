@@ -54,11 +54,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.nanomuse.app"
+        applicationId = "ai.tama.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 52
-        versionName = "1.0.9"
+        versionCode = 530
+        versionName = "1.0.9-tama.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -92,6 +92,15 @@ android {
     }
 
     buildTypes {
+        // nanoMuse: an explicitly requested, side-by-side phone test. Normal debug and
+        // release keep their original identity and data. This variant is debuggable and
+        // uses the debug signer, but it is a separate Android package.
+        create("tamaTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".tamav2test"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(
@@ -351,6 +360,10 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    // nanoMuse: exercise the Pet screen on the emulator, independently of sign-in.
+    androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     androidTestImplementation("junit:junit:4.13.2")
 }

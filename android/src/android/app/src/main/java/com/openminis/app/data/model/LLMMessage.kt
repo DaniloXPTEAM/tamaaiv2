@@ -29,6 +29,11 @@ data class LLMMessage(
      * reasoning_content once `thinking` is enabled.
      */
     val reasoningContent: String? = null,
+    /** Origin of an assistant message, when recorded; used only to protect cross-route replay. */
+    val originModelId: String? = null,
+    val originProviderInstanceId: String? = null,
+    /** Hashed endpoint/format at dispatch; old rows without one are not assumed compatible. */
+    val originRouteFingerprint: String? = null,
 ) {
     enum class Role(val value: String) {
         USER("user"),

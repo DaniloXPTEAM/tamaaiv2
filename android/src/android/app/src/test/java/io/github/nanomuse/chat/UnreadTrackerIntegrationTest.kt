@@ -61,6 +61,25 @@ class UnreadTrackerIntegrationTest {
         SessionActivityTracker.setInactive(failed)
         assertFalse(failed in SessionBadgeStore.unread.value)
     }
+    @Test fun anOverlappingNewRunIgnoresOldCompletionAndKeepsItsUnreadLifecycle() {
+        val id = "unread-tracker-overlap"
+        try {
+            val old = SessionActivityTracker.setActive(id)
+            SessionActivityTracker.markStreamError(id, old)
+            val current = SessionActivityTracker.setActive(id)
+            assertFalse(old == current)
+            SessionActivityTracker.markReplyIncomplete(id, old)
+            SessionActivityTracker.setInactive(id, old)
+            assertTrue(SessionActivityTracker.isCurrentRun(id, current))
+            assertFalse(id in SessionBadgeStore.unread.value)
+            SessionActivityTracker.setInactive(id, current)
+            assertTrue(id in SessionBadgeStore.unread.value)
+        } finally {
+            SessionActivityTracker.setInactive(id)
+            SessionBadgeStore.clear(id)
+        }
+    }
+
     @Test fun visibleCompletionLeavesTheExistingPauseBadgeIntact() {
         val id = "unread-tracker-visible"
         SessionBadgeStore.push(id, SessionBadgeStore.SessionBadgeState.PAUSED)

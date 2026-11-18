@@ -54,6 +54,18 @@ class ModelBlipTest {
         }
     }
 
+    @Test fun `a wrapped local cost refusal is not retried as a network failure`() = runTest {
+        var calls = 0
+        val blocked = IOException("wrapper", ai.tama.pricing.ModelCostGuard.Blocked())
+        assertFalse(ModelBlip.isBlip(blocked))
+        try {
+            ModelBlip.retrying<String>(delays = longArrayOf(1L, 1L)) { calls++; throw blocked }
+            fail("a locally blocked request must not be retried")
+        } catch (_: IOException) {
+            assertEquals(1, calls)
+        }
+    }
+
     @Test fun `a gateway's HTTP 0 is the upstream giving nothing`() {
         assertTrue(ModelBlip.saysUpstreamGaveNothing("上游 HTTP 0"))
         assertTrue(ModelBlip.saysUpstreamGaveNothing("upstream http 0"))

@@ -8,6 +8,7 @@ import com.openminis.app.provider.applyUserAgentOverride
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull // nanoMuse
 import okhttp3.Request
 import org.json.JSONObject
 
@@ -38,41 +39,52 @@ object GeminiModelsApi {
         cloudCodeFallback: Boolean = false,
         context: Context? = null,
         forceRefresh: Boolean = false,
+        baseURL: String? = null, // nanoMuse: list from the same custom Gemini endpoint used by chat
     ): List<LLMModel> = withContext(Dispatchers.IO) {
         if (cloudCodeFallback) return@withContext LLMModel.allGemini
 
-        val cacheKey = (if (isOAuth) "oauth|" else "key|") + apiKey
+        val cacheKey = (baseURL?.let { "base:$it|" } ?: "") + (if (isOAuth) "oauth|" else "key|") + apiKey
         if (context != null && !forceRefresh) {
             cache.load(context, cacheKey)?.let { return@withContext it }
         }
 
         val builder = Request.Builder()
-        if (isOAuth) {
+        // nanoMuse: a custom base is explicit. Never send its credential to
+        // Google as a fallback, and never substitute Google's built-in models.
+        if (baseURL != null) {
+            val base = baseURL.trimEnd('/').toHttpUrlOrNull() ?: return@withContext emptyList()
+            val url = base.newBuilder().addPathSegment("models").apply {
+                if (!isOAuth) addQueryParameter("key", apiKey)
+            }.build()
+            builder.url(url)
+            if (isOAuth) builder.header("Authorization", "Bearer $apiKey")
+        } else if (isOAuth) {
             builder.url("https://generativelanguage.googleapis.com/v1beta/models")
             builder.header("Authorization", "Bearer $apiKey")
         } else {
             builder.url("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
         }
+        val fallback = if (baseURL == null) LLMModel.allGemini else emptyList()
 
         // [T-android-default-ua] brand outbound /v1beta/models request.
         builder.applyUserAgentOverride(null)
         val response = client.newCall(builder.build()).execute()
-        val body = response.body?.string() ?: return@withContext LLMModel.allGemini
+        val body = response.body?.string() ?: return@withContext fallback
 
         if (!response.isSuccessful) {
             // 403 on OAuth almost always means the token lacks the
             // generative-language scope. Falling back to the built-in list
             // matches iOS and keeps Cloud Code Assist users functional.
-            if (isOAuth && response.code == 403) return@withContext LLMModel.allGemini
+            if (isOAuth && response.code == 403) return@withContext fallback
             if (context != null && (response.code == 401 || response.code == 403)) {
                 cache.invalidate(context, cacheKey)
             }
-            return@withContext LLMModel.allGemini
+            return@withContext fallback
         }
 
         val models = try {
             val json = JSONObject(body)
-            val arr = json.optJSONArray("models") ?: return@withContext LLMModel.allGemini
+            val arr = json.optJSONArray("models") ?: return@withContext fallback
             val result = mutableListOf<LLMModel>()
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
@@ -89,10 +101,10 @@ object GeminiModelsApi {
                     result.add(LLMModel(name, displayName, "Google"))
                 }
             }
-            if (result.isEmpty()) return@withContext LLMModel.allGemini
+            if (result.isEmpty()) return@withContext fallback
             ModelsDevApi.enrichModels(result)
         } catch (_: Exception) {
-            return@withContext LLMModel.allGemini
+            return@withContext fallback
         }
 
         if (context != null) cache.save(context, cacheKey, models)

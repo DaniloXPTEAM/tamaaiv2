@@ -110,18 +110,21 @@ check_prerequisites() {
 # Initialize Submodules
 # ============================================================================
 init_submodules() {
-    log_info "Initializing iSH submodules..."
-
-    cd "$ISH_DIR"
-
-    if [ ! -d "deps/libapps/.git" ] && [ ! -f "deps/libapps/.git" ]; then
-        git submodule update --init --recursive
-        log_success "Submodules initialized"
-    else
-        log_info "Submodules already initialized"
+    # nanoMuse: exported source trees do not have nested .git directories. Use
+    # the actual sources when present rather than trying to initialize them.
+    if [ -f "$ISH_DIR/deps/libapps/README.md" ] && [ -f "$ISH_DIR/deps/libarchive/COPYING" ]; then
+        log_info "iSH dependency sources already present"
+        return
     fi
-
-    cd "$SCRIPT_DIR"
+    if [ ! -f "$ISH_DIR/.gitmodules" ]; then
+        log_error "iSH dependency sources are missing. Restore the pinned libapps and libarchive sources before building."
+    fi
+    log_info "Initializing iSH submodules..."
+    (cd "$ISH_DIR" && git submodule update --init --recursive)
+    if [ ! -f "$ISH_DIR/deps/libapps/README.md" ] || [ ! -f "$ISH_DIR/deps/libarchive/COPYING" ]; then
+        log_error "iSH dependency sources are still missing after submodule initialization."
+    fi
+    log_success "Submodules initialized"
 }
 
 # ============================================================================

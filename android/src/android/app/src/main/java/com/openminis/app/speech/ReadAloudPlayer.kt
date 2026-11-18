@@ -144,7 +144,13 @@ class ReadAloudPlayer(context: Context) {
         worker = scope.launch {
             for (text in queue) {
                 runCatching { speakOne(text) }
-                    .onFailure { AppLogger.error(TAG, "utterance failed: $it") }
+                    .onFailure {
+                        // nanoMuse: provider and system errors can echo private text in the test app.
+                        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                            if (it is kotlinx.coroutines.CancellationException) throw it
+                            AppLogger.error(TAG, "utterance failed")
+                        } else AppLogger.error(TAG, "utterance failed: $it")
+                    }
                 // Queue drained → speech is over. Counter rather than
                 // Channel.isEmpty, which is experimental API.
                 if (pending.decrementAndGet() <= 0) {
@@ -329,6 +335,13 @@ class ReadAloudPlayer(context: Context) {
         }.getOrNull()
 
         if (entry != null) {
+            // nanoMuse: a system speech engine is not guaranteed to be offline, so a
+            // cost refusal must not silently fall back to another speech service.
+            if (!ai.tama.pricing.ModelCostGuard.permits()) {
+                notifyModelCostBlocked()
+                return
+            }
+            modelCostNotified = false
             val (instance, modelEntry) = entry
             // [T-android-tts-capsule] Surface the ACTUALLY-synthesizing model
             // on the capsule's chip (falls back to the system label below when
@@ -337,16 +350,32 @@ class ReadAloudPlayer(context: Context) {
                 VoiceOutputState.activeModelLabel.value =
                     modelEntry.model.displayName.ifBlank { modelEntry.model.id }
             }
+            var costBlocked = false
             val ok = runCatching { speakViaProvider(instance, modelEntry, text) }
                 .getOrElse {
-                    AppLogger.error(
-                        TAG,
-                        "provider TTS failed (model=${modelEntry.model.id} " +
-                            "vendor=${instance.providerType}), falling back to system engine: $it",
-                    )
+                    // nanoMuse: revocation during setup stops this utterance, not a fallback.
+                    if (ai.tama.pricing.ModelCostGuard.causedByBlock(it)) {
+                        costBlocked = true
+                        notifyModelCostBlocked()
+                    } else {
+                        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+                            it is kotlinx.coroutines.CancellationException) throw it
+                        AppLogger.error(
+                            TAG,
+                            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                                "provider TTS failed, falling back to system engine"
+                            else "provider TTS failed (model=${modelEntry.model.id} " +
+                                "vendor=${instance.providerType}), falling back to system engine: $it",
+                        )
+                    }
                     false
                 }
             if (ok) return
+            // nanoMuse: recheck if setup failed without reaching a provider transport.
+            if (costBlocked || !ai.tama.pricing.ModelCostGuard.permits()) {
+                notifyModelCostBlocked()
+                return
+            }
         }
         if (ownsCapsule()) VoiceOutputState.activeModelLabel.value = null // system engine
         if (!speakViaSystem(text)) {
@@ -357,6 +386,16 @@ class ReadAloudPlayer(context: Context) {
             // with no feedback at all — the reported OPPO symptom. Tell the user
             // once instead of swallowing it.
             notifySpeechUnavailable(providerConfigured = entry != null)
+        }
+    }
+
+    // nanoMuse: one notice per blocked run, rather than one toast per queued sentence.
+    private var modelCostNotified = false
+    private fun notifyModelCostBlocked() {
+        if (ownsCapsule()) VoiceOutputState.activeModelLabel.value = null
+        if (!modelCostNotified) {
+            modelCostNotified = true
+            Toast.makeText(appContext, appContext.getString(R.string.nm_model_cost_blocked), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -397,9 +436,14 @@ class ReadAloudPlayer(context: Context) {
             ?.providerRepository
             ?: return false.also { AppLogger.error(TAG, "provider TTS skipped: repository unavailable") }
         val apiKey = repo.loadApiKey(instance.id)
-            ?: return false.also { AppLogger.error(TAG, "provider TTS skipped: no API key for ${instance.id}") }
+            // nanoMuse: custom identifiers and endpoints can themselves contain credentials.
+            ?: return false.also { AppLogger.error(TAG,
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    "provider TTS skipped: no API key" else "provider TTS skipped: no API key for ${instance.id}") }
         val voice = VoiceProviderFactory.make(instance, apiKey)
-            ?: return false.also { AppLogger.error(TAG, "provider TTS skipped: no voice adapter for ${instance.providerType}/${instance.customBaseURL}") }
+            ?: return false.also { AppLogger.error(TAG,
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    "provider TTS skipped: no voice adapter" else "provider TTS skipped: no voice adapter for ${instance.providerType}/${instance.customBaseURL}") }
         if (!voice.supportsVoiceOutput) {
             AppLogger.error(TAG, "provider TTS skipped: ${voice.javaClass.simpleName} does not support output")
             return false
@@ -428,7 +472,9 @@ class ReadAloudPlayer(context: Context) {
             VoiceOutputState.isSynthesizing.value = false
         }
         if (data.isEmpty()) {
-            AppLogger.error(TAG, "provider TTS returned empty audio (model=${modelEntry.model.id})")
+            // nanoMuse: a model ID is user-controlled and need not be safe to log.
+            AppLogger.error(TAG, if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                "provider TTS returned empty audio" else "provider TTS returned empty audio (model=${modelEntry.model.id})")
             return false
         }
         playBytes(data)
@@ -487,11 +533,14 @@ class ReadAloudPlayer(context: Context) {
                     runCatching {
                         mp.playbackParams = mp.playbackParams.setSpeed(speed)
                     }.onFailure {
-                        AppLogger.error(TAG, "playback speed $speed rejected by this ROM's MediaPlayer, playing at 1×: $it")
+                        // nanoMuse: platform exceptions can include paths or other private data.
+                        AppLogger.error(TAG, if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                            "playback speed rejected, playing at 1×" else "playback speed $speed rejected by this ROM's MediaPlayer, playing at 1×: $it")
                     }
                 }
             }.onFailure {
-                AppLogger.error(TAG, "MediaPlayer setup failed: $it")
+                AppLogger.error(TAG, if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    "MediaPlayer setup failed" else "MediaPlayer setup failed: $it")
                 finish()
             }
             cont.invokeOnCancellation { releasePlayer() }

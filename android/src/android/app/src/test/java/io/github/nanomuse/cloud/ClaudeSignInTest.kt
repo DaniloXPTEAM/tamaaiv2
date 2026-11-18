@@ -20,6 +20,11 @@ import java.io.File
  * and the build does not offer the sign-in in the first place.
  */
 class ClaudeSignInTest {
+
+    // nanoMuse: these transport fixtures use MockWebServer, never a provider account.
+    @org.junit.Before fun allowFixtureRequests() { ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(true) }
+    @org.junit.After fun resetFixtureCostPermission() { ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(false) }
+
     private val shipped: List<CatalogueProvider> by lazy {
         val f = listOf("src/main/assets/nanomuse/providers.json", "app/src/main/assets/nanomuse/providers.json").map(::File).first { it.exists() }
         ProviderCatalogue.parse(f.readText())

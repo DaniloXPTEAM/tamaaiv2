@@ -47,6 +47,8 @@ object ProviderConfigMetaKeys {
     // [T-android-vision-group / GH#182] Vision Group pointer (per-device meta KV).
     const val VISION_GROUP_ID = "vision_group_id"
     const val JSON_SYNC_HASH = "json_sync_hash"
+    // nanoMuse: an additive per-provider preference in the existing KV table.
+    const val TAMA_FREE_IMPORT_PREFIX = "tama_free_import:"
 }
 
 /**
@@ -166,6 +168,10 @@ fun ProviderConfig.toSnapshot(
     }
 
     val metaRows = mutableListOf<ProviderConfigMetaEntity>()
+    // nanoMuse: preserve the choice through Room and JSON backups without a schema migration.
+    instances.filter { it.tamaImportFreeOnly }.forEach { inst ->
+        metaRows.add(ProviderConfigMetaEntity(ProviderConfigMetaKeys.TAMA_FREE_IMPORT_PREFIX + inst.id, "1"))
+    }
     defaultPrimaryGroupId?.let {
         metaRows.add(ProviderConfigMetaEntity(ProviderConfigMetaKeys.DEFAULT_PRIMARY_GROUP_ID, it))
     }
@@ -194,6 +200,8 @@ fun ProviderConfig.toSnapshot(
  * group/agentLoop refs in the mirror JSON also point at the composite shape.
  */
 fun ProviderConfigSnapshot.toProviderConfig(jsonForBlobs: Json): ProviderConfig {
+    // nanoMuse: old snapshots have no entry and read as the default, false.
+    val metaMap = this.meta.associate { it.key to it.value }
     val instances = this.instances.map { row ->
         ProviderInstance(
             id = row.id,
@@ -207,6 +215,7 @@ fun ProviderConfigSnapshot.toProviderConfig(jsonForBlobs: Json): ProviderConfig 
             customUserAgent = row.customUserAgent,
             useResponsesAPI = row.useResponsesAPI != 0,
             azureMode = row.azureMode != 0,
+            tamaImportFreeOnly = metaMap[ProviderConfigMetaKeys.TAMA_FREE_IMPORT_PREFIX + row.id] == "1", // nanoMuse
             // [GH#68] Safe parse: null (pre-migration rows) or an unknown
             // name from a future build falls back to auto / no cache rather
             // than throwing and wiping the whole provider load.
@@ -265,7 +274,6 @@ fun ProviderConfigSnapshot.toProviderConfig(jsonForBlobs: Json): ProviderConfig 
         .map { it.targetId }
         .toMutableList()
 
-    val metaMap = this.meta.associate { it.key to it.value }
     return ProviderConfig(
         instances = instances,
         modelEntries = entries,

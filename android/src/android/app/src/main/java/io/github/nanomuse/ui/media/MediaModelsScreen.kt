@@ -12,11 +12,13 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.PlayCircleOutline
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -102,17 +104,29 @@ fun MediaModelsScreen(
     val videoInst = videoInstances.firstOrNull { it.id == videoInstance }
     var videoModels by remember(videoInstance) { mutableStateOf(videoInst?.let { MediaModels.availableVideoModels(context, it) }) }
     var videoChecking by remember { mutableStateOf(false) }
+    // nanoMuse: probing can create billable tasks; no automatic batch runs in the
+    // parallel app, and a manual batch needs its own explicit confirmation.
+    val parallelTest = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+    var videoProbePending by remember { mutableStateOf<ProviderInstance?>(null) }
+    var videoCostBlocked by remember(videoInstance) { mutableStateOf(false) }
     fun checkVideoModels(inst: ProviderInstance) {
         if (videoChecking) return
         videoChecking = true
+        videoCostBlocked = false
         scope.launch {
-            MediaModels.checkVideoModels(context, inst)?.let { videoModels = it }
-            videoChecking = false
+            try {
+                MediaModels.checkVideoModels(context, inst)?.let { videoModels = it }
+            } catch (_: ai.tama.pricing.ModelCostGuard.Blocked) {
+                videoCostBlocked = true
+            } finally {
+                videoChecking = false
+            }
         }
     }
     LaunchedEffect(videoInstance) {
         val inst = videoInst ?: return@LaunchedEffect
-        if (videoModels == null || !MediaModels.videoCheckIsFresh(context, inst)) checkVideoModels(inst)
+        if (ai.tama.media.VideoProbeBatch.mayStartAutomatically(parallelTest) &&
+            (videoModels == null || !MediaModels.videoCheckIsFresh(context, inst))) checkVideoModels(inst)
     }
     var animate by remember { mutableStateOf(MediaModels.animateAvatar(context)) }
     val motion by AvatarMotion.progress.collectAsState()
@@ -222,29 +236,54 @@ fun MediaModelsScreen(
                 )
             }
             if (videoInst != null) {
+                // nanoMuse: never describe an untried probe as a provider that did not respond.
+                val choices = MediaModels.videoChoices(context, videoInst, videoModels)
+                if (parallelTest && choices.isNotEmpty()) {
+                    SettingsRow(
+                        title = stringResource(R.string.nm_video_probe_manual_hint),
+                        titleColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        showDivider = false,
+                        minHeight = 72.dp,
+                    )
+                }
                 ModelList(
                     header = stringResource(R.string.nm_media_models_on, videoInst.label),
                     // the key's answer plus the entries the person listed on the provider (#508)
-                    models = MediaModels.videoChoices(context, videoInst, videoModels),
+                    models = choices,
                     recommended = MediaModels.DEFAULT_VIDEO_MODEL,
                     selected = videoModel,
                     checking = videoChecking,
-                    empty = stringResource(R.string.nm_media_video_none_found),
+                    empty = stringResource(if (parallelTest && videoModels == null)
+                        R.string.nm_video_probe_manual_hint else R.string.nm_media_video_none_found),
+                    costBlocked = videoCostBlocked,
                     onSelect = { videoModel = it; MediaModels.saveVideo(context, videoInst.id, it) },
-                    onCheck = { checkVideoModels(videoInst) },
+                    onCheck = {
+                        if (!parallelTest) checkVideoModels(videoInst)
+                        else if (!ai.tama.pricing.ModelCostGuard.permits()) videoCostBlocked = true
+                        else videoProbePending = videoInst
+                    },
                 )
                 ModelField(
                     value = videoModel,
                     placeholder = MediaModels.DEFAULT_VIDEO_MODEL,
                     onChange = { videoModel = it; MediaModels.saveVideo(context, videoInst.id, it) },
                 )
-                SettingsSwitchRow(
-                    title = stringResource(R.string.nm_media_animate),
-                    subtitle = stringResource(R.string.nm_media_animate_sub, AvatarMotion.animated.size, AvatarMotion.SECONDS),
-                    checked = animate,
-                    onCheckedChange = { animate = it; MediaModels.setAnimateAvatar(context, it) },
-                    showDivider = face != null,
-                )
+                // nanoMuse: the stored switch cannot start background clips in the test package.
+                if (!parallelTest) {
+                    SettingsSwitchRow(
+                        title = stringResource(R.string.nm_media_animate),
+                        subtitle = stringResource(R.string.nm_media_animate_sub, AvatarMotion.animated.size, AvatarMotion.SECONDS),
+                        checked = animate,
+                        onCheckedChange = { animate = it; MediaModels.setAnimateAvatar(context, it) },
+                        showDivider = face != null,
+                    )
+                } else {
+                    SettingsRow(
+                        title = stringResource(R.string.nm_avatar_background_paused),
+                        showDivider = face != null,
+                        minHeight = 72.dp,
+                    )
+                }
                 if (face != null) {
                     val running = motion?.running == true
                     SettingsRow(
@@ -265,7 +304,7 @@ fun MediaModelsScreen(
                                 text = stringResource(if (running) R.string.nm_media_clips_running else if (clips.isEmpty()) R.string.nm_media_clips_make else R.string.nm_media_clips_redo),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = if (running) MaterialTheme.colorScheme.onSurfaceVariant else MuseTones.action,
+                                color = if (running) MaterialTheme.colorScheme.onSurfaceVariant else MuseTones.accent,
                             )
                         },
                     )
@@ -273,6 +312,24 @@ fun MediaModelsScreen(
             }
         }
         Spacer(Modifier.height(32.dp))
+    }
+    // nanoMuse: this confirmation is separate from the process-wide cost opt-in.
+    val pendingVideo = videoProbePending
+    if (pendingVideo != null) {
+        AlertDialog(
+            onDismissRequest = { videoProbePending = null },
+            title = { Text(stringResource(R.string.nm_auto_cost_confirm_title)) },
+            text = { Text(pendingVideo.label + "\n\n" + stringResource(R.string.nm_video_probe_confirm_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    videoProbePending = null
+                    videoInst?.takeIf { it.id == pendingVideo.id }?.let { checkVideoModels(it) }
+                }) { Text(stringResource(R.string.nm_media_recheck)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { videoProbePending = null }) { Text(stringResource(R.string.nm_auto_cost_cancel)) }
+            },
+        )
     }
 }
 
@@ -283,7 +340,7 @@ private fun StatusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, rea
         title = line,
         subtitle = if (ready) stringResource(R.string.nm_media_ready) else offLine,
         icon = icon,
-        iconColor = if (ready) MuseTones.action else MaterialTheme.colorScheme.onSurfaceVariant,
+        iconColor = if (ready) MuseTones.accent else MaterialTheme.colorScheme.onSurfaceVariant,
         minHeight = 72.dp,
     )
 }
@@ -300,6 +357,7 @@ private fun ModelList(
     selected: String,
     checking: Boolean,
     empty: String,
+    costBlocked: Boolean = false,
     onSelect: (String) -> Unit,
     onCheck: () -> Unit,
 ) {
@@ -320,7 +378,7 @@ private fun ModelList(
                     text = stringResource(R.string.nm_media_recommended),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
-                    color = MuseTones.action,
+                    color = MuseTones.accent,
                     modifier = Modifier.padding(end = 8.dp),
                 )
             }) else null,
@@ -331,7 +389,16 @@ private fun ModelList(
             title = stringResource(R.string.nm_media_checking),
             titleColor = MaterialTheme.colorScheme.onSurfaceVariant,
             showDivider = false,
-            trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.action) },
+            trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MuseTones.accent) },
+        )
+        costBlocked -> SettingsRow(
+            title = stringResource(R.string.nm_model_cost_blocked),
+            subtitle = stringResource(R.string.nm_media_recheck),
+            titleColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            onClick = onCheck,
+            showChevron = false,
+            showDivider = false,
+            minHeight = 72.dp,
         )
         models.isEmpty() -> SettingsRow(
             title = empty,
@@ -344,7 +411,7 @@ private fun ModelList(
         )
         else -> SettingsRow(
             title = stringResource(R.string.nm_media_recheck),
-            titleColor = MuseTones.action,
+            titleColor = MuseTones.accent,
             onClick = onCheck,
             showChevron = false,
             showDivider = false,
@@ -364,7 +431,7 @@ private fun ModelField(value: String, placeholder: String, onChange: (String) ->
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.action, unfocusedBorderColor = MuseTones.hairline),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MuseTones.accent, unfocusedBorderColor = MuseTones.hairline),
         )
     }
 }

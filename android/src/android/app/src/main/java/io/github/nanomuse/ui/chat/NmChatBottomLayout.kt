@@ -1,5 +1,7 @@
 package io.github.nanomuse.ui.chat
 
+import ai.tama.ui.chat.*
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -31,7 +33,8 @@ fun NmChatBottomLayout(
     content: @Composable BoxScope.(bottomChromeHeight: Dp) -> Unit,
     bottomContent: @Composable ColumnScope.() -> Unit,
 ) {
-    SubcomposeLayout(modifier) { constraints ->
+    // Debug-only passive probe distinguishes a missed row from a touch outside the chat pane.
+    SubcomposeLayout(modifier.tracePromptSizeRoot()) { constraints ->
         val width = constraints.maxWidth
         val height = constraints.maxHeight
         val inset = bottomInset.roundToPx().coerceIn(0, height)

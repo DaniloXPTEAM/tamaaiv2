@@ -1,5 +1,8 @@
 package io.github.nanomuse.guard
 
+import java.text.Normalizer
+import java.util.Locale
+
 /**
  * What a button's label says it does. Shared by the browser (the element's text) and the
  * phone screen (the label the screen model reports for the tap), so the same words stop for
@@ -23,6 +26,41 @@ object TapWords {
         RegexOption.IGNORE_CASE,
     )
 
+    // TAMA: compare Brazilian Portuguese labels after accent/case and separator normalization.
+    // This only adds conservative matches; the existing English and Chinese checks stay intact.
+    private val combiningMarks = Regex("\\p{M}+")
+    private val wordSeparators = Regex("[_-]+")
+    private fun normalized(text: String): String = Normalizer.normalize(text, Normalizer.Form.NFD)
+        .replace(combiningMarks, "")
+        .lowercase(Locale.ROOT)
+        .replace(wordSeparators, " ")
+
+    private val ptMoneyTap = Regex(
+        """\b(?:pagar|pague|comprar|compre|assinar|assine|doar|doe|transferir|transfira|reservar|reserve|recarregar|recarregue|adquirir)\b|""" +
+            """\b(?:confirmar|efetuar|realizar|finalizar|concluir)\s+(?:o\s+)?pagamento\b|""" +
+            """\b(?:confirmar|finalizar|concluir)\s+(?:a\s+)?compra\b|\brenovar\s+(?:a\s+)?assinatura\b|""" +
+            """\b(?:confirmar|fazer|finalizar|concluir)\s+(?:o\s+)?pedido\b""",
+    )
+    private val ptDestructiveTap = Regex(
+        """\b(?:excluir|exclua|apagar|apague|remover|remova|deletar|eliminar|elimine|reembolso)\b|""" +
+            """\bcancelar\s+(?:o\s+|a\s+)?(?:pedido|assinatura)\b|\blimpar\s+tudo\b""",
+    )
+    private val ptOutboundTap = Regex(
+        """\b(?:enviar|envie|publicar|publique|compartilhar|compartilhe|responder|responda|""" +
+            """comentar|comente|encaminhar|encaminhe|postar|submeter|submeta|mandar|mande)\b""",
+    )
+    private val ptSecretField = Regex(
+        """\b(?:senhas?|palavra(?:\s+de)?\s+passe)\b|""" +
+            """\bcodigos?\s*(?:de\s+)?(?:verificacao|seguranca|confirmacao|autenticacao|acesso|sms|temporario|unico)\b|""" +
+            """^\s*codigos?\s*[.:…]*\s*$|""" +
+            """\b(?:numero|n[oº°]?)\s+(?:(?:do|de)\s+)?cartao\b|\bcartao\s+(?:de\s+)?(?:credito|debito)\b|""" +
+            """\b(?:card|cc)\s+number\b""",
+    )
+    private val ptSendField = Regex(
+        """^\s*(?:(?:digite|escreva|adicione|envie|enviar)(?:\s+aqui)?\s+)?""" +
+            """(?:(?:um|uma|seu|sua|o|a|novo|nova)\s+)?(?:mensagem|comentario|resposta)\s*[:.…]*\s*$""",
+    )
+
     /** Apps where Enter in the text field sends the message. */
     private val chatApps = setOf(
         "com.tencent.mm", "com.tencent.mobileqq", "com.tencent.tim", "com.tencent.wework", "com.alibaba.android.rimet",
@@ -41,15 +79,19 @@ object TapWords {
      * field's own hint says message / send / reply. A search box's Enter is just a search.
      */
     fun entersSend(packageName: String?, fieldHint: String?): Boolean =
-        (packageName != null && packageName in chatApps) || (!fieldHint.isNullOrBlank() && sendField.containsMatchIn(fieldHint))
+        (packageName != null && packageName in chatApps) ||
+            (!fieldHint.isNullOrBlank() && (sendField.containsMatchIn(fieldHint) || ptSendField.matches(normalized(fieldHint))))
 
     /** The class a tap on [label] falls in, or null when it is an ordinary tap. */
-    fun classify(label: String): RiskClass? = when {
-        label.isBlank() -> null
-        moneyTap.containsMatchIn(label) -> RiskClass.MONEY
-        destructiveTap.containsMatchIn(label) -> RiskClass.DESTRUCTIVE
-        outboundTap.containsMatchIn(label) -> RiskClass.OUTBOUND
-        else -> null
+    fun classify(label: String): RiskClass? {
+        if (label.isBlank()) return null
+        val pt = normalized(label)
+        return when {
+            moneyTap.containsMatchIn(label) || ptMoneyTap.containsMatchIn(pt) -> RiskClass.MONEY
+            destructiveTap.containsMatchIn(label) || ptDestructiveTap.containsMatchIn(pt) -> RiskClass.DESTRUCTIVE
+            outboundTap.containsMatchIn(label) || ptOutboundTap.containsMatchIn(pt) -> RiskClass.OUTBOUND
+            else -> null
+        }
     }
 
     /**
@@ -80,5 +122,6 @@ object TapWords {
         else -> "taps “$short”: looks like it sends or posts"
     } + (where?.let { " on $it" } ?: "")
 
-    fun looksSecret(text: String): Boolean = secretField.containsMatchIn(text)
+    fun looksSecret(text: String): Boolean =
+        secretField.containsMatchIn(text) || ptSecretField.containsMatchIn(normalized(text))
 }

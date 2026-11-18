@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions // nanoMuse: numeric optional budget
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -58,6 +59,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType // nanoMuse: numeric optional budget
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -122,12 +124,22 @@ fun ProviderDetailScreen(
     // value immediately, independent of the async flush.
     var storedKey by remember(instanceId) { mutableStateOf(providerRepository.loadApiKey(instanceId) ?: "") }
     var isEditingKey by remember { mutableStateOf(false) }
+    var keySaveFailed by remember(instanceId) { mutableStateOf(false) } // nanoMuse
+    var endpointSaveFailed by remember(instanceId) { mutableStateOf(false) } // nanoMuse
     var editKeyValue by remember { mutableStateOf("") }
     var keyVisible by remember { mutableStateOf(false) }
 
     var isEnabled by remember { mutableStateOf(instance.isEnabled) }
-    var customBaseURL by remember { mutableStateOf(instance.customBaseURL ?: "") }
-    var appendV1Suffix by remember { mutableStateOf(instance.appendV1Suffix) }
+    // nanoMuse: show the selected API-key provider's default, not an empty placeholder.
+    val nmParallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+    var customBaseURL by remember(instanceId) {
+        mutableStateOf(instance.customBaseURL ?: if (nmParallel && instance.credentialType == com.openminis.app.data.model.ProviderCredential.apiKey)
+            ai.tama.providers.ProviderEndpoints.editableDefault(instance.providerType) else "")
+    }
+    var appendV1Suffix by remember(instanceId) {
+        mutableStateOf(if (nmParallel && instance.providerType == ProviderType.gemini && instance.customBaseURL.isNullOrBlank()) false
+            else instance.appendV1Suffix)
+    }
     // [T-provider-custom-user-agent] Per-provider UA override input. Only the
     // OpenAI-/Anthropic-compat custom-base section surfaces it (see gate below).
     var customUserAgent by remember { mutableStateOf(instance.customUserAgent ?: "") }
@@ -136,6 +148,16 @@ fun ProviderDetailScreen(
     var isRefreshing by remember { mutableStateOf(false) }
 
     val exportContext = androidx.compose.ui.platform.LocalContext.current
+    // nanoMuse: an observed free-plan limit is a starting point, not a promise about this account.
+    val nmObservedTpm = remember(instance.id, instance.customBaseURL, instance.providerType) {
+        io.github.nanomuse.cloud.ProviderCatalogue.match(
+            io.github.nanomuse.cloud.ProviderCatalogue.load(exportContext), instance,
+        )?.limits?.freeTpm
+    }
+    var nmTpmText by remember(instance.id, nmObservedTpm) {
+        mutableStateOf(ai.tama.router.ProviderBudgetStore.read(exportContext, instance.id, nmObservedTpm)?.toString().orEmpty())
+    }
+    var nmTpmInvalid by remember(instance.id) { mutableStateOf(false) }
 
     SettingsScaffold(
         title = instance.label,
@@ -170,6 +192,38 @@ fun ProviderDetailScreen(
                         }
                     }
                 }
+            }
+        }
+
+        // nanoMuse: blank means unknown, not a guaranteed unlimited provider quota.
+        SettingsSection(
+            header = stringResource(R.string.nm_router_tpm_title),
+            footer = stringResource(R.string.nm_router_tpm_help),
+        ) {
+            SettingsCardBlock {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SectionTextField(
+                        value = nmTpmText,
+                        onValueChange = { nmTpmText = it; nmTpmInvalid = false },
+                        modifier = Modifier.weight(1f),
+                        isError = nmTpmInvalid,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        fieldModifier = Modifier.bringIntoViewOnFocus(),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    MinisSmallButton(onClick = {
+                        when (val parsed = ai.tama.router.ProviderBudgetStore.parse(nmTpmText)) {
+                            is ai.tama.router.ProviderBudgetStore.Input.Valid -> {
+                                ai.tama.router.ProviderBudgetStore.save(exportContext, instance.id, parsed.value)
+                                nmTpmText = parsed.value?.toString().orEmpty()
+                                nmTpmInvalid = false
+                            }
+                            ai.tama.router.ProviderBudgetStore.Input.Invalid -> nmTpmInvalid = true
+                        }
+                    }) { Text(stringResource(R.string.common_save)) }
+                }
+                if (nmTpmInvalid) Text(stringResource(R.string.nm_router_tpm_invalid), color = MaterialTheme.colorScheme.error)
             }
         }
 
@@ -210,20 +264,41 @@ fun ProviderDetailScreen(
                         },
                         onSave = {
                             val nmFirstKey = storedKey.isBlank() && editKeyValue.isNotBlank() // nanoMuse
-                            providerRepository.saveApiKey(instanceId, editKeyValue)
-                            // [T-android-provider-apikey-save-stale] Reflect the
-                            // just-saved value in UI state immediately rather than
-                            // re-reading the async-written prefs on recomposition.
-                            storedKey = editKeyValue
-                            AppLogger.info(TAG, "Saved API key for ${instance.id}")
-                            isEditingKey = false
-                            editKeyValue = ""
-                            keyVisible = false
-                            if (nmFirstKey) onKeyAdded(instanceId) // nanoMuse
+                            val saved = if (nmParallel) providerRepository.saveApiKeyChecked(instanceId, editKeyValue)
+                                else { providerRepository.saveApiKey(instanceId, editKeyValue); true }
+                            keySaveFailed = !saved
+                            if (saved) {
+                                // [T-android-provider-apikey-save-stale] Reflect the
+                                // just-saved value without re-reading async prefs.
+                                storedKey = editKeyValue
+                                AppLogger.info(TAG, "Saved API key for ${instance.id}")
+                                isEditingKey = false
+                                editKeyValue = ""
+                                keyVisible = false
+                                if (nmParallel && instance.tamaImportFreeOnly) providerRepository.refreshModelsInBackground(instance) // nanoMuse
+                                if (nmFirstKey) onKeyAdded(instanceId) // nanoMuse
+                            }
                         },
                     )
+                    if (keySaveFailed) Text(stringResource(R.string.nm_provider_save_failed), // nanoMuse
+                        color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
                 }
             }
+        }
+
+        // nanoMuse: changing this preference is additive and never deletes
+        // existing entries or group members. Cloud has its own account menu.
+        if (nmParallel && io.github.nanomuse.cloud.NanoMuseCloud.instance(exportContext)?.id != instanceId) {
+            val statuses by providerRepository.nmFreeImportStatus.collectAsState()
+            ai.tama.providers.FreeModelImportSection(
+                type = instance.providerType,
+                checked = instance.tamaImportFreeOnly,
+                onCheckedChange = { enabled ->
+                    val saved = providerRepository.setTamaImportFreeOnly(instanceId, enabled)
+                    if (saved && enabled) providerRepository.refreshModelsInBackground(instance)
+                },
+                status = statuses[instanceId],
+            )
         }
 
         // Manual Bearer Token (OAuth providers only — proxy override)
@@ -246,7 +321,12 @@ fun ProviderDetailScreen(
         if (instance.providerType != ProviderType.openRouter) {
             // nanoMuse: plain http:// only for addresses on the local network (io.github.nanomuse.net.LanOnly)
             val baseUrlProblem = io.github.nanomuse.net.LanOnly.refusedHost(customBaseURL)?.let { stringResource(R.string.nm_lan_only_https, it) }
-            SettingsSection(header = stringResource(R.string.provider_detail_custom_api_base), footer = baseUrlProblem) {
+            val endpointFooter = if (nmParallel && !isOAuthProvider) {
+                val effective = ai.tama.providers.ProviderEndpoints.effective(instance.providerType, customBaseURL, appendV1Suffix).orEmpty()
+                stringResource(R.string.nm_endpoint_auto_help) + "\n" + stringResource(R.string.nm_endpoint_effective, effective)
+            } else null
+            val saveError = if (endpointSaveFailed) stringResource(R.string.nm_provider_save_failed) else null // nanoMuse
+            SettingsSection(header = stringResource(R.string.provider_detail_custom_api_base), footer = baseUrlProblem ?: saveError ?: endpointFooter) {
                 // URL input row — tighter vertical padding to match T226's
                 // SectionTextField height shrink (~-20%).
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -327,18 +407,19 @@ fun ProviderDetailScreen(
                 MinisSmallTextButton(
                     enabled = baseUrlProblem == null, // nanoMuse: LanOnly
                     onClick = {
-                        providerRepository.updateInstance(
-                            instance.copy(
-                                customBaseURL = customBaseURL.ifBlank { null },
-                                appendV1Suffix = appendV1Suffix,
-                                // [T-provider-custom-user-agent] Blank → null →
-                                // default UA. Only the gated providers can edit
-                                // this; for others customUserAgent equals the
-                                // unchanged instance value, so the copy is inert.
-                                customUserAgent = customUserAgent.ifBlank { null },
-                            )
+                        val updated = instance.copy(
+                            customBaseURL = if (nmParallel && !isOAuthProvider)
+                                ai.tama.providers.ProviderEndpoints.storageBase(instance.providerType, customBaseURL, appendV1Suffix)
+                            else customBaseURL.ifBlank { null }, // nanoMuse
+                            appendV1Suffix = appendV1Suffix,
+                            // [T-provider-custom-user-agent] Blank → null → default UA.
+                            customUserAgent = customUserAgent.ifBlank { null },
                         )
-                        AppLogger.info(
+                        val saved = if (nmParallel) providerRepository.updateInstanceChecked(updated)
+                            else { providerRepository.updateInstance(updated); true }
+                        endpointSaveFailed = !saved
+                        // nanoMuse: a custom URL or user agent may contain private data.
+                        if (nmParallel && saved) AppLogger.info(TAG, "Saved endpoint settings") else if (!nmParallel) AppLogger.info(
                             TAG,
                             "Saved base URL for ${instance.id}: " +
                                 "url='${customBaseURL.ifBlank { "<default>" }}', appendV1=$appendV1Suffix, " +
@@ -350,6 +431,9 @@ fun ProviderDetailScreen(
                     Text(stringResource(R.string.provider_detail_save_url_settings))
                 }
             }
+        } else if (nmParallel) {
+            // nanoMuse: OpenRouter's transport uses this fixed endpoint.
+            ai.tama.providers.FixedEndpointSection("https://openrouter.ai/api/v1")
         }
 
         // ─── API Format (OpenAI API-key only) ───────────────────────
@@ -563,9 +647,11 @@ fun ProviderDetailScreen(
                 } else {
                     {
                         isRefreshing = true
+                        // nanoMuse: keep the parallel refresh alive after leaving this screen.
+                        val background = if (nmParallel) providerRepository.refreshModelsInBackground(instance) else null
                         scope.launch {
                             try {
-                                providerRepository.refreshModels(instance)
+                                if (background != null) background.join() else providerRepository.refreshModels(instance)
                                 AppLogger.info(TAG, "Refreshed models for ${instance.id}")
                             } finally {
                                 isRefreshing = false
@@ -894,8 +980,15 @@ private fun OAuthCredentialBlock(
                 // and validAccessToken() silently re-minted an access token —
                 // the user stayed effectively logged in. Then flip local state so
                 // the UI swaps to the Sign In button immediately.
-                com.openminis.app.auth.OAuthManager.forInstance(context, instance)?.logout()
-                providerRepository.deleteApiKey(instance.id)
+                // nanoMuse: the parallel sign-out must not delete a newer login
+                // between clearing its token bundle and its API-key mirror.
+                val manager = com.openminis.app.auth.OAuthManager.forInstance(context, instance)
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" && manager != null) {
+                    manager.nmLogoutWithMirror(providerRepository)
+                } else {
+                    manager?.logout()
+                    providerRepository.deleteApiKey(instance.id)
+                }
                 displayedKey = ""
                 AppLogger.info(TAG, "OAuth signed out for ${instance.id} (tokens + apiKey cleared)")
             },
@@ -941,11 +1034,19 @@ private fun OAuthCredentialBlock(
                         // reflect it locally so the UI flips to the connected state
                         // without needing the parent to recompose.
                         if (token != null) {
-                            displayedKey = providerRepository.loadApiKey(instance.id) ?: token
+                            // nanoMuse: a sign-out/new login may have followed completion;
+                            // never display the returned older token as a fallback.
+                            val liveKey = providerRepository.loadApiKey(instance.id)
+                            displayedKey = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                                liveKey.orEmpty() else liveKey ?: token
                             AppLogger.info(TAG, "OAuth signed in for ${instance.id}")
                         }
                     } catch (e: Exception) {
-                        AppLogger.warning(TAG, "OAuth sign-in failed for ${instance.id}: ${e.message}")
+                        // nanoMuse: preserve cancellation and omit untrusted exception text.
+                        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            AppLogger.warning(TAG, "OAuth sign-in failed")
+                        } else AppLogger.warning(TAG, "OAuth sign-in failed for ${instance.id}: ${e.message}")
                     } finally {
                         isAuthenticating = false
                         kimiDeviceAuth = null

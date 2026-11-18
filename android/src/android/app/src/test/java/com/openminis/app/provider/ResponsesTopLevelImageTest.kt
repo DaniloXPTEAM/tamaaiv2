@@ -31,6 +31,11 @@ import org.junit.Test
  */
 class ResponsesTopLevelImageTest {
 
+    // nanoMuse: these transport fixtures use MockWebServer, never a provider account.
+    @org.junit.Before fun allowFixtureRequests() { ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(true) }
+    @org.junit.After fun resetFixtureCostPermission() { ai.tama.pricing.ModelCostGuard.setAllowedForCurrentProcess(false) }
+
+
     private lateinit var server: MockWebServer
 
     /** 1x1 PNG-ish bytes; content is irrelevant, presence on the wire is not. */

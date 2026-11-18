@@ -6,14 +6,18 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -58,6 +62,7 @@ fun MuseHeader(
     statusColor: Color = ChatColors.secondaryText,
     onAvatarClick: (() -> Unit)? = null,
     onNameClick: (() -> Unit)? = null,
+    onPetClick: (() -> Unit)? = null,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -95,6 +100,7 @@ fun MuseHeader(
                     statusLine = statusLine,
                     statusColor = statusColor,
                     onClick = onNameClick ?: onAvatarClick,
+                    onPetClick = onPetClick,
                 )
             }
         }
@@ -113,51 +119,66 @@ val PILL_OVERLAP: Dp = 10.dp
 /** Height reserved under the face for the pill (name + status line). */
 val PILL_AREA_HEIGHT: Dp = 44.dp
 
-/**
- * Muse's name tag: a small white tag, the name in regular weight (Muse's is 14sp on a 22dp tag,
- * not bold), a faint shadow. What the agent is doing right now ("Generating options",
- * "正在等待批准") is a second, smaller grey line inside the same tag.
- */
+/** A warm name tag shared by the chat and tabs, with a separate shortcut to the Pet. */
 @Composable
 fun MuseNamePill(
     name: String,
     statusLine: String? = null,
     statusColor: Color = ChatColors.secondaryText,
     onClick: (() -> Unit)? = null,
+    onPetClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(14.dp)
-    val base = modifier
-        .shadow(2.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.16f), spotColor = Color.Black.copy(alpha = 0.16f))
-        .clip(shape)
-        .background(MuseTones.surface)
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = (if (onClick != null) base.clickable(onClick = onClick) else base)
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .shadow(2.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.12f), spotColor = Color.Black.copy(alpha = 0.12f))
+            .clip(shape)
+            .background(MuseTones.surface)
+            .border(1.dp, MuseTones.hairline, shape),
     ) {
-        Text(
-            text = name,
-            fontSize = 14.sp,
-            lineHeight = 18.sp,
-            fontWeight = FontWeight.Normal,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
-        )
-        if (statusLine != null) {
-            Spacer(Modifier.height(2.dp))
+        val nameModifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = nameModifier.widthIn(max = 160.dp)
+                .padding(start = 12.dp, end = if (onPetClick == null) 12.dp else 4.dp, top = 4.dp, bottom = 4.dp),
+        ) {
             Text(
-                text = statusLine,
-                fontSize = 11.5.sp,
-                lineHeight = 14.sp,
-                fontWeight = FontWeight.Normal,
-                color = statusColor,
+                text = name,
+                fontSize = 14.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
             )
+            if (statusLine != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = statusLine,
+                    fontSize = 11.5.sp,
+                    lineHeight = 14.sp,
+                    color = statusColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                )
+            }
+        }
+        if (onPetClick != null) {
+            Box(
+                modifier = Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onPetClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Pets,
+                    contentDescription = stringResource(R.string.tama_pet_title),
+                    tint = MuseTones.accent,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
         }
     }
 }

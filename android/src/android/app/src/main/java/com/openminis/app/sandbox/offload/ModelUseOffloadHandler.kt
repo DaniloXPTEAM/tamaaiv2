@@ -36,6 +36,21 @@ class ModelUseOffloadHandler(
     private val context: Context,
     private val providerRepository: ProviderRepository,
 ) : NativeOffloadHandler {
+    // nanoMuse: exception text, custom paths and model ids may contain credentials
+    // or echoed prompts. Keep normal-package behavior unchanged.
+    private val nmParallel: Boolean
+        get() = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+
+    private fun nmFailureDetail(error: Throwable, fallback: String): String {
+        if (nmParallel && error is kotlinx.coroutines.CancellationException) throw error
+        return ai.tama.net.ProviderLogPrivacy.failureDetail(nmParallel, error.message, fallback)
+    }
+
+    // nanoMuse: automatic or unreadable mode cannot authorize this escape hatch.
+    // The witness rejects mode/cost-policy ABA changes by cooperating writers.
+    private fun nmManualModeWitness(): () -> Unit = ai.tama.net.DirectModelUseGuard.observeManual(nmParallel) {
+        ai.tama.router.AutoModelStore.directModelMode(context)
+    }
 
     override fun handle(request: NativeOffloadRequest): NativeOffloadResult {
         val args = OffloadArgs(request.argv.drop(1))
@@ -47,18 +62,41 @@ class ModelUseOffloadHandler(
             when (val sub = args.positional[0]) {
                 "list" -> cmdList(args)
                 "search" -> cmdSearch(args)
-                "run" -> cmdRun(args, request)
+                // nanoMuse: this escape hatch bypasses automatic route permissions.
+                "run" -> guardedRun(args, request)
                 else -> NativeOffloadResult(2, "minis-model-use: unknown subcommand '$sub'\n$HELP")
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "uncaught: ${e.message}", e)
+            if (nmParallel && e is kotlinx.coroutines.CancellationException) throw e
+            if (e is ai.tama.net.DirectModelUseGuard.Blocked) return automaticRunBlocked()
+            if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) return modelCostBlocked()
+            val detail = nmFailureDetail(e, "unknown")
+            if (nmParallel) Log.w(TAG, "Model-use request failed") else Log.w(TAG, "uncaught: ${e.message}", e)
             NativeOffloadResult(
                 1,
                 JSONObject().put("error", "model_use_failed")
-                    .put("message", e.message ?: "unknown").toString() + "\n",
+                    .put("message", detail).toString() + "\n",
             )
         }
     }
+
+    private fun automaticRunBlocked(): NativeOffloadResult = NativeOffloadResult(
+        3, JSONObject().put("error", "automatic_direct_model_use_unavailable")
+            .put("message", context.getString(com.openminis.app.R.string.nm_auto_model_use_blocked))
+            .put("settings", "minis://settings/models")
+            // nanoMuse: a recheck may happen after an image POST, before its download.
+            .put("tell_user", "Explain the message and link [Models](minis://settings/models). Requests already sent may have been charged; do not retry this command automatically.")
+            .toString(2) + "\n",
+    )
+
+    // nanoMuse: a blocked local cost check never includes endpoint, credentials or input.
+    private fun modelCostBlocked(): NativeOffloadResult = NativeOffloadResult(
+        3, JSONObject().put("error", "model_cost_unverified")
+            .put("message", context.getString(com.openminis.app.R.string.nm_model_cost_blocked))
+            .put("settings", "minis://settings/models")
+            .put("tell_user", "Explain the message. Requests already sent may have been charged; do not retry this request automatically.")
+            .toString(2) + "\n",
+    )
 
     private fun cmdList(args: OffloadArgs): NativeOffloadResult {
         val providerFilter = args.get("provider")?.lowercase()
@@ -112,9 +150,41 @@ class ModelUseOffloadHandler(
         return NativeOffloadResult(0, body.toString(2) + "\n")
     }
 
-    private fun cmdRun(args: OffloadArgs, request: NativeOffloadRequest): NativeOffloadResult {
+    // nanoMuse: a socket worker may start after Stop. Only a host-created peer
+    // can tie this operation to the stopped chat; unmanaged terminals have none.
+    private fun guardedRun(args: OffloadArgs, request: NativeOffloadRequest): NativeOffloadResult {
+        val attempt = if (nmParallel) request.executionPeer?.let {
+            ai.tama.net.ModelUseAttemptTracker.begin(request.sessionId, it)
+        } else null
+        try {
+            attempt?.requireActive()
+            return cmdRun(args, request, nmManualModeWitness(), attempt)
+        } finally {
+            attempt?.close()
+        }
+    }
+
+    private fun cmdRun(
+        args: OffloadArgs, request: NativeOffloadRequest, requireManualMode: () -> Unit,
+        attempt: ai.tama.net.ModelUseAttemptTracker.Attempt?,
+    ): NativeOffloadResult {
         val modelArg = args.get("model")
             ?: return NativeOffloadResult(2, "--model is required. Usage: minis-model-use run --model <id_or_name>\n")
+        // nanoMuse: reject locally before resolving entries or reading credentials.
+        // Re-accepting cost after revocation cannot revive this old operation.
+        val costObservation = ai.tama.pricing.ModelCostGuard.observe()
+        if (!costObservation.isCurrent()) return modelCostBlocked()
+        val requireCurrentDispatch: () -> Unit = {
+            attempt?.requireActive()
+            requireManualMode()
+            if (!costObservation.isCurrent()) throw ai.tama.pricing.ModelCostGuard.Blocked()
+        }
+        // Record the possibility immediately before each protected network
+        // request. The marker is conservative and is not atomic with I/O.
+        val beforeNetworkDispatch: () -> Unit = {
+            requireCurrentDispatch()
+            attempt?.markPossibleSubmission()
+        }
 
         // Optional provider scoping — disambiguates when multiple instances expose the same model_id.
         val providerFilter = args.get("provider")
@@ -203,7 +273,7 @@ class ModelUseOffloadHandler(
             return NativeOffloadResult(
                 2,
                 JSONObject().put("error", "image_input_error")
-                    .put("message", e.message ?: "image input could not be resolved")
+                    .put("message", nmFailureDetail(e, "image input could not be resolved"))
                     .toString() + "\n",
             )
         } catch (e: AudioInputError) {
@@ -211,7 +281,7 @@ class ModelUseOffloadHandler(
             return NativeOffloadResult(
                 2,
                 JSONObject().put("error", "audio_input_error")
-                    .put("message", e.message ?: "audio input could not be parsed")
+                    .put("message", nmFailureDetail(e, "audio input could not be parsed"))
                     .toString() + "\n",
             )
         }
@@ -260,6 +330,10 @@ class ModelUseOffloadHandler(
         val maxTokens = args.get("max-tokens")?.toIntOrNull() ?: 4096
         val temperature = args.get("temperature")?.toDoubleOrNull()
 
+        // nanoMuse: recheck both witnesses after reading input; the normal package
+        // does not read the new mode setting or change its dispatch behavior.
+        requireCurrentDispatch()
+
         // Build provider + call — runBlocking is acceptable here: this handler
         // is invoked off the main thread by the offload server.
         val apiKey = providerRepository.loadApiKey(entry.providerInstanceId)
@@ -271,7 +345,31 @@ class ModelUseOffloadHandler(
             )
         val instance = providerRepository.instance(entry.providerInstanceId)
             ?: return NativeOffloadResult(2, "minis-model-use run: provider instance not found\n")
-        val provider = ProviderFactory.create(instance, apiKey, entry.model, context)
+        // nanoMuse: use the concrete, per-call provider in the test package. Recording
+        // wraps it and would otherwise hide the transport controls on this escape hatch.
+        val provider = ProviderFactory.create(instance, apiKey, entry.model, context, record = !nmParallel)
+        if (nmParallel) {
+            when (provider) {
+                is com.openminis.app.provider.openai.OpenAIProvider -> provider.apply {
+                    singleUseDirectRequest = true
+                    this.beforeDirectRequest = beforeNetworkDispatch
+                }
+                is com.openminis.app.provider.gemini.GeminiProvider -> provider.apply {
+                    singleUseImageRequest = true
+                    this.beforeDirectRequest = beforeNetworkDispatch
+                }
+                // nanoMuse: Anthropic-compatible custom endpoints may also be billable.
+                is com.openminis.app.provider.anthropic.AnthropicProvider -> provider.apply {
+                    singleUseDirectRequest = true
+                    this.beforeDirectRequest = beforeNetworkDispatch
+                }
+                // A future factory/provider must not silently skip these controls.
+                else -> return NativeOffloadResult(3, JSONObject()
+                    .put("error", "model_use_transport_unprotected")
+                    .put("message", "Direct use of this provider is unavailable in the test app.")
+                    .toString() + "\n")
+            }
+        }
 
         // [GH#67] input_audio serialization is implemented for the OpenAI
         // chat/completions + responses paths only. Other provider types would
@@ -297,6 +395,8 @@ class ModelUseOffloadHandler(
         // all. Only OpenAI-compatible providers; others error clearly. Mirrors
         // iOS ModelUseOffloadBridge passthrough branch.
         val ptSpec = parsePassthroughEnvelope(inputText)
+        // nanoMuse: avoid even beginning a direct route after a mode or cost change.
+        requireCurrentDispatch()
         if (ptSpec.active) {
             val openAI = provider as? com.openminis.app.provider.openai.OpenAIProvider
                 ?: return NativeOffloadResult(
@@ -318,6 +418,7 @@ class ModelUseOffloadHandler(
                 maxTokens = maxTokens,
                 outputPath = outputPath,
                 sessionId = request.sessionId,
+                requireCurrentDispatch = requireCurrentDispatch,
             )
         }
 
@@ -339,7 +440,7 @@ class ModelUseOffloadHandler(
             if (chatExtra.isNotEmpty()) {
                 openAI.chatExtraBody = chatExtra
                 appliedExtras.put("extra_body_keys", JSONArray(chatExtra.keys.sorted()))
-                Log.i(TAG, "[ModelUseRoute] CHAT-PASSTHROUGH extra_body keys=[${chatExtra.keys.sorted().joinToString(",")}]")
+                if (!nmParallel) Log.i(TAG, "[ModelUseRoute] CHAT-PASSTHROUGH extra_body keys=[${chatExtra.keys.sorted().joinToString(",")}]")
             }
             val chatHdrs = parseExtraHeaders(inputText, callWarnings)
             if (chatHdrs.isNotEmpty()) {
@@ -349,7 +450,7 @@ class ModelUseOffloadHandler(
             parseCustomEndpointPath(inputText)?.let { customPath ->
                 openAI.absoluteEndpointOverride = customPath
                 appliedExtras.put("custom_endpoint", customPath)
-                Log.i(TAG, "[ModelUseRoute] CUSTOM-ENDPOINT absolute path=$customPath")
+                if (!nmParallel) Log.i(TAG, "[ModelUseRoute] CUSTOM-ENDPOINT absolute path=$customPath")
             }
         }
 
@@ -373,13 +474,19 @@ class ModelUseOffloadHandler(
             outputExt = outputExt,
             sessionId = request.sessionId,
             callWarnings = callWarnings,
+            requireCurrentDispatch = requireCurrentDispatch,
         )
         if (imageRouted != null) return attachCallFeedback(imageRouted, callWarnings, appliedExtras)
 
+        // nanoMuse: custom model metadata can omit image output. Do not repeat any
+        // direct ModelUse call automatically in the parallel package; other providers
+        // may still retry internally and this is not a spending limit.
         val response = try {
             runBlocking {
-                // nanoMuse: a transport blip is tried again, as the chat and iOS's bridge do (#640)
-                io.github.nanomuse.net.ModelBlip.retrying { attempt ->
+                io.github.nanomuse.net.ModelBlip.retrying(
+                    delays = if (nmParallel) longArrayOf() else io.github.nanomuse.net.ModelBlip.DELAYS_MS,
+                ) { attempt ->
+                    requireCurrentDispatch()
                     if (attempt > 0) Log.w(TAG, "sendMessage for ${entry.model.id}: attempt ${attempt + 1} after a transient failure")
                     provider.sendMessage(
                         messages = messages,
@@ -391,16 +498,26 @@ class ModelUseOffloadHandler(
                 }
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "sendMessage failed for ${entry.model.id}: ${e.message}", e)
-            val base = e.message ?: "model_use_failed"
-            val hint = imageParamHint(entry)
+            if (nmParallel && e is kotlinx.coroutines.CancellationException) throw e
+            if (e is ai.tama.net.DirectModelUseGuard.Blocked) return automaticRunBlocked()
+            if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) return modelCostBlocked()
+            val base = nmFailureDetail(e, "model_use_failed")
+            if (nmParallel) Log.w(TAG, "Model request failed")
+            else Log.w(TAG, "sendMessage failed for ${entry.model.id}: ${e.message}", e)
+            val hint = if (nmParallel) "" else imageParamHint(entry)
             val combined = if (hint.isEmpty()) base else "$base\n\n$hint"
             return NativeOffloadResult(
                 1,
                 JSONObject().put("error", "model_use_failed")
-                    .put("message", combined).toString() + "\n",
+                    .put("message", combined)
+                    .apply { if (nmParallel) put("tell_user", "The request may have been charged. Do not retry or switch models without a new user request.") }
+                    .toString() + "\n",
             )
         }
+
+        // nanoMuse: Stop or a changed authorization after the response must not
+        // knowingly write a stale result. This check is not atomic with the write.
+        if (nmParallel) requireCurrentDispatch()
 
         // Write output — media-first if the model returned image/audio/video and
         // --output has a media extension, else fall back to text. Mirrors iOS
@@ -433,7 +550,7 @@ class ModelUseOffloadHandler(
                     put("size", firstMedia.data.size)
                 })
             } else {
-                Log.d(
+                if (!nmParallel) Log.d(
                     "ModelUseImage",
                     "handler text fallback: path=$outputPath textLen=${response.text.length} " +
                         "mediaAttachments=${response.mediaAttachments.size} outputIsMedia=$outputIsMedia",
@@ -890,6 +1007,7 @@ class ModelUseOffloadHandler(
         maxTokens: Int,
         outputPath: String?,
         sessionId: String?,
+        requireCurrentDispatch: () -> Unit,
     ): NativeOffloadResult {
         // Baseline body for merge mode: the standard OpenAI-shape conversion
         // (messages + system + max_tokens), so callers add ONLY their extras.
@@ -937,13 +1055,29 @@ class ModelUseOffloadHandler(
                 )
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "raw passthrough failed: ${e.message}", e)
+            if (nmParallel && e is kotlinx.coroutines.CancellationException) throw e
+            if (e is ai.tama.net.DirectModelUseGuard.Blocked) return automaticRunBlocked()
+            if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) return modelCostBlocked()
+            val detail = nmFailureDetail(e, "passthrough request failed")
+            if (nmParallel) Log.w(TAG, "Raw model request failed") else Log.w(TAG, "raw passthrough failed: ${e.message}", e)
             return NativeOffloadResult(
                 1,
                 JSONObject().put("error", "passthrough_failed")
-                    .put("message", e.message ?: "passthrough request failed")
+                    .put("message", detail)
+                    .apply { if (nmParallel) put("tell_user", "The request may have been charged. Do not retry without a new user request.") }
                     .toString() + "\n",
             )
+        }
+
+        // nanoMuse: do not knowingly write or return a response after Stop.
+        // The check cannot make the subsequent write atomic with revocation.
+        if (nmParallel) requireCurrentDispatch()
+
+        // nanoMuse: a failed raw response can echo credentials or prompts. Do
+        // not inline it, write it to --output, or return its URL in the test app.
+        ai.tama.net.RawModelUseFailure.response(nmParallel, result.status)?.let { safe ->
+            Log.w(TAG, "Raw model request failed (HTTP ${result.status})")
+            return NativeOffloadResult(1, safe)
         }
 
         val out = JSONObject()
@@ -970,7 +1104,8 @@ class ModelUseOffloadHandler(
                 } catch (e: Throwable) {
                     // Don't fail the whole call over an unwritable --output — the
                     // request already succeeded. Surface it + fall back to inline.
-                    out.put("output_error", "Could not write --output at $outputPath: ${e.message}")
+                    out.put("output_error", if (nmParallel) nmFailureDetail(e, "Could not write output")
+                        else "Could not write --output at $outputPath: ${e.message}")
                     inlineTextIfPossible(result.data, out)
                 }
             }
@@ -986,7 +1121,8 @@ class ModelUseOffloadHandler(
         if (warnings.isNotEmpty()) {
             out.put("warnings", JSONArray(warnings))
         }
-        Log.i(TAG, "[ModelUseRoute] raw-passthrough done status=${result.status} bytes=${result.data.size} url=${result.url} warnings=${warnings.size}")
+        if (nmParallel) Log.i(TAG, "Raw model request completed (HTTP ${result.status})")
+        else Log.i(TAG, "[ModelUseRoute] raw-passthrough done status=${result.status} bytes=${result.data.size} url=${result.url} warnings=${warnings.size}")
         // Non-2xx → non-zero exit code (raw body still delivered), else 0.
         val code = if (result.status in 200..299) 0 else 1
         return NativeOffloadResult(code, out.toString(2) + "\n")
@@ -1045,6 +1181,7 @@ class ModelUseOffloadHandler(
         outputExt: String,
         sessionId: String?,
         callWarnings: MutableList<String> = mutableListOf(),
+        requireCurrentDispatch: () -> Unit,
     ): NativeOffloadResult? {
         val outputs = entry.model.outputModalities.orEmpty()
         val wantsImageOutput = "image" in outputs
@@ -1072,7 +1209,7 @@ class ModelUseOffloadHandler(
         openAI.imageExtraBody = passthrough.body
         openAI.imagePathOverride = passthrough.path
         openAI.imageExtraHeaders = passthrough.headers
-        if (passthrough.body.isNotEmpty() || passthrough.path != null || passthrough.headers.isNotEmpty()) {
+        if (!nmParallel && (passthrough.body.isNotEmpty() || passthrough.path != null || passthrough.headers.isNotEmpty())) {
             Log.i(
                 TAG,
                 "[ModelUseRoute] PASSTHROUGH bodyKeys=[${passthrough.body.keys.sorted().joinToString(",")}] " +
@@ -1095,7 +1232,7 @@ class ModelUseOffloadHandler(
         // the better channel for "look at this image and answer" requests. That
         // split is the pre-existing guard semantics, deliberately unchanged.
         if (inputImages.isNotEmpty() && !isPureImageGenerator) {
-            Log.i(
+            if (!nmParallel) Log.i(
                 TAG,
                 "[ModelUseRoute] input images present for ${entry.model.id} (text+image model) — declining images route, falling through to chat so images are forwarded",
             )
@@ -1109,7 +1246,7 @@ class ModelUseOffloadHandler(
                 instance.imageEndpointResolved != null -> instance.imageEndpointResolved!!
             else -> instance.imageEndpointMode
         }
-        Log.i(
+        if (!nmParallel) Log.i(
             TAG,
             "[ModelUseRoute] image route model=${entry.model.id} mode=${instance.imageEndpointMode} " +
                 "resolved=${instance.imageEndpointResolved} pure=$isPureImageGenerator override=${cfg.endpointOverride} " +
@@ -1124,45 +1261,63 @@ class ModelUseOffloadHandler(
         if (effectiveMode == com.openminis.app.data.model.ImageEndpointMode.imagesGenerations) {
             val response = try {
                 runBlocking {
+                    // nanoMuse: do not replay a potentially billed image call in the parallel app.
                     if (inputImages.isEmpty()) {
-                        openAI.generateImage(prompt, cfg.n, cfg.size, cfg.quality)
+                        openAI.generateImage(prompt, cfg.n, cfg.size, cfg.quality, allowFormatRetry = !nmParallel)
                     } else {
-                        openAI.editImage(prompt, inputImages, cfg.n, cfg.size, cfg.quality)
+                        openAI.editImage(prompt, inputImages, cfg.n, cfg.size, cfg.quality, allowFormatRetry = !nmParallel)
                     }
                 }
             } catch (e: Throwable) {
-                Log.w(TAG, "[ModelUseRoute] images/${if (inputImages.isEmpty()) "generations" else "edits"} (forced) failed: ${e.message}", e)
-                val hint = imageParamHint(entry)
-                val base = e.message ?: "image_generation_failed"
+                if (nmParallel && e is kotlinx.coroutines.CancellationException) throw e
+                if (e is ai.tama.net.DirectModelUseGuard.Blocked) return automaticRunBlocked()
+                if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) return modelCostBlocked()
+                val base = nmFailureDetail(e, "image_generation_failed")
+                if (nmParallel) Log.w(TAG, "Image request failed")
+                else Log.w(TAG, "[ModelUseRoute] images/${if (inputImages.isEmpty()) "generations" else "edits"} (forced) failed: ${e.message}", e)
+                val hint = if (nmParallel) "" else imageParamHint(entry)
                 return NativeOffloadResult(
                     1,
                     JSONObject().put("error", "image_generation_failed")
                         .put("message", if (hint.isEmpty()) base else "$base\n\n$hint")
+                        .apply { if (nmParallel) put("tell_user", "The request may have been charged. Do not retry or use another image model without a new user request.") }
                         .toString() + "\n",
                 )
             }
+            if (nmParallel) requireCurrentDispatch()
             return writeImageResult(entry, response, outputPath, outputExt, "images_generations", sessionId)
         }
 
-        // auto mode: probe /images/generations; cache the result; on a
-        // route-missing 4xx, cache chatCompletions and fall through to chat.
+        // auto mode: probe /images/generations and cache a success. Only the normal
+        // app falls through to chat on a route-missing failure (nanoMuse: a failed
+        // image call in the parallel app may already have been charged).
         val response = try {
             runBlocking {
                 if (inputImages.isEmpty()) {
-                    openAI.generateImage(prompt, cfg.n, cfg.size, cfg.quality)
+                    openAI.generateImage(prompt, cfg.n, cfg.size, cfg.quality, allowFormatRetry = !nmParallel)
                 } else {
-                    openAI.editImage(prompt, inputImages, cfg.n, cfg.size, cfg.quality)
+                    openAI.editImage(prompt, inputImages, cfg.n, cfg.size, cfg.quality, allowFormatRetry = !nmParallel)
                 }
             }.also {
+                // nanoMuse: a response from a retired shell must not update the cached route.
+                if (nmParallel) requireCurrentDispatch()
                 providerRepository.setImageEndpointResolved(
                     instance.id, com.openminis.app.data.model.ImageEndpointMode.imagesGenerations,
                 )
             }
         } catch (e: Throwable) {
+            if (nmParallel && e is kotlinx.coroutines.CancellationException) throw e
+            if (e is ai.tama.net.DirectModelUseGuard.Blocked) return automaticRunBlocked()
+            if (ai.tama.pricing.ModelCostGuard.causedByBlock(e)) return modelCostBlocked()
+            val base = nmFailureDetail(e, "image_generation_failed")
+            // The text is inspected only for the existing endpoint-missing
+            // classifier; it is not logged or returned in the parallel app.
             val msg = e.message ?: ""
             val routeMissing = (e is com.openminis.app.data.model.LLMError.ProviderError ||
                 e is com.openminis.app.data.model.LLMError.InvalidApiKey) && looksLikeEndpointMissing(msg)
-            if (routeMissing) {
+            // nanoMuse: in the parallel app even a route failure may have been billed;
+            // do not silently send a second image request through a different endpoint.
+            if (routeMissing && !nmParallel) {
                 Log.i(TAG, "[ModelUseRoute] auto probe → route missing (${msg.take(120)}) — caching chat_completions, falling back")
                 providerRepository.setImageEndpointResolved(
                     instance.id, com.openminis.app.data.model.ImageEndpointMode.chatCompletions,
@@ -1170,16 +1325,18 @@ class ModelUseOffloadHandler(
                 return null // fall through to chat path
             }
             // Real error (auth/moderation/network) — surface it, don't fall through.
-            Log.w(TAG, "[ModelUseRoute] auto probe failed (non-route): ${e.message}", e)
-            val hint = imageParamHint(entry)
-            val base = e.message ?: "image_generation_failed"
+            if (nmParallel) Log.w(TAG, "Image endpoint probe failed")
+            else Log.w(TAG, "[ModelUseRoute] auto probe failed (non-route): ${e.message}", e)
+            val hint = if (nmParallel) "" else imageParamHint(entry)
             return NativeOffloadResult(
                 1,
                 JSONObject().put("error", "image_generation_failed")
                     .put("message", if (hint.isEmpty()) base else "$base\n\n$hint")
+                    .apply { if (nmParallel) put("tell_user", "The request may have been charged. Do not retry or use another image model without a new user request.") }
                     .toString() + "\n",
             )
         }
+        if (nmParallel) requireCurrentDispatch()
         return writeImageResult(entry, response, outputPath, outputExt, "images_generations", sessionId)
     }
 
@@ -1292,6 +1449,7 @@ class ModelUseOffloadHandler(
      *  write so the response path vs on-disk host path vs session scoping is
      *  greppable when diagnosing "file disappears / wrong session" reports. */
     private fun logModelUseWrite(responsePath: String, hostFile: File, sessionId: String?) {
+        if (nmParallel) return // nanoMuse: paths and session ids need not enter logcat.
         Log.i(
             "ModelUseImage",
             "[ModelUseWrite] path=$responsePath hostFile=${hostFile.absolutePath} " +

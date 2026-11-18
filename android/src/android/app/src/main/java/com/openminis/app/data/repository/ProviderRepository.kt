@@ -3,6 +3,10 @@ package com.openminis.app.data.repository
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
+import ai.tama.pricing.FreeModelImport // nanoMuse: free-only import is separate from cost permission
+import ai.tama.pricing.FreeModelImportStatus
+import ai.tama.pricing.FreeModelImportEvidence
+import ai.tama.pricing.ModelRefreshGate
 import com.openminis.app.backup.BackupSecrets
 import com.openminis.app.data.db.ProviderConfigDao
 import com.openminis.app.data.db.ProviderConfigMetaKeys
@@ -12,6 +16,7 @@ import com.openminis.app.provider.thinking.ThinkingRule
 import com.openminis.app.provider.thinking.ThinkingRuleCoding
 import com.openminis.app.provider.thinking.ThinkingRuleResolver
 import com.openminis.app.data.db.ProviderDatabase
+import androidx.room.withTransaction // nanoMuse: roll back a checked DB write if the mirror is rejected
 import com.openminis.app.data.db.compositeEntryKey
 import com.openminis.app.data.db.toProviderConfig
 import com.openminis.app.data.db.toSnapshot
@@ -45,6 +50,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive // nanoMuse
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 
@@ -89,8 +95,8 @@ class ProviderRepository(private val context: Context) {
     // still written on every save so older builds keep reading current
     // config — losing nothing on downgrade. See [loadConfig] for the
     // downgrade-and-back-up reconciliation logic.
-    private val providerDao: ProviderConfigDao =
-        ProviderDatabase.getInstance(context).providerConfigDao()
+    private val providerDatabase: ProviderDatabase = ProviderDatabase.getInstance(context) // nanoMuse
+    private val providerDao: ProviderConfigDao = providerDatabase.providerConfigDao()
 
     companion object {
         /**
@@ -191,6 +197,31 @@ class ProviderRepository(private val context: Context) {
 
     suspend fun awaitConfigLoaded() = configLoadComplete.await()
 
+    /**
+     * Lock guarding all mutate-and-save sequences against concurrent writers
+     * (notably the `for instance in enabled { scope.launch { autoRefreshModels(...) } }`
+     * fan-out in [refreshAllModelsIfNeeded] / [triggerBackgroundRefreshIfStale]).
+     *
+     * Without this lock, two parallel `replaceEntries(instanceA, …)` and
+     * `replaceEntries(instanceB, …)` calls share the same `_config.value`
+     * reference (its inner ArrayLists are the same objects across reads),
+     * so one's `removeAll` / `addAll` runs while the other's `saveConfig`
+     * is mid-`Json.encodeToString` — that's the
+     * `ConcurrentModificationException → ArrayList.next` crash captured on
+     * Pixel 6 / 4a.
+     */
+    private val configLock = Any()
+
+    // nanoMuse: a newer refresh or setting change supersedes an in-flight list.
+    private val nmRefreshGate = ModelRefreshGate()
+    // nanoMuse: transient catalogue evidence for the post-save choice screen.
+    // Guarded by configLock; never persisted and contains no credentials.
+    private val nmFreeEvidence = mutableMapOf<String, FreeModelImportEvidence>()
+    private val _nmFreeImportStatus = MutableStateFlow<Map<String, FreeModelImportStatus>>(emptyMap())
+    val nmFreeImportStatus: StateFlow<Map<String, FreeModelImportStatus>> = _nmFreeImportStatus.asStateFlow()
+
+    // nanoMuse: the async loader can run immediately, so all locks and status
+    // fields it may read must be initialized before launch.
     init {
         loadScope.launch {
             // [T-android-provider-empty-load-wipe] loadConfig() THROWS when the
@@ -237,21 +268,6 @@ class ProviderRepository(private val context: Context) {
             }
         }
     }
-
-    /**
-     * Lock guarding all mutate-and-save sequences against concurrent writers
-     * (notably the `for instance in enabled { scope.launch { autoRefreshModels(...) } }`
-     * fan-out in [refreshAllModelsIfNeeded] / [triggerBackgroundRefreshIfStale]).
-     *
-     * Without this lock, two parallel `replaceEntries(instanceA, …)` and
-     * `replaceEntries(instanceB, …)` calls share the same `_config.value`
-     * reference (its inner ArrayLists are the same objects across reads),
-     * so one's `removeAll` / `addAll` runs while the other's `saveConfig`
-     * is mid-`Json.encodeToString` — that's the
-     * `ConcurrentModificationException → ArrayList.next` crash captured on
-     * Pixel 6 / 4a.
-     */
-    private val configLock = Any()
 
     private fun loadConfig(): ProviderConfig = runBlocking { loadConfigSuspending() }
 
@@ -435,57 +451,51 @@ class ProviderRepository(private val context: Context) {
     }
 
     /**
-     * Atomically persist [config] to (DB) + (legacy JSON mirror), with
-     * the meta.json_sync_hash kept in lockstep with the mirror we just
-     * wrote. Returns the canonicalized config (entry uuids rewritten to
-     * the composite "{instanceId}/{modelId}" shape via the snapshot
-     * round-trip). Callers should treat the return value as the new
-     * authoritative state — using the in-memory pre-call object would
-     * leak the legacy uuid form into [_config.value].
+     * Persist the Room snapshot and its legacy JSON mirror. These are different
+     * storage systems and are not crash-atomic. Checked UI saves roll back Room
+     * if the mirror reports failure and restore the prior mirror best-effort.
+     * Returns the canonicalized config with composite entry ids.
      */
-    private suspend fun persistToDbAndMirror(config: ProviderConfig): ProviderConfig {
-        // First serialize without the hash so the meta row reflects the
-        // exact string we put into prefs (the hash sees the mirror that
-        // older builds will read, not a hash-of-itself).
+    private suspend fun persistToDbAndMirror(config: ProviderConfig, requireMirror: Boolean = false): ProviderConfig { // nanoMuse
         val mirrorStr = json.encodeToString(ProviderConfig.serializer(), config)
         val mirrorHash = hashJsonMirror(mirrorStr)
         val snapshot = config.toSnapshot(json, jsonSyncHash = mirrorHash)
-        providerDao.replaceAll(
+        suspend fun writeDb() = providerDao.replaceAll(
             instances = snapshot.instances,
             entries = snapshot.entries,
             groups = snapshot.groups,
             loopIds = snapshot.loopIds,
             meta = snapshot.meta,
         )
-        // commit() not apply(): the json_sync_hash we just stored to DB is
-        // a hash of THIS mirror string. If apply() queues the disk write
-        // and the process dies before it flushes, the next launch sees
-        // DB(hash=new) + JSON-on-disk(content=old) → the hash-mismatch
-        // path interprets it as "old build wrote during downgrade" and
-        // re-imports the stale JSON, blowing away the write that the DB
-        // already persisted synchronously. commit() blocks the writer
-        // (~5–30ms) but guarantees DB and JSON land together.
-        //
-        // commit() returns false (no exception) on disk-full / permission
-        // failure / corrupted prefs XML. We log so the situation is
-        // observable; the DB already holds the new state authoritatively,
-        // and a subsequent successful save will resync the mirror + hash.
-        // The downside if the next save never comes: a hash mismatch on
-        // next cold-start would try to re-import the stale mirror — but
-        // the dbConfig-fallback at the end of loadConfigSuspending keeps
-        // the DB rows when re-import fails or is rejected, so the user's
-        // data is not lost.
-        val mirrorWritten = prefs.edit().putString("config", mirrorStr).commit()
-        if (!mirrorWritten) {
-            android.util.Log.w(
-                "ProviderRepo",
-                "[ProviderStore] mirror commit() returned false — DB updated " +
-                    "but JSON write rejected (disk full? prefs corruption?); " +
-                    "DB remains authoritative",
+        fun writeMirror() = prefs.edit().putString("config", mirrorStr).commit()
+
+        if (requireMirror) {
+            // Room can roll back an ordinary mirror failure while its transaction
+            // is open. SharedPreferences may update its in-memory value even when
+            // commit() returns false, so restore that value on any exception too.
+            val previousMirror = prefs.getString("config", null)
+            try {
+                providerDatabase.withTransaction {
+                    writeDb()
+                    check(writeMirror()) { "Provider mirror write failed" }
+                }
+            } catch (e: Exception) {
+                try {
+                    val editor = prefs.edit()
+                    if (previousMirror == null) editor.remove("config") else editor.putString("config", previousMirror)
+                    if (!editor.commit()) android.util.Log.w("ProviderRepo", "[ProviderStore] mirror rollback failed")
+                } catch (_: Exception) {
+                    android.util.Log.w("ProviderRepo", "[ProviderStore] mirror rollback failed")
+                }
+                throw e
+            }
+        } else {
+            // Legacy best-effort behavior remains unchanged for other writers.
+            writeDb()
+            if (!writeMirror()) android.util.Log.w(
+                "ProviderRepo", "[ProviderStore] mirror commit failed; retry to resync the stores",
             )
         }
-        // Return canonicalized form so the caller's _config.value reflects
-        // entry uuids in composite-key shape from this write forward.
         return snapshot.toProviderConfig(json)
     }
 
@@ -531,7 +541,13 @@ class ProviderRepository(private val context: Context) {
         if (!configLoadComplete.isCompleted) configLoadComplete.complete(Unit)
     }
 
-    private fun saveConfig(config: ProviderConfig) {
+    private fun saveConfig(config: ProviderConfig) { saveConfigInternal(config, checked = false) }
+
+    // nanoMuse: new import settings must not report success after an in-memory-only
+    // fallback. Legacy mutations keep their old best-effort behavior.
+    private fun saveConfigChecked(config: ProviderConfig): Boolean = saveConfigInternal(config, checked = true)
+
+    private fun saveConfigInternal(config: ProviderConfig, checked: Boolean): Boolean {
         // [T-android-provider-room-store] Double-write: DB + legacy JSON
         // mirror, both produced inside the same configLock window. The
         // mirror keeps older app builds able to read current config on
@@ -568,14 +584,20 @@ class ProviderRepository(private val context: Context) {
             // emit the in-memory state so the UI reflects the user's
             // intent even when the disk write didn't land; the next
             // successful save resyncs everything.
+            if (checked && !_configLoaded.value) return false // nanoMuse: never save over an unreadable store
+            var persisted = true
             val canonical = try {
-                runBlocking { persistToDbAndMirror(config) }
+                runBlocking { persistToDbAndMirror(config, requireMirror = checked) }
             } catch (e: Exception) {
-                android.util.Log.e(
+                // nanoMuse: errors can contain an endpoint or other private data.
+                if (checked) android.util.Log.e("ProviderRepo", "[ProviderStore] checked save failed")
+                else android.util.Log.e(
                     "ProviderRepo",
                     "[ProviderStore] saveConfig persistence failed; emitting in-memory only: ${e.message}",
                     e,
                 )
+                persisted = false
+                if (checked) return false
                 config
             }
             _config.value = canonical.copy(
@@ -586,6 +608,7 @@ class ProviderRepository(private val context: Context) {
                 agentLoopGroupIds = canonical.agentLoopGroupIds.toMutableList(),
                 revision = ProviderConfig.nextRevision(),
             )
+            return persisted // nanoMuse
         }
     }
 
@@ -636,12 +659,47 @@ class ProviderRepository(private val context: Context) {
 
     // nanoMuse: publish the recovered DB and preference snapshot to existing observers.
     fun reloadAfterRestoreRecovery() = synchronized(configLock) {
+        // nanoMuse: an older fetch cannot write over a recovered configuration.
+        nmRefreshGate.invalidateAll()
+        nmFreeEvidence.clear()
+        _nmFreeImportStatus.value = emptyMap()
         _config.value = loadConfig()
         loadAllThinkingRulesIntoCache()
     }
 
-    fun addInstance(instance: ProviderInstance): Unit = synchronized(configLock) {
+    fun addInstance(instance: ProviderInstance) { addInstanceInternal(instance, checked = false) }
+
+    // nanoMuse: leave the form open when a new provider could not be stored.
+    fun addInstanceChecked(instance: ProviderInstance): Boolean = addInstanceInternal(instance, checked = true)
+
+    // nanoMuse: an OAuth login can finish before the person taps Save. Do not
+    // add a provider for a signed-out or replaced account. Flush both stores
+    // before acknowledging success; they remain separate, not crash-atomic.
+    internal fun addAuthenticatedInstanceChecked(instance: ProviderInstance, expected: OAuthKeySnapshot): Boolean {
+        if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test" ||
+            instance.credentialType != ProviderCredential.oauth || expected.providerId != instance.id ||
+            expected.key.isNullOrBlank()) return false
+        return try {
+            val secrets = encryptedPrefs // initialize before the ordered locks
+            val manager = oauthManagerFor(instance)
+            if (instance.providerType != ProviderType.openRouter && manager == null) return false
+            manager?.nmPrepareCredentialPrefs()
+            synchronized(configLock) {
+                ensureConfigLoaded()
+                if (!_configLoaded.value) return@synchronized false
+                ai.tama.router.AutoModelStore.credentialTransaction {
+                    if (!nmOAuthKeyStillCurrent(expected) || !secrets.edit().commit() ||
+                        (manager != null && (!manager.nmHasStoredCredential() || !manager.nmFlushCredentialPrefs()))) {
+                        false
+                    } else addInstanceInternal(instance, checked = true)
+                }
+            }
+        } catch (_: Exception) { false }
+    }
+
+    private fun addInstanceInternal(instance: ProviderInstance, checked: Boolean): Boolean = synchronized(configLock) {
         ensureConfigLoaded()
+        if (checked && (!_configLoaded.value || _config.value.instances.any { it.id == instance.id })) return@synchronized false
         val config = workingCopy()
         config.instances.add(instance)
         // Seed built-in model entries ONLY when the seed is appropriate for this
@@ -658,14 +716,18 @@ class ProviderRepository(private val context: Context) {
         //   - API-key instances on an official endpoint (no customBaseURL, or
         //     a customBase that points at the canonical host) keep the seed so
         //     UI isn't blank during the first refresh round-trip.
-        val shouldSeed = instance.credentialType == ProviderCredential.oauth ||
-            !isThirdPartyOpenAICompat(instance)
+        // nanoMuse: do not pre-populate unknown or paid models when the new
+        // parallel provider was created with the free-only import selected.
+        val nmFreeOnly = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+            instance.tamaImportFreeOnly
+        val shouldSeed = !nmFreeOnly && (instance.credentialType == ProviderCredential.oauth ||
+            !isThirdPartyOpenAICompat(instance))
         if (shouldSeed) {
             val entries = instance.providerType.builtInModels.map { model ->
                 ModelEntry(providerInstanceId = instance.id, baseModel = model)
             }
             config.modelEntries.addAll(entries)
-        } else {
+        } else if (!nmFreeOnly) {
             android.util.Log.i(
                 "ProviderRepo",
                 "[ModelList] addInstance: skip built-in seed for third-party OpenAI-compat base " +
@@ -677,7 +739,7 @@ class ProviderRepository(private val context: Context) {
         // base URL matches a voice vendor (MiMo / MiniMax / Doubao …). These
         // vendors have no /v1/models for their voices, so the template list is
         // the only source. Mirrors iOS addInstance + VoiceProviderTemplate.
-        val voiceSeeds = VoiceProviderTemplate.mockEntries(instance)
+        val voiceSeeds = (if (nmFreeOnly) emptyList() else VoiceProviderTemplate.mockEntries(instance)) // nanoMuse
             .filter { seed ->
                 config.modelEntries.none {
                     it.providerInstanceId == instance.id && it.baseModel.id == seed.baseModel.id
@@ -690,10 +752,13 @@ class ProviderRepository(private val context: Context) {
                 "[Voice] addInstance seeded ${voiceSeeds.size} voice-template models for ${instance.label}",
             )
         }
-        saveConfig(config)
+        if (checked) {
+            if (!saveConfigChecked(config)) return@synchronized false // nanoMuse
+        } else saveConfig(config)
         // Stale from the start so the next background sweep (or an explicit
         // triggerBackgroundRefreshIfStale call) will fetch it.
         invalidateModelCache(instance.id)
+        true // nanoMuse
     }
 
     /**
@@ -717,6 +782,10 @@ class ProviderRepository(private val context: Context) {
         val config = workingCopy()
         var changed = false
         for (instance in config.instances) {
+            // nanoMuse: template seeds have no price evidence. Preserve old
+            // entries, but do not silently add new ones in free-only mode.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+                instance.tamaImportFreeOnly) continue
             val tpl = VoiceProviderTemplate.template(instance.customBaseURL) ?: continue
             val templateById = tpl.mockModels.associateBy { it.id }
             val instanceEntries = config.modelEntries.filter { it.providerInstanceId == instance.id }
@@ -774,46 +843,100 @@ class ProviderRepository(private val context: Context) {
         if (instance.providerType != ProviderType.openAI) return false
         val custom = instance.customBaseURL?.lowercase() ?: return false
         val officialHosts = listOf("api.openai.com", "chatgpt.com")
-        return officialHosts.none { custom.contains(it) }
+        // nanoMuse: api.openai.com.example is not OpenAI and must not get GPT seeds.
+        return if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            !ai.tama.providers.ProviderEndpoints.isOfficialOpenAIBase(custom)
+        else officialHosts.none { custom.contains(it) }
     }
 
-    fun updateInstance(instance: ProviderInstance): Unit = synchronized(configLock) {
+    fun updateInstance(instance: ProviderInstance) { updateInstanceInternal(instance, checked = false) }
+
+    // nanoMuse: used by the endpoint form, which must report failed persistence.
+    fun updateInstanceChecked(instance: ProviderInstance): Boolean = updateInstanceInternal(instance, checked = true)
+
+    private fun updateInstanceInternal(instance: ProviderInstance, checked: Boolean): Boolean = synchronized(configLock) {
         ensureConfigLoaded()
+        if (checked && !_configLoaded.value) return@synchronized false
         val config = workingCopy()
         val idx = config.instances.indexOfFirst { it.id == instance.id }
         if (idx >= 0) {
             val prior = config.instances[idx]
+            // nanoMuse: only the dedicated setter changes the import mode.
+            val updated = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                instance.copy(tamaImportFreeOnly = prior.tamaImportFreeOnly) else instance
             // [T-android-image-endpoint-mode] If the base URL or v1-suffix
             // changed, the previously probed image endpoint may not exist on the
             // new upstream — drop the cached resolution so auto mode re-probes.
             // Mirrors iOS ProviderConfigStore.updateInstance. Only touch it when
             // the caller didn't already set it (e.g. the UI clears it itself when
             // the user forces a non-auto mode).
-            if ((prior.customBaseURL != instance.customBaseURL ||
-                    prior.appendV1Suffix != instance.appendV1Suffix) &&
-                instance.imageEndpointResolved != null
+            if ((prior.customBaseURL != updated.customBaseURL ||
+                    prior.appendV1Suffix != updated.appendV1Suffix) &&
+                updated.imageEndpointResolved != null
             ) {
-                instance.imageEndpointResolved = null
+                updated.imageEndpointResolved = null
             }
-            config.instances[idx] = instance
-            saveConfig(config)
+            // nanoMuse: register the previous route before the new one, even if no
+            // review has ever opened. A pending login must not survive the first
+            // endpoint/format change merely because its route was not yet stored.
+            val newRoute = ai.tama.router.AutoModelStore.routeFingerprint(updated)
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                val priorRoute = ai.tama.router.AutoModelStore.routeFingerprint(prior)
+                if (priorRoute != newRoute) {
+                    nmRefreshGate.invalidate(updated.id) // nanoMuse: also reject an old list after A → B → A
+                    nmFreeEvidence.remove(updated.id)
+                    _nmFreeImportStatus.value = _nmFreeImportStatus.value - updated.id
+                    ai.tama.router.AutoModelStore.synchronizeRoute(context, updated.id, priorRoute)
+                }
+            }
+            ai.tama.router.AutoModelStore.synchronizeRoute(context, updated.id, newRoute)
+            config.instances[idx] = updated
+            if (checked) {
+                if (!saveConfigChecked(config)) return@synchronized false // nanoMuse
+            } else saveConfig(config)
             // Any change that could move the model list (base URL, credential
             // swap, enabled flag, API format) invalidates the cache. Cheap to
             // over-invalidate.
-            if (prior.effectiveBaseURL != instance.effectiveBaseURL ||
-                prior.credentialType != instance.credentialType ||
-                prior.isEnabled != instance.isEnabled ||
-                prior.useResponsesAPI != instance.useResponsesAPI
+            if (prior.effectiveBaseURL != updated.effectiveBaseURL ||
+                prior.credentialType != updated.credentialType ||
+                prior.isEnabled != updated.isEnabled ||
+                prior.useResponsesAPI != updated.useResponsesAPI
             ) {
-                invalidateModelCache(instance.id)
+                invalidateModelCache(updated.id)
             }
+            true // nanoMuse
+        } else false
+    }
+
+    // nanoMuse: do not replace the user's existing entries or their group pins.
+    fun setTamaImportFreeOnly(instanceId: String, enabled: Boolean): Boolean = synchronized(configLock) {
+        if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test") return@synchronized false
+        ensureConfigLoaded()
+        val config = workingCopy()
+        val index = config.instances.indexOfFirst { it.id == instanceId }
+        if (index < 0) return@synchronized false
+        if (config.instances[index].tamaImportFreeOnly == enabled) return@synchronized true
+        nmRefreshGate.invalidate(instanceId)
+        nmFreeEvidence.remove(instanceId)
+        config.instances[index] = config.instances[index].copy(tamaImportFreeOnly = enabled)
+        if (!saveConfigChecked(config)) {
+            _nmFreeImportStatus.value = _nmFreeImportStatus.value + (instanceId to FreeModelImportStatus.SaveFailed)
+            return@synchronized false
         }
+        _nmFreeImportStatus.value = _nmFreeImportStatus.value - instanceId
+        invalidateModelCache(instanceId)
+        true
     }
 
     fun removeInstance(instanceId: String): Unit = synchronized(configLock) {
         ensureConfigLoaded()
+        nmRefreshGate.invalidate(instanceId) // nanoMuse
+        nmFreeEvidence.remove(instanceId)
+        _nmFreeImportStatus.value = _nmFreeImportStatus.value - instanceId
+        ai.tama.router.AutoModelStore.accountChanged(context, instanceId)
         invalidateModelCache(instanceId)
         val config = workingCopy()
+        val removedInstance = config.instances.find { it.id == instanceId } // nanoMuse: also clear its OAuth bundle
         val removedEntryIds = config.modelEntries
             .filter { it.providerInstanceId == instanceId }
             .map { it.id }
@@ -835,7 +958,11 @@ class ProviderRepository(private val context: Context) {
         }
 
         saveConfig(config)
-        deleteApiKey(instanceId)
+        // nanoMuse: deleting an OAuth provider must not leave a usable old bundle
+        // behind if the same instance id is later restored. Normal build unchanged.
+        val oauth = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            removedInstance?.let(::oauthManagerFor) else null
+        if (oauth != null) oauth.nmLogoutWithMirror(this) else deleteApiKey(instanceId)
         // [T-android-thinking-rules-phase2] The instance is gone — drop its custom
         // rules from Room and the resolver cache (they can never fire again).
         runCatching {
@@ -1091,6 +1218,12 @@ class ProviderRepository(private val context: Context) {
         // race on the shared config.modelEntries ArrayList. The working copy
         // additionally keeps this refresh off the list Compose is iterating.
         val config = workingCopy()
+        // nanoMuse: no ordinary or relay refresh may insert unverified entries
+        // when this parallel provider is in free-only import mode.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            val current = config.instances.firstOrNull { it.id == instanceId }
+            if (current == null || current.tamaImportFreeOnly) return@synchronized
+        }
         val existing = config.modelEntries.filter { it.providerInstanceId == instanceId }
         val existingEntryIds = existing.map { it.id }.toSet()
 
@@ -1235,6 +1368,35 @@ class ProviderRepository(private val context: Context) {
             config.modelEntries[idx] = entry.copy(userModifiedAt = System.currentTimeMillis())
             saveConfig(config)
         }
+    }
+
+    // nanoMuse: settings reviews take the config lock before the consent lock,
+    // the same order as updateInstance. A stale screen cannot reinstate an old route.
+    private fun nmIdentityIsCurrent(identity: ai.tama.router.AutoModelStore.Identity): Boolean {
+        val config = _config.value
+        val entry = config.modelEntries.find { it.id == identity.entryId } ?: return false
+        val instance = config.instances.find { it.id == identity.providerId } ?: return false
+        return entry.providerInstanceId == instance.id && ai.tama.router.AutoModelStore.identity(entry, instance) == identity
+    }
+
+    internal fun nmBeginAutoReview(identity: ai.tama.router.AutoModelStore.Identity): ai.tama.router.AutoModelStore.Review? =
+        synchronized(configLock) {
+            ensureConfigLoaded()
+            if (nmIdentityIsCurrent(identity)) ai.tama.router.AutoModelStore.review(context, identity) else null
+        }
+
+    internal fun nmAutoReviewCapabilities(identity: ai.tama.router.AutoModelStore.Identity, catalogue: Set<String>): Set<ai.tama.router.Need> =
+        synchronized(configLock) {
+            ensureConfigLoaded()
+            if (nmIdentityIsCurrent(identity)) ai.tama.router.AutoModelStore.capabilities(context, identity, catalogue) else emptySet()
+        }
+
+    internal fun nmSaveAutoReview(
+        review: ai.tama.router.AutoModelStore.Review, chat: Boolean, image: Boolean,
+        edits: Map<ai.tama.router.Need, Boolean>,
+    ): Boolean = synchronized(configLock) {
+        ensureConfigLoaded()
+        nmIdentityIsCurrent(review.identity) && ai.tama.router.AutoModelStore.saveReview(context, review, chat, image, edits)
     }
 
     fun removeEntry(entryId: String): Unit = synchronized(configLock) {
@@ -2155,7 +2317,221 @@ class ProviderRepository(private val context: Context) {
     }
 
 
+    // nanoMuse: each request owns its response and must still match the latest
+    // provider, route and import choice before it can touch saved entries.
+    // Not a data class: a generated toString could reveal a private endpoint.
+    private class NmRefresh(
+        val instance: ProviderInstance,
+        val ticket: ModelRefreshGate.Ticket,
+        val key: OAuthKeySnapshot,
+    )
+
+    /**
+     * Current candidates for the optional post-save choice screen. Null means
+     * no usable evidence; an empty set means a fresh check found no candidates.
+     * This is not a spending authorization and does not verify account access.
+     */
+    internal fun tamaEligibleFreeModelIds(instanceId: String): Set<String>? = synchronized(configLock) {
+        val live = _config.value.instances.firstOrNull { it.id == instanceId } ?: return@synchronized null
+        val evidence = nmFreeEvidence[instanceId] ?: return@synchronized null
+        ai.tama.router.AutoModelStore.credentialTransaction {
+            evidence.current(
+                nmRefreshGate, live.tamaImportFreeOnly, ai.tama.router.AutoModelStore.routeFingerprint(live),
+                ai.tama.router.AutoModelRuntime.accountVersion(instanceId), System.currentTimeMillis(),
+            )
+        }
+    }
+
+    private fun nmBeginRefresh(instanceId: String): NmRefresh? {
+        try {
+            encryptedPrefs // nanoMuse: initialize the keystore before either lock
+            return synchronized(configLock) {
+                ensureConfigLoaded()
+                val live = _config.value.instances.firstOrNull { it.id == instanceId } ?: return@synchronized null
+                val copy = live.copy()
+                // Capture the route and credential together. A scheduled old
+                // route must not pick up a newer account's key when it starts.
+                val key = nmOAuthKeySnapshot(copy.id)
+                val route = ai.tama.router.AutoModelStore.routeFingerprint(copy)
+                val ticket = nmRefreshGate.begin(copy.id, copy.tamaImportFreeOnly, route)
+                nmFreeEvidence.remove(copy.id)
+                _nmFreeImportStatus.value = if (copy.tamaImportFreeOnly)
+                    _nmFreeImportStatus.value + (copy.id to FreeModelImportStatus.Checking)
+                else _nmFreeImportStatus.value - copy.id
+                NmRefresh(copy, ticket, key)
+            }
+        } catch (_: Exception) {
+            synchronized(configLock) {
+                if (_config.value.instances.any { it.id == instanceId && it.tamaImportFreeOnly }) {
+                    nmRefreshGate.invalidate(instanceId)
+                    nmFreeEvidence.remove(instanceId)
+                    _nmFreeImportStatus.value = _nmFreeImportStatus.value + (instanceId to FreeModelImportStatus.Failed)
+                }
+            }
+            return null
+        }
+    }
+
+    // Called with configLock held. No network operation takes place under it.
+    private fun nmRefreshCurrent(refresh: NmRefresh): Boolean {
+        val live = _config.value.instances.firstOrNull { it.id == refresh.instance.id } ?: return false
+        return nmRefreshGate.isCurrent(
+            refresh.ticket, live.tamaImportFreeOnly, ai.tama.router.AutoModelStore.routeFingerprint(live),
+        )
+    }
+
+    private fun nmCommitStandardRefresh(
+        instanceId: String,
+        models: List<LLMModel>,
+        refresh: NmRefresh?,
+        keySnapshot: OAuthKeySnapshot?,
+    ) {
+        if (refresh == null) {
+            replaceEntries(instanceId, models)
+        } else synchronized(configLock) {
+            // nanoMuse: serialize the final check AND write with credential
+            // changes. Otherwise a key can change between the check and save.
+            // The configuration lock is already held, in the established order.
+            ai.tama.router.AutoModelStore.credentialTransaction {
+                if (nmRefreshCurrent(refresh) && !refresh.instance.tamaImportFreeOnly &&
+                    keySnapshot != null && nmOAuthKeyStillCurrent(keySnapshot)) {
+                    replaceEntries(instanceId, models)
+                }
+            }
+        }
+    }
+
+    // nanoMuse: the action is non-suspending and performs no network access.
+    // The outer lock protects routes/modes, the inner lock protects credentials.
+    // A synchronous local save may block both until its Room write completes.
+    private fun nmWithCurrentFreeRefresh(refresh: NmRefresh, key: OAuthKeySnapshot, action: () -> Unit) {
+        synchronized(configLock) {
+            if (!nmRefreshCurrent(refresh)) return@synchronized
+            ai.tama.router.AutoModelStore.credentialTransaction {
+                if (nmOAuthKeyStillCurrent(key)) action()
+                else _nmFreeImportStatus.value = _nmFreeImportStatus.value - refresh.instance.id
+            }
+        }
+    }
+
+    private suspend fun nmRefreshFreeModels(refresh: NmRefresh) {
+        val instance = refresh.instance
+        if (!FreeModelImport.supports(instance.providerType)) {
+            synchronized(configLock) {
+                if (nmRefreshCurrent(refresh)) {
+                    _nmFreeImportStatus.value = _nmFreeImportStatus.value + (instance.id to FreeModelImportStatus.Unsupported)
+                    markInstanceFetched(instance.id)
+                }
+            }
+            return
+        }
+        // OpenRouter OAuth yields a permanent API key too. Pair it with the
+        // account generation so a late result cannot follow a key rotation.
+        val keySnapshot = refresh.key
+        val key = keySnapshot.key
+        if (key.isNullOrBlank()) {
+            nmWithCurrentFreeRefresh(refresh, keySnapshot) {
+                _nmFreeImportStatus.value = _nmFreeImportStatus.value + (instance.id to FreeModelImportStatus.MissingKey)
+            }
+            return
+        }
+        val response = OpenRouterModelsApi.fetchFreeCatalogue(key)
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        // Compute eligibility without holding either lock. The response and its
+        // price evidence are from the same request; no key or URL is retained.
+        val eligible = response?.let { FreeModelImport.eligible(it.models, it.prices, System.currentTimeMillis()) }
+        val prices = response?.prices
+        nmWithCurrentFreeRefresh(refresh, keySnapshot) {
+            if (eligible == null || prices == null) {
+                _nmFreeImportStatus.value = _nmFreeImportStatus.value + (instance.id to FreeModelImportStatus.Failed)
+            } else {
+                val config = workingCopy()
+                val additions = FreeModelImport.additions(instance.id, config.modelEntries, eligible)
+                if (additions.isNotEmpty()) config.modelEntries.addAll(additions)
+                if (additions.isNotEmpty() && !saveConfigChecked(config)) {
+                    _nmFreeImportStatus.value = _nmFreeImportStatus.value + (instance.id to FreeModelImportStatus.SaveFailed)
+                } else {
+                    nmFreeEvidence[instance.id] = FreeModelImportEvidence(
+                        refresh.ticket, keySnapshot.version, prices, eligible.mapTo(mutableSetOf()) { it.id },
+                    )
+                    markInstanceFetched(instance.id)
+                    _nmFreeImportStatus.value = _nmFreeImportStatus.value +
+                        (instance.id to FreeModelImportStatus.Complete(eligible.size, additions.size))
+                }
+            }
+        }
+    }
+
+    // nanoMuse: a queued refresh that lost its route or credential need not
+    // send anything. A change after this check is not atomic with the network;
+    // the request still uses the matching old route/key pair it captured.
+    private fun nmRefreshCanStart(refresh: NmRefresh): Boolean = synchronized(configLock) {
+        if (!nmRefreshCurrent(refresh)) return@synchronized false
+        ai.tama.router.AutoModelStore.credentialTransaction {
+            if (nmOAuthKeyStillCurrent(refresh.key)) true else {
+                _nmFreeImportStatus.value = _nmFreeImportStatus.value - refresh.instance.id
+                false
+            }
+        }
+    }
+
+    // nanoMuse: publish a failure only for the request that still owns the
+    // screen status. Never include exception text, URLs, credentials or names.
+    private fun nmRefreshFailed(refresh: NmRefresh) = synchronized(configLock) {
+        if (refresh.instance.tamaImportFreeOnly && nmRefreshCurrent(refresh)) {
+            ai.tama.router.AutoModelStore.credentialTransaction {
+                _nmFreeImportStatus.value = if (nmOAuthKeyStillCurrent(refresh.key))
+                    _nmFreeImportStatus.value + (refresh.instance.id to FreeModelImportStatus.Failed)
+                else _nmFreeImportStatus.value - refresh.instance.id
+            }
+        }
+    }
+
+    private suspend fun nmRunRefresh(refresh: NmRefresh) {
+        try {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (!nmRefreshCanStart(refresh)) return
+            if (refresh.instance.tamaImportFreeOnly) nmRefreshFreeModels(refresh)
+            else refreshStandardModels(refresh.instance, refresh)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            nmRefreshFailed(refresh)
+            throw e
+        } catch (_: Exception) {
+            nmRefreshFailed(refresh)
+            android.util.Log.w("ProviderRepo", "Model refresh failed")
+        }
+    }
+
+    /** Survives leaving the add-provider form; it does not send a model request. */
+    fun refreshModelsInBackground(instance: ProviderInstance): kotlinx.coroutines.Job {
+        // nanoMuse: reserve the ticket before navigation. A later request from
+        // the Use-it-for screen must not be superseded by a merely scheduled
+        // background coroutine that starts afterwards.
+        val refresh = if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            nmBeginRefresh(instance.id) else null
+        return loadScope.launch {
+            try {
+                if (refresh != null) nmRunRefresh(refresh)
+                else if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test")
+                    refreshStandardModels(instance, null)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                android.util.Log.w("ProviderRepo", "Background model refresh failed")
+            }
+        }
+    }
+
     suspend fun refreshModels(instance: ProviderInstance) {
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            val refresh = nmBeginRefresh(instance.id) ?: return
+            nmRunRefresh(refresh)
+        } else {
+            refreshStandardModels(instance, null)
+        }
+    }
+
+    private suspend fun refreshStandardModels(instance: ProviderInstance, nmRefresh: NmRefresh?) {
         // [T-android-refresh-models-empty-key] usableApiKey, NOT loadApiKey.
         //
         // A self-hosted OpenAI/Anthropic-compatible endpoint (ollama, LM
@@ -2177,34 +2553,65 @@ class ProviderRepository(private val context: Context) {
         // VisionGroupResolver already resolve credentials through
         // `usableApiKey`, so a keyless local server could be chatted with but
         // not refreshed. That inconsistency was the bug.
-        var apiKey = usableApiKey(instance)
+        // nanoMuse: keep the key and account version paired across an OAuth refresh.
+        val nmParallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test"
+        // nanoMuse: the route and key were captured together before scheduling.
+        var nmKeySnapshot = nmRefresh?.key
+        val nmInitialVersion = nmKeySnapshot?.version
+        val nmInitialRoute = if (nmKeySnapshot != null) ai.tama.router.AutoModelStore.routeFingerprint(instance) else null
+        var apiKey = if (nmKeySnapshot != null) nmKeySnapshot.key ?: if (instance.allowsEmptyAPIKey) "" else null
+            else usableApiKey(instance)
 
         // For OAuth providers, try to refresh the token before using it (mirrors iOS validAccessToken)
         if (instance.credentialType == com.openminis.app.data.model.ProviderCredential.oauth && apiKey != null) {
             try {
                 val manager = com.openminis.app.auth.OAuthManager.forInstance(context, instance)
                 val freshToken = manager?.validAccessToken()
-                if (freshToken != null && freshToken != apiKey) {
-                    saveApiKey(instance.id, freshToken)
+                if (freshToken != null) {
+                    if (nmKeySnapshot != null) {
+                        if (!nmSaveOAuthRefresh(nmKeySnapshot, freshToken)) return
+                        nmKeySnapshot = nmOAuthKeySnapshot(instance.id)
+                        if (nmKeySnapshot.version != nmInitialVersion || nmKeySnapshot.key != freshToken) return
+                    } else if (freshToken != apiKey) saveApiKey(instance.id, freshToken, oauthRefresh = true)
+                    if (freshToken != apiKey) android.util.Log.i("ProviderRepo", "refreshModels: OAuth token refreshed")
                     apiKey = freshToken
-                    android.util.Log.i("ProviderRepo", "refreshModels: OAuth token refreshed")
                 }
             } catch (e: Exception) {
-                android.util.Log.w("ProviderRepo", "OAuth token refresh failed: ${e.message}")
+                if (nmParallel && e is kotlinx.coroutines.CancellationException) throw e
+                // nanoMuse: OAuth exceptions can contain private addresses or credentials.
+                android.util.Log.w("ProviderRepo", ai.tama.net.ProviderLogPrivacy.failureMessage(
+                    nmParallel, "OAuth token refresh failed", e.message,
+                ))
+            }
+            if (nmKeySnapshot != null) {
+                val current = _config.value.instances.find { it.id == instance.id } ?: return
+                if (!nmOAuthKeyStillCurrent(nmKeySnapshot) ||
+                    ai.tama.router.AutoModelStore.routeFingerprint(current) != nmInitialRoute) return
             }
         }
 
-        android.util.Log.i("ProviderRepo", "refreshModels: id=${instance.id} type=${instance.providerType} credential=${instance.credentialType} hasKey=${apiKey != null} keyLen=${apiKey?.length ?: 0} baseURL=${instance.effectiveBaseURL}")
+        // nanoMuse: a custom base URL may itself contain a credential.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+            android.util.Log.i("ProviderRepo", "refreshModels: checking configured provider")
+        else android.util.Log.i("ProviderRepo", "refreshModels: id=${instance.id} type=${instance.providerType} credential=${instance.credentialType} hasKey=${apiKey != null} keyLen=${apiKey?.length ?: 0} baseURL=${instance.effectiveBaseURL}")
 
-        // OpenAI Codex OAuth: fetch live Codex models when signed in, with built-in fallback
-        if (instance.providerType == ProviderType.openAI
-            && instance.credentialType == ProviderCredential.oauth
+        // OpenAI Codex OAuth: fetch live Codex models when signed in, with built-in fallback.
+        // nanoMuse: a manual bearer or custom endpoint is not a Codex route;
+        // never send its credential to chatgpt.com for model discovery.
+        val nmCodexRoute = if (nmParallel && instance.providerType == ProviderType.openAI &&
+            instance.credentialType == ProviderCredential.oauth) {
+            instance.customBaseURL.isNullOrBlank() &&
+                com.openminis.app.auth.OAuthManager.forInstance(context, instance)?.loadManualBearerToken().isNullOrEmpty()
+        } else true
+        if (instance.providerType == ProviderType.openAI &&
+            instance.credentialType == ProviderCredential.oauth && nmCodexRoute
         ) {
             // nanoMuse: query live Codex OAuth models with accountId (#475)
             val accountId = runCatching { com.openminis.app.auth.OpenAIOAuthManager(context, instance.id).accountId }.getOrNull()
             val models = OpenAIModelsApi.fetchModelsOAuth(apiKey, accountId)
             if (models.isNotEmpty()) {
-                replaceEntries(instance.id, models)
+                if (nmParallel) kotlinx.coroutines.currentCoroutineContext().ensureActive() // nanoMuse
+                nmCommitStandardRefresh(instance.id, models, nmRefresh, nmKeySnapshot)
                 return
             }
         }
@@ -2221,12 +2628,19 @@ class ProviderRepository(private val context: Context) {
             val models = try {
                 when (instance.providerType) {
                     ProviderType.anthropic -> AnthropicModelsApi.fetchModels(
-                        apiKey, baseURL,
+                        apiKey,
+                        // nanoMuse: chat always uses /v1/messages; list against
+                        // the same custom base instead of climbing parent paths.
+                        if (nmParallel && baseURL != null)
+                            ai.tama.providers.ProviderEndpoints.effective(instance.providerType, instance.customBaseURL, instance.appendV1Suffix)
+                        else baseURL,
                         isOAuth = instance.credentialType == com.openminis.app.data.model.ProviderCredential.oauth,
                         // [T-provider-custom-user-agent] models-list UA override.
                         customUserAgent = instance.customUserAgent,
+                        discoverParents = !nmParallel,
                     )
-                    ProviderType.gemini -> GeminiModelsApi.fetchModels(apiKey)
+                    // nanoMuse: the parallel build lists from the configured Gemini route.
+                    ProviderType.gemini -> GeminiModelsApi.fetchModels(apiKey, baseURL = if (nmParallel) baseURL else null)
                     // [T-provider-custom-user-agent] models-list UA override.
                     // [T-android-provider-type-parity] openAIResponses lists
                     // models from the same /v1/models endpoint — only the
@@ -2270,7 +2684,12 @@ class ProviderRepository(private val context: Context) {
                         apiKey,
                         baseURL ?: "https://api.x.ai/v1",
                         customUserAgent = instance.customUserAgent,
-                    ).ifEmpty { com.openminis.app.provider.xai.XAIModelsApi.fetchModelsOAuth() }
+                    ).ifEmpty {
+                        // nanoMuse: a failed custom xAI route must not acquire
+                        // the built-in models of a different endpoint.
+                        if (nmParallel && baseURL != null) emptyList()
+                        else com.openminis.app.provider.xai.XAIModelsApi.fetchModelsOAuth()
+                    }
                     // [T-kimi-oauth] Kimi Code: unlike Codex OAuth, the Kimi
                     // OAuth token CAN call the models endpoint — real fetch
                     // from GET /coding/v1/models (OpenAI-compatible shape).
@@ -2287,14 +2706,19 @@ class ProviderRepository(private val context: Context) {
                     ProviderType.antigravity, ProviderType.unsupported -> emptyList()
                 }
             } catch (e: Exception) {
-                android.util.Log.e("ProviderRepo", "refreshModels fetch error: ${e.message}", e)
+                if (nmParallel && e is kotlinx.coroutines.CancellationException) throw e // nanoMuse
+                // nanoMuse: provider/network exceptions can echo private text.
+                if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test")
+                    android.util.Log.e("ProviderRepo", "refreshModels fetch failed")
+                else android.util.Log.e("ProviderRepo", "refreshModels fetch error: ${e.message}", e)
                 emptyList()
             }
             android.util.Log.i("ProviderRepo", "refreshModels: got ${models.size} models")
 
             // Step 2: If API returned results, use them
             if (models.isNotEmpty()) {
-                replaceEntries(instance.id, models)
+                if (nmParallel) kotlinx.coroutines.currentCoroutineContext().ensureActive() // nanoMuse
+                nmCommitStandardRefresh(instance.id, models, nmRefresh, nmKeySnapshot)
                 return
             }
         }
@@ -2308,7 +2732,8 @@ class ProviderRepository(private val context: Context) {
         val fallbackModels = ModelsDevApi.fetchModels(fallbackBaseURL)
         if (fallbackModels.isNotEmpty()) {
             android.util.Log.i("ProviderRepo", "models.dev fallback returned ${fallbackModels.size} models for ${instance.label}")
-            replaceEntries(instance.id, fallbackModels)
+            if (nmParallel) kotlinx.coroutines.currentCoroutineContext().ensureActive() // nanoMuse
+            nmCommitStandardRefresh(instance.id, fallbackModels, nmRefresh, nmKeySnapshot)
         } else if (isThirdParty) {
             android.util.Log.i("ProviderRepo", "Third-party endpoint, no models.dev match — preserving existing models for ${instance.label}")
         }
@@ -2322,7 +2747,8 @@ class ProviderRepository(private val context: Context) {
         val hasCustom = _config.value.modelEntries.any {
             it.providerInstanceId == instance.id && it.isCustom
         }
-        if (hasCustom) {
+        if (hasCustom && !(com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" &&
+                _config.value.instances.firstOrNull { it.id == instance.id }?.tamaImportFreeOnly == true)) { // nanoMuse: filtered imports are additive
             android.util.Log.i("ProviderRepo", "[ModelList] autoRefresh SKIP ${instance.label} — has custom models")
             return
         }
@@ -2417,12 +2843,145 @@ class ProviderRepository(private val context: Context) {
     }
 
     // API Key management
-    fun saveApiKey(instanceId: String, key: String) {
-        encryptedPrefs.edit().putString("apikey_$instanceId", key).apply()
+    fun saveApiKey(instanceId: String, key: String, oauthRefresh: Boolean = false) {
+        val secrets = encryptedPrefs // nanoMuse: initialize outside the credential lock.
+        // A deliberately changed key can point at a different billable account. Rotating
+        // the access token of an already signed-in OAuth session is not a new consent.
+        fun persist() {
+            if (!oauthRefresh && secrets.getString("apikey_$instanceId", null) != key) {
+                ai.tama.router.AutoModelStore.accountChanged(context, instanceId)
+            }
+            secrets.edit().putString("apikey_$instanceId", key).apply()
+        }
+        // nanoMuse: pair revocation and the preference update with settings reviews
+        // and guarded refreshes. SharedPreferences.apply updates memory synchronously.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            require(!oauthRefresh) { "OAuth refresh requires a credential snapshot" }
+            ai.tama.router.AutoModelStore.credentialTransaction {
+                // An explicit same-value edit still supersedes a pending login.
+                ai.tama.router.OAuthLoginAttempts.supersede(instanceId)
+                persist()
+            }
+        } else persist()
+    }
+
+    // nanoMuse: a manually entered OAuth bearer must also reach OAuthManager;
+    // otherwise OpenAI/xAI try their refresh flow instead of using this token.
+    // addAuthenticatedInstanceChecked flushes the two preference files.
+    internal fun savePendingManualBearer(instance: ProviderInstance, token: String): OAuthKeySnapshot? {
+        if (com.openminis.app.BuildConfig.APPLICATION_ID != "ai.tama.assistant.tamav2test" ||
+            instance.credentialType != ProviderCredential.oauth || token.isBlank()) return null
+        return try {
+            val manager = oauthManagerFor(instance)
+            if (manager != null) {
+                manager.nmPrepareCredentialPrefs()
+                manager.saveManualBearerToken(token)
+            } else if (instance.providerType == ProviderType.openRouter) {
+                if (!saveApiKeyChecked(instance.id, token)) return null
+            } else return null
+            nmOAuthKeySnapshot(instance.id).takeIf { it.key == token }
+        } catch (_: Exception) { null }
+    }
+
+    // nanoMuse: the new provider form waits for the encrypted key write and
+    // stays open on failure. This does not expose the credential to logs.
+    fun saveApiKeyChecked(instanceId: String, key: String): Boolean {
+        val secrets = try { encryptedPrefs } catch (_: Exception) { return false }
+        return try {
+            ai.tama.router.AutoModelStore.credentialTransaction {
+                ai.tama.router.OAuthLoginAttempts.supersede(instanceId)
+                val prefKey = "apikey_$instanceId"
+                val previous = secrets.getString(prefKey, null)
+                if (previous != key) ai.tama.router.AutoModelStore.accountChanged(context, instanceId)
+                val written = try { secrets.edit().putString(prefKey, key).commit() } catch (_: Exception) { false }
+                if (!written) {
+                    // commit() can update the in-memory preference even when its
+                    // disk write fails. Restore it so the displayed key and the
+                    // credential actually used do not silently diverge.
+                    runCatching {
+                        val rollback = secrets.edit()
+                        if (previous == null) rollback.remove(prefKey) else rollback.putString(prefKey, previous)
+                        rollback.commit()
+                    }
+                }
+                written
+            }
+        } catch (_: Exception) { false }
     }
 
     fun loadApiKey(instanceId: String): String? {
         return encryptedPrefs.getString("apikey_$instanceId", null)
+    }
+
+    // nanoMuse: a refresh snapshot is short-lived and deliberately has no data-class
+    // toString that could print a credential. It is never written to preferences or logs.
+    internal class OAuthKeySnapshot internal constructor(
+        internal val providerId: String, internal val version: Long, internal val key: String?,
+    )
+
+    internal fun nmOAuthKeySnapshot(instanceId: String): OAuthKeySnapshot {
+        val secrets = encryptedPrefs // nanoMuse: initialize outside the credential lock.
+        return ai.tama.router.AutoModelStore.credentialTransaction {
+            OAuthKeySnapshot(instanceId, ai.tama.router.AutoModelRuntime.accountVersion(instanceId),
+                secrets.getString("apikey_$instanceId", null))
+        }
+    }
+
+    internal fun nmOAuthKeyStillCurrent(snapshot: OAuthKeySnapshot): Boolean {
+        val secrets = encryptedPrefs
+        return ai.tama.router.AutoModelStore.credentialTransaction {
+            var same = false
+            ai.tama.router.AutoModelRuntime.runIfCurrent(snapshot.providerId, snapshot.version) {
+                same = secrets.getString("apikey_${snapshot.providerId}", null) == snapshot.key
+            }
+            same
+        }
+    }
+
+    /** A stale refresh cannot replace a newer API key, even after an A → B → A change. */
+    internal fun nmSaveOAuthRefresh(snapshot: OAuthKeySnapshot, key: String): Boolean {
+        val secrets = encryptedPrefs
+        return ai.tama.router.AutoModelStore.credentialTransaction {
+            var saved = false
+            ai.tama.router.AutoModelRuntime.runIfCurrent(snapshot.providerId, snapshot.version) {
+                val current = secrets.getString("apikey_${snapshot.providerId}", null)
+                if (current == snapshot.key) {
+                    secrets.edit().putString("apikey_${snapshot.providerId}", key).apply()
+                    saved = true
+                } else if (current == key) {
+                    // nanoMuse: another waiter already mirrored this same refresh.
+                    saved = true
+                }
+            }
+            saved
+        }
+    }
+
+    // nanoMuse: clearing the bundle and its mirror must not erase a login that
+    // starts in the middle of sign-out. The callback only updates preferences.
+    internal fun nmLogoutOAuth(instanceId: String, clearBundle: () -> Unit) {
+        val secrets = encryptedPrefs
+        ai.tama.router.AutoModelStore.credentialTransaction {
+            ai.tama.router.AutoModelStore.accountChanged(context, instanceId)
+            clearBundle()
+            secrets.edit().remove("apikey_$instanceId").apply()
+        }
+    }
+
+    // nanoMuse: a login's OAuth bundle and API-key mirror are a single short
+    // in-process transaction. The callback must only write preferences, never
+    // suspend, perform network I/O or acquire the provider-config lock.
+    internal fun nmCommitOAuthLogin(
+        ticket: ai.tama.router.OAuthLoginAttempts.Ticket,
+        key: String,
+        active: () -> Boolean,
+        writeBundle: () -> Unit,
+    ): Boolean {
+        val secrets = encryptedPrefs // initialize the keystore before taking the consent lock
+        return ai.tama.router.OAuthLoginAttempts.commit(context, ticket, active) {
+            writeBundle()
+            secrets.edit().putString("apikey_${ticket.providerId}", key).apply()
+        }
     }
 
     /**
@@ -2438,7 +2997,18 @@ class ProviderRepository(private val context: Context) {
         loadApiKey(instance.id) ?: if (instance.allowsEmptyAPIKey) "" else null
 
     fun deleteApiKey(instanceId: String) {
-        encryptedPrefs.edit().remove("apikey_$instanceId").apply()
+        val parallel = com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test" // nanoMuse
+        val secrets = encryptedPrefs // nanoMuse: initialize outside the credential lock.
+        fun remove() {
+            // nanoMuse: an explicit removal also supersedes a pending login when
+            // no mirror key has been written yet.
+            if (parallel || secrets.contains("apikey_$instanceId")) {
+                ai.tama.router.AutoModelStore.accountChanged(context, instanceId)
+            }
+            secrets.edit().remove("apikey_$instanceId").apply()
+        }
+        // nanoMuse: do not allow a review or a refresh between revocation and removal.
+        if (parallel) ai.tama.router.AutoModelStore.credentialTransaction { remove() } else remove()
     }
 
     // -- Import / Export --
@@ -2587,6 +3157,7 @@ class ProviderRepository(private val context: Context) {
             instance.customBaseURL?.let { put("customBaseURL", it) }
             if (!instance.appendV1Suffix) put("appendV1Suffix", false)
             if (instance.useResponsesAPI) put("useResponsesAPI", true)
+            if (instance.tamaImportFreeOnly) put("tamaImportFreeOnly", true) // nanoMuse
             // [T-provider-custom-user-agent] Additive, optional. Only written
             // when set; old/new readers without the key decode to null →
             // default UA. Field name matches iOS for cross-platform interop.
@@ -2658,6 +3229,11 @@ class ProviderRepository(private val context: Context) {
             runCatching { String(Base64.decode(it, Base64.NO_WRAP)) }.getOrNull()
         }
         val instance = instance(secret.instanceId) ?: return false
+        // nanoMuse: keep-existing must be a single in-process decision, or a
+        // concurrent login can land between the old check and the restore write.
+        if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+            return nmRestoreBackupProviderSecret(instance.copy(), secret)
+        }
         var wrote = false
 
         deb64(secret.apiKey)?.let { key ->
@@ -2698,6 +3274,54 @@ class ProviderRepository(private val context: Context) {
     }
 
     /**
+     * nanoMuse: do not merge fragments of a backup account into a live account.
+     * Decoding and preference initialization happen before the ordered
+     * config → credential locks; no network or suspension happens inside them.
+     * This coordinates this process, not other processes or a device crash.
+     */
+    private fun nmRestoreBackupProviderSecret(
+        original: ProviderInstance,
+        secret: BackupSecrets.ProviderSecret,
+    ): Boolean {
+        fun decode(value: String?): String? = value?.let {
+            runCatching { String(Base64.decode(it, Base64.NO_WRAP), Charsets.UTF_8) }.getOrNull()
+        }
+        val key = decode(secret.apiKey)
+        val bearer = decode(secret.manualOAuthToken)
+        val manager = oauthManagerFor(original)
+        val token = decode(secret.oauthToken)?.let { manager?.nmNormalizeImportedTokens(it) }
+            ?.takeIf { it.accessToken != null }
+        val email = decode(secret.oauthEmail)
+        val project = decode(secret.oauthGcpProject)
+        if (key == null && (manager == null || (bearer == null && token == null))) return false
+        encryptedPrefs // initialize both stores before taking the credential lock
+        manager?.nmPrepareCredentialPrefs()
+        val route = ai.tama.router.AutoModelStore.routeFingerprint(original)
+        return synchronized(configLock) {
+            ensureConfigLoaded()
+            val current = _config.value.instances.find { it.id == original.id }
+                ?: return@synchronized false
+            if (ai.tama.router.AutoModelStore.routeFingerprint(current) != route) return@synchronized false
+            ai.tama.router.AutoModelStore.credentialTransaction {
+                // Treat a bundle, bearer or key as one account. Never fill a
+                // missing piece using an unrelated backup after a login wins.
+                if (loadApiKey(original.id) != null || manager?.nmHasStoredCredential() == true) {
+                    return@credentialTransaction false
+                }
+                manager?.nmClearAccountMetadata()
+                if (key != null) saveApiKey(original.id, key)
+                if (manager != null && bearer != null) manager.saveManualBearerToken(bearer)
+                if (manager != null && token != null) manager.nmImportNormalizedTokens(token)
+                if (manager != null && token != null && original.providerType == ProviderType.gemini) {
+                    email?.let { manager.importOAuthString("email", it) }
+                    project?.let { manager.importOAuthString("gcp_project", it) }
+                }
+                true
+            }
+        }
+    }
+
+    /**
      * [T-android-backup-restore-order] Non-destructive, ORDER-PRESERVING union
      * merge of a restored [remote] ProviderConfig into the live config. This is
      * the Android port of iOS `mergeProviderConfigFallback`
@@ -2725,6 +3349,12 @@ class ProviderRepository(private val context: Context) {
     fun mergeBackupProviderConfig(remote: ProviderConfig): Pair<Int, Int> {
         ensureConfigLoaded()
         return synchronized(configLock) {
+            // nanoMuse: a pre-restore response must not replace restored entries.
+            if (com.openminis.app.BuildConfig.APPLICATION_ID == "ai.tama.assistant.tamav2test") {
+                nmRefreshGate.invalidateAll()
+                nmFreeEvidence.clear()
+                _nmFreeImportStatus.value = emptyMap()
+            }
             val local = _config.value
             val before = local.instances.size
 
@@ -2861,6 +3491,7 @@ class ProviderRepository(private val context: Context) {
             appendV1Suffix = appendV1,
             useResponsesAPI = useResponsesAPI,
             customUserAgent = customUserAgent,
+            tamaImportFreeOnly = dict.optBoolean("tamaImportFreeOnly", false), // nanoMuse
         )
         addInstance(instance)
 

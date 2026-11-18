@@ -19,19 +19,29 @@ EXAMPLE_HOST_ADDRESS = "93.184.216.34"
 
 
 def _is_example_host(host: bytes | str | None) -> bool:
-    return isinstance(host, str) and (host == "example" or host.endswith(".example"))
+    if not isinstance(host, str):
+        return False
+    name = host.lower()
+    return any(
+        name == suffix or name.endswith("." + suffix)
+        for suffix in (
+            "example",
+            "example.com",
+            "example.org",
+            "example.net",
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
 def _example_hosts_resolve_offline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``.example`` hosts answer a fixed public address without asking the resolver.
+    """Reserved example hosts answer a fixed public address without DNS.
 
-    The web tools run ``_is_private_host`` (``socket.getaddrinfo``) on a host before the
-    mocked transport sees the request. The reserved ``.example`` TLD is NXDOMAIN on most
-    resolvers, which the guard treats as "not private", but a resolver that sinkholes
-    unknown names to ``127.0.0.1`` or ``0.0.0.0`` made the guard refuse ``shop.example``
-    and three tests failed on that machine only (#339). Every other host, numeric
-    literals included, still goes to the real function.
+    The web tools check ``socket.getaddrinfo`` before the mocked transport sees a
+    request. Resolver failures or sinkholes can otherwise make fixtures vary by machine.
+    ``example`` and its subdomains, plus ``example.com``, ``example.org`` and
+    ``example.net`` and their subdomains, are intercepted. All other hosts and numeric
+    literals still go to the real function. This is a test fixture, not a runtime guard.
     """
     real_getaddrinfo = socket.getaddrinfo
 

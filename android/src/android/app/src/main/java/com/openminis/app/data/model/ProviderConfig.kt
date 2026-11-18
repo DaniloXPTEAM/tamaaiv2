@@ -252,6 +252,9 @@ data class ProviderInstance(
     // so existing OpenAI instances are completely unaffected. Field name
     // matches iOS for cross-platform export/import interop.
     var azureMode: Boolean = false,
+    // nanoMuse: parallel-test import preference, not authorization to spend.
+    // The default keeps older provider JSON readable; Room stores it in meta KV.
+    var tamaImportFreeOnly: Boolean = false,
 
 ) {
     /** Returns the effective API base URL, applying v1 suffix if configured. */

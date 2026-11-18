@@ -68,7 +68,7 @@ fun RelayRefusalCard(refusal: RelayRefusal.Refusal, onRetry: () -> Unit, modifie
     val (icon, tint) = when (refusal.kind) {
         RelayRefusal.Kind.TOO_LARGE -> Icons.Outlined.UnfoldLess to Color(0xFFE0772C)
         RelayRefusal.Kind.CONTENT_REJECTED -> Icons.Outlined.Block to Color(0xFFE0772C)
-        RelayRefusal.Kind.SIGNED_OUT, RelayRefusal.Kind.DISABLED -> Icons.Outlined.VpnKey to MuseTones.action
+        RelayRefusal.Kind.SIGNED_OUT, RelayRefusal.Kind.DISABLED -> Icons.Outlined.VpnKey to MuseTones.accent
         RelayRefusal.Kind.BUSY -> Icons.Outlined.HourglassEmpty to Color(0xFF7C5CFF)
         RelayRefusal.Kind.SERVICE_PAUSED, RelayRefusal.Kind.SYNC_PAUSED, RelayRefusal.Kind.HUB_PAUSED -> Icons.Outlined.PauseCircle to Color(0xFF7C5CFF)
         else -> Icons.Outlined.CloudOff to Color(0xFFE0772C)
@@ -141,5 +141,5 @@ private fun Primary(label: String, onClick: () -> Unit) {
 
 @Composable
 private fun Secondary(label: String, onClick: () -> Unit) {
-    TextButton(onClick = onClick) { Text(label, fontSize = 13.sp, color = MuseTones.action) }
+    TextButton(onClick = onClick) { Text(label, fontSize = 13.sp, color = MuseTones.accent) }
 }
